@@ -1,6 +1,0 @@
-{
-  "name": "BiteFixes FastAPI Backend & Playground",
-  "description": "Production-ready FastAPI backend with Supabase, Gemini Function Calling, and WhatsApp webhook simulation for technical support.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
