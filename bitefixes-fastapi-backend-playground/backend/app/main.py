@@ -1,3 +1,21 @@
+from fastapi import FastAPI
+# Aquí importas la función que creamos en el nuevo archivo
+from bitey_engine import procesar_con_bitey 
+
+app = FastAPI()
+
+@app.post("/api/v1/tickets/create")
+async def crear_ticket(data: dict):
+    categoria = data.get("categoria")
+    descripcion = data.get("descripcion")
+    
+    # Aquí el motor Bitey hace todo el trabajo
+    respuesta_bitey = procesar_con_bitey(categoria, descripcion)
+    
+    return {
+        "status": "success",
+        "diagnostico_bitey": respuesta_bitey
+    }
 import os
 from fastapi import FastAPI, Request, Response, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
