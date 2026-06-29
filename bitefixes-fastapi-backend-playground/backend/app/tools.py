@@ -27,47 +27,19 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # ---------------------------------------------------------------------------
 
 def tool_verificar_cliente(numero_whatsapp: str) -> str:
-    """
-    Verifica si un número de WhatsApp pertenece a un cliente registrado en BiteFixes.
-    
-    Args:
-        numero_whatsapp: El número telefónico con código de país, ejemplo: '+525512345678'
-        
-    Returns:
-        Un JSON string con los datos del cliente si existe, o un estado 'no_registrado'.
-    """
+    """Verifica si un número de WhatsApp pertenece a un cliente registrado."""
     cliente = verificar_cliente_por_whatsapp(numero_whatsapp)
     if cliente:
         return json.dumps({"status": "registrado", "cliente": cliente})
-    return json.dumps({"status": "no_registrado", "mensaje": "El número de WhatsApp no pertenece a un cliente registrado."})
+    return json.dumps({"status": "no_registrado", "mensaje": "No registrado."})
 
 def tool_registrar_cliente(nombre: str, whatsapp: str, direccion: str) -> str:
-    """
-    Registra un cliente nuevo en el sistema de BiteFixes con su nombre, whatsapp y dirección física.
-    
-    Args:
-        nombre: Nombre completo del cliente, ejemplo: 'Carlos Mendoza'
-        whatsapp: Número de teléfono/WhatsApp, ejemplo: '+525512345678'
-        direccion: Dirección física donde requiere el servicio técnico, ejemplo: 'Av. Reforma 123, CDMX'
-        
-    Returns:
-        Un JSON string con la información del cliente registrado o un mensaje de error.
-    """
+    """Registra un cliente nuevo en el sistema de BiteFixes."""
     resultado = registrar_cliente_nuevo(nombre, whatsapp, direccion)
     return json.dumps(resultado)
 
 def tool_crear_ticket(cliente_id: str, categoria: str, descripcion: str) -> str:
-    """
-    Crea un ticket de soporte técnico en el sistema de BiteFixes.
-    
-    Args:
-        cliente_id: El ID único del cliente registrado (UUID o entero como cadena).
-        categoria: La categoría del problema. Debe ser una de: 'Hardware', 'Software', 'Redes', 'Comercial', 'Otro'.
-        descripcion: Detalle del problema de soporte que presenta el cliente.
-        
-    Returns:
-        Un JSON string con los detalles del ticket creado, incluyendo su número de ticket y estatus inicial.
-    """
+    """Crea un ticket de soporte técnico en el sistema de BiteFixes."""
     resultado = crear_ticket_soporte(cliente_id, categoria, descripcion)
     return json.dumps(resultado)
 
@@ -79,14 +51,125 @@ HERRAMIENTAS_MAPA: Dict[str, Callable] = {
 }
 
 # ---------------------------------------------------------------------------
-# COMPORTAMIENTO Y PROMPT DEL SISTEMA (System Instructions)
+# COMPORTAMIENTO Y PROMPT DEL SISTEMA (Línea limpia para evitar errores de copia)
 # ---------------------------------------------------------------------------
 
-INSTRUCCIONES_SISTEMA = """
-Eres "Bitey", el Asistente Inteligente oficial de BiteFixes, una empresa líder en soporte técnico a domicilio y servicios digitales (Hardware, Software, Redes, y Consultoría Comercial). Tu misión es resolver solicitudes de clientes y registrar tickets de soporte técnico de forma empática, profesional y muy eficiente.
+INSTRUCCIONES_SISTEMA = "Eres Bitey, el asistente de soporte tecnico oficial de BiteFixes. Tu objetivo es saludar al usuario, usar tool_verificar_cliente con su numero de whatsapp para verificarlo. Si no esta registrado, pidele amablemente su nombre y direccion y registralo con tool_registrar_cliente. Si ya esta registrado o despues de registrarlo, pidele la descripcion de su problema y crea un ticket con tool_crear_ticket clasificandolo en Hardware, Software, Redes, Comercial u Otro. Responde de forma breve y amable."
 
-Sigue rigurosamente este protocolo de atención al usuario:
+def ejecutar_agente_bitefixes(mensaje_usuario: str, numero_whatsapp: str, historial_conversacion: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Envía el mensaje al modelo Gemini y procesa la llamada a funciones."""
+    # Configurar herramientas y directivas
+    config = types.GenerateContentConfig(
+        system_instruction=INSTRUCCIONES_SISTEMA,
+        temperature=0.3,
+        tools=[
+            types.Tool(function_declarations=[
+                types.FunctionDeclaration(
+                    name="tool_verificar_cliente",
+                    description="Verifica si un número de WhatsApp pertenece a un cliente registrado en BiteFixes.",
+                    parameters=types.Schema(
+                        type="OBJECT",
+                        properties={
+                            "numero_whatsapp": types.Schema(type="STRING", description="El número de teléfono con código de país.")
+                        },
+                        required=["numero_whatsapp"]
+                    )
+                ),
+                types.FunctionDeclaration(
+                    name="tool_registrar_cliente",
+                    description="Registra un cliente nuevo en el sistema de BiteFixes.",
+                    parameters=types.Schema(
+                        type="OBJECT",
+                        properties={
+                            "nombre": types.Schema(type="STRING", description="Nombre completo del cliente."),
+                            "whatsapp": types.Schema(type="STRING", description="Número de teléfono/WhatsApp del cliente."),
+                            "direccion": types.Schema(type="STRING", description="Dirección física para servicio técnico.")
+                        },
+                        required=["nombre", "whatsapp", "direccion"]
+                    )
+                ),
+                types.FunctionDeclaration(
+                    name="tool_crear_ticket",
+                    description="Crea un ticket de soporte técnico en el sistema de BiteFixes.",
+                    parameters=types.Schema(
+                        type="OBJECT",
+                        properties={
+                            "cliente_id": types.Schema(type="STRING", description="El ID del cliente registrado."),
+                            "categoria": types.Schema(
+                                type="STRING", 
+                                description="Categoría del ticket: Hardware, Software, Redes, Comercial, Otro."
+                            ),
+                            "descripcion": types.Schema(type="STRING", description="Descripción detallada de la falla.")
+                        },
+                        required=["cliente_id", "categoria", "descripcion"]
+                    )
+                )
+            ])
+        ]
+    )
 
-1. COMPORTAMIENTO GENERAL:
-   - Saluda cordialmente y con entusiasmo ("¡Hola! Soy Bitey de BiteFixes...").
-   - Habla en español de manera natural, clara y empática. Eres un experto técnico, pero
+    # Convertir el historial al formato compatible con Google Gen AI (Contents)
+    contents = []
+    for chat in historial_conversacion:
+        role = "user" if chat["sender"] == "user" else "model"
+        contents.append(types.Content(
+            role=role,
+            parts=[types.Part.from_text(text=chat["text"])]
+        ))
+        
+    # Añadir el mensaje actual
+    contexto_mensaje = f"[WhatsApp Remitente: {numero_whatsapp}] {mensaje_usuario}"
+    contents.append(types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=contexto_mensaje)]
+    ))
+
+    # Realizar llamada al modelo usando la versión oficial estable
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents,
+        config=config
+    )
+
+    respuesta_texto = response.text or ""
+    tool_calls_ejecutadas = []
+
+    # Validar si el modelo solicitó llamadas a funciones (Function Calling)
+    if response.function_calls:
+        for call in response.function_calls:
+            nombre_tool = call.name
+            args = call.args
+            
+            tool_calls_ejecutadas.append({
+                "nombre": nombre_tool,
+                "argumentos": args
+            })
+            
+            if nombre_tool in HERRAMIENTAS_MAPA:
+                funcion_local = HERRAMIENTAS_MAPA[nombre_tool]
+                
+                try:
+                    resultado_tool_str = funcion_local(**args)
+                    resultado_dict = json.loads(resultado_tool_str)
+                    
+                    part_call = types.Part.from_function_call(name=call.name, args=call.args)
+                    part_resp = types.Part.from_function_response(name=call.name, response={"result": resultado_dict})
+                    
+                    contents.append(types.Content(role="model", parts=[part_call]))
+                    contents.append(types.Content(role="user", parts=[part_resp]))
+                    
+                    final_response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=contents,
+                        config=config
+                    )
+                    respuesta_texto = final_response.text or ""
+                    
+                except Exception as e:
+                    print(f"Error al ejecutar la herramienta {nombre_tool}: {str(e)}")
+                    respuesta_texto = "Lo lamento, hubo un inconveniente técnico al procesar la solicitud."
+
+    return {
+        "respuesta": respuesta_texto,
+        "tools_ejecutados": tool_calls_ejecutadas
+    }
