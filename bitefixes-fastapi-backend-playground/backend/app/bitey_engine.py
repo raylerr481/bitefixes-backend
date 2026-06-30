@@ -1,16 +1,16 @@
 import os
 import google.generativeai as genai
 
-# Configuração da chave de API (certifique-se de que a variável de ambiente esteja definida)
+# Configuração da chave de API
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
 
-# Definição das instruções do sistema para garantir o idioma português
-# e definir a personalidade do Bitey.
+# Instruções do sistema reforçadas
 system_instruction = (
     "Você é o Bitey, o assistente técnico oficial da BiteFixes. "
     "Sua função é auxiliar clientes com suporte técnico em computadores, redes, "
     "servidores, celulares e câmeras de segurança. "
-    "Responda EXCLUSIVAMENTE em português brasileiro. "
+    "REGRA OBRIGATÓRIA: Responda EXCLUSIVAMENTE em português brasileiro, "
+    "independentemente do idioma em que o usuário enviar a mensagem. "
     "Seja prestativo, profissional e técnico."
 )
 
@@ -28,13 +28,15 @@ model = genai.GenerativeModel(
     system_instruction=system_instruction
 )
 
+# Inicializamos o objeto de chat fora da função para manter o histórico
+chat_session = model.start_chat(history=[])
+
 def procesar_con_bitey(prompt_usuario):
     """
-    Recebe a pergunta do usuário e retorna a resposta do Bitey.
+    Recebe a pergunta do usuário e retorna a resposta do Bitey mantendo o contexto.
     """
     try:
-        chat = model.start_chat(history=[])
-        response = chat.send_message(prompt_usuario)
+        response = chat_session.send_message(prompt_usuario)
         return response.text
     except Exception as e:
         return f"Erro ao processar com Bitey: {str(e)}"
