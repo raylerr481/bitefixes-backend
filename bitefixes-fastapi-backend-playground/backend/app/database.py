@@ -1,30 +1,22 @@
 import os
-from typing import Dict, Any, Optional
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
 load_dotenv()
 
-SUPABASE_URL = "https://iwgcekvasxizdekjiacg.supabase.co"
-SUPABASE_KEY = "sb_secret_b082pBn6YNA9rwPrDM20RA_AYzjYJRh"
+# Usamos variables de entorno (más seguro que hardcodearlas)
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Faltan configurar las variables de entorno SUPABASE_URL y/AS SUPABASE_KEY.")
+    raise ValueError("Faltan configurar las variables de entorno SUPABASE_URL y/o SUPABASE_KEY.")
 
-def get_supabase() -> Client:
-    """
-    Inicializa y retorna el cliente oficial de Supabase.
-    """
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+# --- AQUÍ ESTÁ LA CLAVE: Definimos el cliente globalmente ---
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def verificar_cliente_por_whatsapp(numero_whatsapp: str) -> Optional[Dict[str, Any]]:
-    """
-    Busca si el número de WhatsApp ya existe en la tabla 'clientes'.
-    Retorna el diccionario con la información del cliente o None si no existe.
-    """
-    supabase = get_supabase()
-    # Limpiamos el número de espacios y signos comunes en WhatsApp
+    # Ahora usamos la variable global 'supabase'
     clean_number = numero_whatsapp.replace(" ", "").replace("-", "").strip()
     
     try:
@@ -38,15 +30,9 @@ def verificar_cliente_por_whatsapp(numero_whatsapp: str) -> Optional[Dict[str, A
         return None
     except Exception as e:
         print(f"Error al verificar cliente por whatsapp: {str(e)}")
-        # En producción se debe registrar este error mediante logs formales (e.g. Logfire o Sentry)
         return None
 
 def registrar_cliente_nuevo(nombre: str, whatsapp: str, direccion: str) -> Dict[str, Any]:
-    """
-    Registra un nuevo cliente en la tabla 'clientes' de Supabase.
-    Retorna los datos del cliente recién insertado.
-    """
-    supabase = get_supabase()
     clean_number = whatsapp.replace(" ", "").replace("-", "").strip()
     
     nuevo_cliente = {
@@ -64,21 +50,11 @@ def registrar_cliente_nuevo(nombre: str, whatsapp: str, direccion: str) -> Dict[
             return response.data[0]
         raise Exception("No se retornaron datos tras la inserción del cliente.")
     except Exception as e:
-        error_msg = f"Error al registrar cliente nuevo: {str(e)}"
-        print(error_msg)
-        return {"error": error_msg}
+        return {"error": str(e)}
 
 def crear_ticket_soporte(cliente_id: str, categoria: str, descripcion: str) -> Dict[str, Any]:
-    """
-    Crea un nuevo ticket de soporte técnico en la tabla 'tickets' de Supabase.
-    Estatus por defecto al iniciar es 'Abierto'.
-    """
-    supabase = get_supabase()
-    
-    # Validar categorías válidas para control
     categorias_validas = ["Hardware", "Software", "Redes", "Comercial", "Otro"]
-    if categoria not in categorias_validas:
-        categoria = "Otro"
+    categoria = categoria if categoria in categorias_validas else "Otro"
         
     nuevo_ticket = {
         "cliente_id": cliente_id,
@@ -96,6 +72,4 @@ def crear_ticket_soporte(cliente_id: str, categoria: str, descripcion: str) -> D
             return response.data[0]
         raise Exception("No se retornaron datos tras la creación del ticket.")
     except Exception as e:
-        error_msg = f"Error al crear el ticket de soporte: {str(e)}"
-        print(error_msg)
-        return {"error": error_msg}
+        return {"error": str(e)}
