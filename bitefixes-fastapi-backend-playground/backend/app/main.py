@@ -8,9 +8,8 @@ from fastapi import FastAPI, Request, Response, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 from dotenv import load_dotenv
-from supabase import create_client, Client
 
-# Importaciones locales (Ruta relativa corregida para evitar ModuleNotFoundError)
+# Importaciones locales
 from .bitey_engine import procesar_con_bitey
 from .database import supabase
 
@@ -39,6 +38,7 @@ app.add_middleware(
 APP_SECRET = os.getenv("APP_SECRET")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN") # Asegúrate de tener esto en Render
 
 # --- 2. SEGURIDAD: Validación HMAC ---
 async def validar_webhook_meta(request: Request, x_hub_signature_256: str = Header(None)):
@@ -64,11 +64,23 @@ def obtener_historial(user_id: str) -> List[Dict]:
 def health_check():
     return {"status": "online", "system": "BiteFixes Core"}
 
+# --- NUEVO: RUTA DE VERIFICACIÓN PARA META ---
+@app.get("/webhook/whatsapp")
+async def verify_webhook(request: Request):
+    query_params = request.query_params
+    mode = query_params.get("hub.mode")
+    token = query_params.get("hub.verify_token")
+    challenge = query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return int(challenge)
+    raise HTTPException(status_code=403, detail="Token de verificación inválido")
+
+# --- RUTA POST PARA MENSAJES ---
 @app.post("/webhook/whatsapp")
 async def recibir_whatsapp(request: Request, firma: None = Depends(validar_webhook_meta)):
     body = await request.json()
     
-    # Extraer datos de Meta
     try:
         message_data = body["entry"][0]["changes"][0]["value"].get("messages", [])
         if not message_data: return {"status": "ok"}
@@ -78,19 +90,23 @@ async def recibir_whatsapp(request: Request, firma: None = Depends(validar_webho
     except (KeyError, IndexError):
         return {"status": "ok"}
 
-    # Persistir entrada
     guardar_mensaje(numero_whatsapp, "user", texto_usuario)
     
-    # Procesar con Bitey Engine
     historial = obtener_historial(numero_whatsapp)
     resultado = procesar_con_bitey(texto_usuario, numero_whatsapp, historial)
     
-    # Persistir respuesta
     respuesta_bot = resultado["respuesta"]
     guardar_mensaje(numero_whatsapp, "bot", respuesta_bot)
     
-    # Enviar a WhatsApp
     await enviar_mensaje_whatsapp_api(numero_whatsapp, respuesta_bot)
+    
+    return {"status": "procesado"}
+
+async def enviar_mensaje_whatsapp_api(to: str, text: str):
+    url = f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}}, headers=headers)
     
     return {"status": "procesado"}
 
