@@ -4,17 +4,19 @@ import hashlib
 import hmac
 import httpx
 from logging.handlers import RotatingFileHandler
-from fastapi import FastAPI, Request, Response, HTTPException, Query, status, Depends
+from fastapi import FastAPI, Request, Response, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# --- 1. CONFIGURACIÓN E INICIALIZACIÓN ---
+# Importaciones locales (Ruta relativa corregida para evitar ModuleNotFoundError)
+from .bitey_engine import procesar_con_bitey
+from .database import supabase
+
+# --- 1. CONFIGURACIÓN ---
 load_dotenv()
 
-# Logger estructurado
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -22,10 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BiteFixes")
 
-app = FastAPI(title="BiteFixes Production API", version="1.0.0")
-
-# Cliente Supabase
-supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
+app = FastAPI(title="BiteFixes Production API")
 
 # Configuración de CORS
 app.add_middleware(
@@ -36,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Credenciales Meta
+# Variables de entorno
 APP_SECRET = os.getenv("APP_SECRET")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
@@ -50,7 +49,7 @@ async def validar_webhook_meta(request: Request, x_hub_signature_256: str = Head
     if f"sha256={hash_esperado}" != x_hub_signature_256:
         raise HTTPException(status_code=403, detail="Firma inválida")
 
-# --- 3. PERSISTENCIA: Funciones Supabase ---
+# --- 3. PERSISTENCIA ---
 def guardar_mensaje(user_id: str, remitente: str, texto: str):
     supabase.table("historial_chats").insert({
         "user_id": user_id, "remitente": remitente, "mensaje": texto
@@ -65,30 +64,33 @@ def obtener_historial(user_id: str) -> List[Dict]:
 def health_check():
     return {"status": "online", "system": "BiteFixes Core"}
 
-@app.post("/webhook/whatsapp", tags=["WhatsApp"])
+@app.post("/webhook/whatsapp")
 async def recibir_whatsapp(request: Request, firma: None = Depends(validar_webhook_meta)):
     body = await request.json()
     
-    # Manejo de mensaje
-    message_data = body["entry"][0]["changes"][0]["value"].get("messages", [])
-    if not message_data: return {"status": "ok"}
-    
-    numero_whatsapp = message_data[0].get("from")
-    texto_usuario = message_data[0].get("text", {}).get("body", "").strip()
+    # Extraer datos de Meta
+    try:
+        message_data = body["entry"][0]["changes"][0]["value"].get("messages", [])
+        if not message_data: return {"status": "ok"}
+        
+        numero_whatsapp = message_data[0].get("from")
+        texto_usuario = message_data[0].get("text", {}).get("body", "").strip()
+    except (KeyError, IndexError):
+        return {"status": "ok"}
 
     # Persistir entrada
     guardar_mensaje(numero_whatsapp, "user", texto_usuario)
     
-    # Obtener historial y procesar con agente
+    # Procesar con Bitey Engine
     historial = obtener_historial(numero_whatsapp)
-    from app.tools import ejecutar_agente_bitefixes # Asegúrate de que este import sea correcto
-    resultado = ejecutar_agente_bitefixes(texto_usuario, numero_whatsapp, historial)
+    resultado = procesar_con_bitey(texto_usuario, numero_whatsapp, historial)
     
-    # Persistir salida
-    guardar_mensaje(numero_whatsapp, "bot", resultado["respuesta"])
+    # Persistir respuesta
+    respuesta_bot = resultado["respuesta"]
+    guardar_mensaje(numero_whatsapp, "bot", respuesta_bot)
     
-    # Enviar respuesta a Meta
-    await enviar_mensaje_whatsapp_api(numero_whatsapp, resultado["respuesta"])
+    # Enviar a WhatsApp
+    await enviar_mensaje_whatsapp_api(numero_whatsapp, respuesta_bot)
     
     return {"status": "procesado"}
 
@@ -97,7 +99,3 @@ async def enviar_mensaje_whatsapp_api(to: str, text: str):
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     async with httpx.AsyncClient() as client:
         await client.post(url, json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}}, headers=headers)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
