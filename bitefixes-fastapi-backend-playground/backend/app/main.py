@@ -1,6 +1,3 @@
-@app.get("/")
-def read_root():
-    return {"status": "BiteFixes is alive!"}
 import os
 import sys
 import logging
@@ -14,10 +11,8 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 
 # --- CORRECCIÓN DE RUTA PARA RENDER ---
-# Asegura que el directorio que contiene la carpeta 'app' esté en el path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Importaciones ahora corregidas
 from app.database import supabase
 from app.bitey_engine import procesar_con_bitey
 
@@ -31,6 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BiteFixes")
 
+# Definir 'app' ANTES de usar decoradores
 app = FastAPI(title="BiteFixes Production API")
 
 app.add_middleware(
@@ -47,7 +43,7 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
-# --- 2. SEGURIDAD: Validación HMAC ---
+# --- 2. SEGURIDAD Y HELPERS ---
 async def validar_webhook_meta(request: Request, x_hub_signature_256: str = Header(None)):
     if not x_hub_signature_256:
         raise HTTPException(status_code=403, detail="Firma faltante")
@@ -56,7 +52,6 @@ async def validar_webhook_meta(request: Request, x_hub_signature_256: str = Head
     if f"sha256={hash_esperado}" != x_hub_signature_256:
         raise HTTPException(status_code=403, detail="Firma inválida")
 
-# --- 3. PERSISTENCIA ---
 def guardar_mensaje(user_id: str, remitente: str, texto: str):
     supabase.table("historial_chats").insert({
         "user_id": user_id, "remitente": remitente, "mensaje": texto
@@ -66,11 +61,38 @@ def obtener_historial(user_id: str) -> List[Dict]:
     res = supabase.table("historial_chats").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
     return [{"sender": r["remitente"], "text": r["mensaje"]} for r in reversed(res.data)]
 
-# --- 4. ENDPOINTS ---
+async def enviar_mensaje_whatsapp_api(to: str, text: str):
+    url = f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}}, headers=headers)
+
+# --- 3. ENDPOINTS ---
+
+@app.get("/")
+def read_root():
+    return {"status": "BiteFixes is alive!"}
+
 @app.get("/health")
 def health_check():
     return {"status": "online", "system": "BiteFixes Core"}
 
+# Endpoint para Chat Web
+@app.post("/api/chat/direct")
+async def chat_web(request: Request):
+    data = await request.json()
+    texto = data.get("message", "")
+    user_id = data.get("user_id", "web_user")
+    
+    historial = obtener_historial(user_id)
+    resultado = procesar_con_bitey(texto, user_id, historial)
+    
+    guardar_mensaje(user_id, "user", texto)
+    guardar_mensaje(user_id, "bot", resultado["respuesta"])
+    
+    return {"reply": resultado["respuesta"]}
+
+# Endpoints para WhatsApp
 @app.get("/webhook/whatsapp")
 async def verify_webhook(request: Request):
     if request.query_params.get("hub.mode") == "subscribe" and request.query_params.get("hub.verify_token") == VERIFY_TOKEN:
@@ -95,9 +117,3 @@ async def recibir_whatsapp(request: Request, firma: None = Depends(validar_webho
     guardar_mensaje(numero, "bot", respuesta_bot)
     await enviar_mensaje_whatsapp_api(numero, respuesta_bot)
     return {"status": "procesado"}
-
-async def enviar_mensaje_whatsapp_api(to: str, text: str):
-    url = f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient() as client:
-        await client.post(url, json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}}, headers=headers)
