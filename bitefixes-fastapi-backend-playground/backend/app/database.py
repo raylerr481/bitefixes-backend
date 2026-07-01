@@ -1,4 +1,5 @@
 import os
+from typing import Optional, Dict, Any, List
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -12,11 +13,11 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("Faltan configurar las variables de entorno SUPABASE_URL y/o SUPABASE_KEY.")
 
-# --- AQUÍ ESTÁ LA CLAVE: Definimos el cliente globalmente ---
+# Definimos el cliente globalmente
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def verificar_cliente_por_whatsapp(numero_whatsapp: str) -> Optional[Dict[str, Any]]:
-    # Ahora usamos la variable global 'supabase'
+    """Verifica si un cliente existe en la base de datos por su número de WhatsApp."""
     clean_number = numero_whatsapp.replace(" ", "").replace("-", "").strip()
     
     try:
@@ -33,6 +34,7 @@ def verificar_cliente_por_whatsapp(numero_whatsapp: str) -> Optional[Dict[str, A
         return None
 
 def registrar_cliente_nuevo(nombre: str, whatsapp: str, direccion: str) -> Dict[str, Any]:
+    """Registra un nuevo cliente en la base de datos."""
     clean_number = whatsapp.replace(" ", "").replace("-", "").strip()
     
     nuevo_cliente = {
@@ -53,12 +55,13 @@ def registrar_cliente_nuevo(nombre: str, whatsapp: str, direccion: str) -> Dict[
         return {"error": str(e)}
 
 def crear_ticket_soporte(cliente_id: str, categoria: str, descripcion: str) -> Dict[str, Any]:
+    """Crea un nuevo ticket de soporte asociado a un cliente."""
     categorias_validas = ["Hardware", "Software", "Redes", "Comercial", "Otro"]
-    categoria = categoria if categoria in categorias_validas else "Otro"
+    categoria_final = categoria if categoria in categorias_validas else "Otro"
         
     nuevo_ticket = {
         "cliente_id": cliente_id,
-        "categoria": categoria,
+        "categoria": categoria_final,
         "descripcion": descripcion.strip(),
         "estatus": "Abierto"
     }
