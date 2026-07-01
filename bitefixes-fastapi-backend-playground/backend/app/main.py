@@ -3,10 +3,10 @@ import logging
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional, List
 from dotenv import load_dotenv
 
-# Importaciones de tus módulos locales
+# Importaciones locales
 from app.database import supabase
 from app.bitey_engine import procesar_con_bitey
 
@@ -24,40 +24,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelos Pydantic
+# Modelo sincronizado con el frontend
 class ChatRequest(BaseModel):
     message: str
-    user_id: Optional[str] = "web_user"
+    user_id: str
 
-# Variables
-APP_SECRET = os.getenv("APP_SECRET")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
-
-# --- FUNCIONES DE APOYO ---
+# --- FUNCIONES ---
 def guardar_mensaje(user_id: str, remitente: str, texto: str):
     try:
         supabase.table("historial_chats").insert({
             "user_id": user_id, "remitente": remitente, "mensaje": texto
         }).execute()
     except Exception as e:
-        logger.error(f"Error guardando en Supabase: {e}")
+        logger.error(f"Error en DB: {e}")
 
 def obtener_historial(user_id: str) -> List[dict]:
     try:
         res = supabase.table("historial_chats").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
         return [{"sender": r["remitente"], "text": r["mensaje"]} for r in reversed(res.data)]
-    except Exception:
+    except:
         return []
 
 # --- ENDPOINTS ---
-
-# Solución para el error 404 en la raíz
 @app.get("/")
 async def read_root():
-    return {"status": "BiteFixes is alive!", "version": "1.0.0"}
-
-@app.get("/health")
-async def health_check():
     return {"status": "online"}
 
 @app.post("/api/chat/direct")
@@ -71,18 +61,5 @@ async def chat_web(payload: ChatRequest):
         
         return {"reply": resultado["respuesta"]}
     except Exception as e:
-        logger.error(f"Error en motor: {e}")
-        return {"reply": "Lo siento, tuve un error procesando tu mensaje. Intenta de nuevo."}
-
-@app.get("/webhook/whatsapp")
-async def verify_webhook(hub_mode: str = Header(None, alias="hub.mode"), 
-                         hub_token: str = Header(None, alias="hub.verify_token"),
-                         hub_challenge: int = Header(None, alias="hub.challenge")):
-    if hub_mode == "subscribe" and hub_token == VERIFY_TOKEN:
-        return hub_challenge
-    raise HTTPException(status_code=403, detail="Token inválido")
-
-@app.post("/webhook/whatsapp")
-async def recibir_whatsapp(request: Request):
-    # Lógica de procesamiento de WhatsApp iría aquí
-    return {"status": "ok"}
+        logger.error(f"Error procesando: {e}")
+        return {"reply": "Lo siento, tuve un error técnico. Intenta de nuevo."}
