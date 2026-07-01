@@ -1,4 +1,11 @@
-import logging
+from fastapi import FastAPI
+
+# 1. PRIMERO inicializas la app
+app = FastAPI()
+
+# 2. DESPUÉS defines tus rutas usando la variable 'app' que acabas de crear
+@app.post("/api/chat/direct")
+async def chat_web(request: Request):import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
