@@ -1,19 +1,12 @@
 import os
-import sys
 import logging
-import hashlib
-import hmac
-import httpx
-from logging.handlers import RotatingFileHandler
-from fastapi import FastAPI, Request, HTTPException, Header, Depends
+from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
 
-# --- RUTA ---
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+# Importaciones de tus módulos locales
 from app.database import supabase
 from app.bitey_engine import procesar_con_bitey
 
@@ -31,18 +24,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelos Pydantic para validar datos
+# Modelos Pydantic
 class ChatRequest(BaseModel):
     message: str
     user_id: Optional[str] = "web_user"
 
 # Variables
 APP_SECRET = os.getenv("APP_SECRET")
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
-# --- FUNCIONES ---
+# --- FUNCIONES DE APOYO ---
 def guardar_mensaje(user_id: str, remitente: str, texto: str):
     try:
         supabase.table("historial_chats").insert({
@@ -52,10 +43,22 @@ def guardar_mensaje(user_id: str, remitente: str, texto: str):
         logger.error(f"Error guardando en Supabase: {e}")
 
 def obtener_historial(user_id: str) -> List[dict]:
-    res = supabase.table("historial_chats").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
-    return [{"sender": r["remitente"], "text": r["mensaje"]} for r in reversed(res.data)]
+    try:
+        res = supabase.table("historial_chats").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
+        return [{"sender": r["remitente"], "text": r["mensaje"]} for r in reversed(res.data)]
+    except Exception:
+        return []
 
 # --- ENDPOINTS ---
+
+# Solución para el error 404 en la raíz
+@app.get("/")
+async def read_root():
+    return {"status": "BiteFixes is alive!", "version": "1.0.0"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "online"}
 
 @app.post("/api/chat/direct")
 async def chat_web(payload: ChatRequest):
@@ -69,7 +72,6 @@ async def chat_web(payload: ChatRequest):
         return {"reply": resultado["respuesta"]}
     except Exception as e:
         logger.error(f"Error en motor: {e}")
-        # Retornar JSON incluso en error para evitar el error de sintaxis en el frontend
         return {"reply": "Lo siento, tuve un error procesando tu mensaje. Intenta de nuevo."}
 
 @app.get("/webhook/whatsapp")
@@ -82,6 +84,5 @@ async def verify_webhook(hub_mode: str = Header(None, alias="hub.mode"),
 
 @app.post("/webhook/whatsapp")
 async def recibir_whatsapp(request: Request):
-    # Lógica simplificada para evitar errores de tipo si la estructura cambia
-    body = await request.json()
+    # Lógica de procesamiento de WhatsApp iría aquí
     return {"status": "ok"}
