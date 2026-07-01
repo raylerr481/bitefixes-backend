@@ -14,7 +14,6 @@ system_instruction = (
     "Seja prestativo, profissional e técnico."
 )
 
-# Configuração do modelo
 generation_config = {
     "temperature": 0.7,
     "top_p": 0.95,
@@ -28,15 +27,22 @@ model = genai.GenerativeModel(
     system_instruction=system_instruction
 )
 
-# Inicializamos o objeto de chat fora da função para manter o histórico
-chat_session = model.start_chat(history=[])
-
-def procesar_con_bitey(prompt_usuario):
+def procesar_con_bitey(texto: str, user_id: str, historial: list):
     """
-    Recebe a pergunta do usuário e retorna a resposta do Bitey mantendo o contexto.
+    Recibe el texto, el ID del usuario y el historial previo.
     """
     try:
-        response = chat_session.send_message(prompt_usuario)
-        return response.text
+        # Convertimos el historial de Supabase al formato que espera Gemini
+        # Historial de Supabase es: [{"sender": "...", "text": "..."}]
+        formatted_history = [
+            {"role": "user" if h["sender"] == "user" else "model", "parts": [h["text"]]}
+            for h in historial
+        ]
+        
+        # Iniciamos una sesión con el historial cargado
+        chat = model.start_chat(history=formatted_history)
+        response = chat.send_message(texto)
+        
+        return {"respuesta": response.text}
     except Exception as e:
-        return f"Erro ao processar com Bitey: {str(e)}"
+        return {"respuesta": f"Erro ao processar com Bitey: {str(e)}"}
