@@ -1,3 +1,6 @@
+@app.get("/")
+def read_root():
+    return {"status": "BiteFixes is alive!"}
 import os
 import sys
 import logging
