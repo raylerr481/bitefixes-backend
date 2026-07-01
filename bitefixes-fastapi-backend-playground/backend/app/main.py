@@ -1,14 +1,7 @@
-from fastapi import FastAPI
-
-# 1. PRIMERO inicializas la app
-app = FastAPI()
-
-# 2. DESPUÉS defines tus rutas usando la variable 'app' que acabas de crear
-@app.post("/api/chat/direct")
-async def chat_web(request: Request):import logging
-from fastapi import FastAPI, HTTPException
+import logging
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from typing import List
 from dotenv import load_dotenv
 
@@ -21,8 +14,10 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BiteFixes")
 
+# 1. Definición de la aplicación (Instancia única y principal)
 app = FastAPI(title="BiteFixes Production API")
 
+# Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelo estricto
+# Modelo estricto para validar el JSON que viene del frontend
 class ChatRequest(BaseModel):
     message: str
     user_id: str
