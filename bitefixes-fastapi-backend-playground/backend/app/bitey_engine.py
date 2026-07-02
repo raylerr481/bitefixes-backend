@@ -21,8 +21,9 @@ generation_config = {
     "max_output_tokens": 8192,
 }
 
+# CORREÇÃO: Usar a versão 'latest' para garantir compatibilidade com a API
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
+    model_name="gemini-1.5-flash-latest", 
     generation_config=generation_config,
     system_instruction=system_instruction
 )
@@ -33,7 +34,6 @@ def procesar_con_bitey(texto: str, user_id: str, historial: list):
     """
     try:
         # Convertimos el historial de Supabase al formato que espera Gemini
-        # Historial de Supabase es: [{"sender": "...", "text": "..."}]
         formatted_history = [
             {"role": "user" if h["sender"] == "user" else "model", "parts": [h["text"]]}
             for h in historial
