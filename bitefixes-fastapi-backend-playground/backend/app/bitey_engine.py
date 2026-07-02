@@ -21,9 +21,9 @@ generation_config = {
     "max_output_tokens": 8192,
 }
 
-# CORREÇÃO: Usar a versão 'latest' para garantir compatibilidade com a API
+# Usamos a versão 001, que é a versão estável mais compatível atualmente
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash-latest", 
+    model_name="gemini-1.5-flash-001", 
     generation_config=generation_config,
     system_instruction=system_instruction
 )
@@ -44,5 +44,11 @@ def procesar_con_bitey(texto: str, user_id: str, historial: list):
         response = chat.send_message(texto)
         
         return {"respuesta": response.text}
+        
     except Exception as e:
-        return {"respuesta": f"Erro ao processar com Bitey: {str(e)}"}
+        # Lógica de diagnóstico: se houver erro, listamos os modelos disponíveis
+        try:
+            modelos_disponiveis = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+            return {"respuesta": f"Erro ao processar com Bitey: {str(e)}. Modelos disponíveis na conta: {modelos_disponiveis}"}
+        except:
+            return {"respuesta": f"Erro ao processar com Bitey: {str(e)}"}
