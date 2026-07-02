@@ -18,16 +18,16 @@ generation_config = {
     "max_output_tokens": 8192,
 }
 
-# CAMBIO CRÍTICO: Usamos "gemini-1.5-flash" a secas.
-# Si esto falla, el bloque 'except' de abajo te dará la lista real de nombres.
+# CAMBIO CRÍTICO: Usamos "gemini-3.5-flash" que confirmamos estar disponible en tu cuenta.
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", 
+    model_name="gemini-3.5-flash", 
     generation_config=generation_config,
     system_instruction=system_instruction
 )
 
 def procesar_con_bitey(texto: str, user_id: str, historial: list):
     try:
+        # Formateo del historial para la API de Gemini
         formatted_history = [
             {"role": "user" if h["sender"] == "user" else "model", "parts": [h["text"]]}
             for h in historial
@@ -39,9 +39,8 @@ def procesar_con_bitey(texto: str, user_id: str, historial: list):
         return {"respuesta": response.text}
         
     except Exception as e:
-        # DIAGNÓSTICO: Esto imprimirá los nombres exactos que tu API acepta
+        # Bloque de diagnóstico: Si falla, nos devuelve la lista real de modelos disponibles
         try:
-            # Intentamos listar solo los modelos que soportan chat
             lista = [m.name for m in genai.list_models()]
             return {"respuesta": f"Erro: {str(e)}. Modelos na sua API: {lista}"}
         except Exception as e2:
