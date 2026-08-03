@@ -1,0 +1,236 @@
+"""
+Bitey Ticket Service
+
+Central ticket management service.
+"""
+
+from datetime import datetime, timezone
+
+from app.database.supabase import supabase
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# LIST TICKETS
+# =====================================================
+
+def listar_tickets():
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .order("id", desc=True)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as error:
+
+        print(f"[TICKET LIST ERROR] {error}")
+
+        return []
+
+
+# =====================================================
+# GET TICKET
+# =====================================================
+
+def obtener_ticket(ticket_id: int):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("id", ticket_id)
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+
+        print(f"[TICKET GET ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# FIND OPEN TICKET
+# =====================================================
+
+def buscar_ticket_aberto(
+    cliente_id: int,
+    servicio_id: int,
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("cliente_id", cliente_id)
+            .eq("servicio_id", servicio_id)
+            .eq("estatus", "Aberto")
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+
+        print(f"[TICKET SEARCH ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# CREATE TICKET
+# =====================================================
+
+def crear_ticket(
+    cliente_id: int,
+    servicio_id: int,
+    descripcion: str,
+    titulo: str = "Ticket IA",
+    categoria: str = "IA",
+    prioridad: str = "Normal",
+    idioma: str = "pt",
+    intencion: str | None = None,
+):
+
+    ahora = datetime.now(timezone.utc)
+
+    codigo = f"BF-{ahora.strftime('%Y-%m-%d-%H%M%S')}"
+
+    datos = {
+
+        "cliente_id": cliente_id,
+
+        "servicio_id": servicio_id,
+
+        "titulo": titulo,
+
+        "descripcion": descripcion,
+
+        "categoria": categoria,
+
+        "estatus": "Aberto",
+
+        "prioridad": prioridad,
+
+        "codigo_ticket": codigo,
+
+        "fecha_recepcion": ahora.isoformat(),
+
+        "garantia_dias": 90,
+
+        "costo_mano_obra": 0,
+
+        "costo_material": 0,
+
+        "costo_total": 0,
+
+        "idioma": idioma,
+
+        "intencion": intencion,
+
+    }
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .insert(datos)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+
+        print(f"[TICKET CREATE ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# UPDATE STATUS
+# =====================================================
+
+def actualizar_estado(
+    ticket_id: int,
+    estado: str,
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .update(
+                {
+                    "estatus": estado
+                }
+            )
+            .eq("id", ticket_id)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+
+        print(f"[TICKET UPDATE ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# DELETE
+# =====================================================
+
+def eliminar_ticket(
+    ticket_id: int,
+):
+
+    try:
+
+        (
+            supabase
+            .table("tickets")
+            .delete()
+            .eq("id", ticket_id)
+            .execute()
+        )
+
+        return True
+
+    except Exception as error:
+
+        print(f"[TICKET DELETE ERROR] {error}")
+
+        return False
+
+
+# =====================================================
+# COMPATIBILITY
+# =====================================================
+
+listar = listar_tickets
+obtener = obtener_ticket
+buscar_ticket_abierto = buscar_ticket_aberto

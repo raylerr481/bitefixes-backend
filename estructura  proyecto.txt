@@ -1,0 +1,34 @@
+bitefixes-backend/
+│
+├── app/
+│   ├── database/
+│   │   └── supabase.py
+│   │
+│   ├── routes/
+│   │   ├── chat.py
+│   │   ├── clientes.py
+│   │   ├── conocimiento.py
+│   │   ├── servicios.py
+│   │   ├── tickets.py
+│   │   ├── memoria.py
+│   │   └── ...
+│   │
+│   ├── services/
+│   │   ├── ia_engine.py
+│   │   ├── historial_service.py
+│   │   ├── cliente_service.py
+│   │   ├── ticket_service.py
+│   │   ├── conocimiento_service.py
+│   │   ├── context_service.py
+│   │   ├── idioma_service.py
+│   │   ├── intencion_service.py
+│   │   └── chat_memory.py
+│   │
+│   ├── models/
+│   ├── utils/
+│   └── main.py
+│
+├── requirements.txt
+├── .gitignore
+├── README.md
+└── .env

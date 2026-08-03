@@ -1,0 +1,388 @@
+"""
+Bitey AI Core Engine
+
+Main orchestration layer.
+
+Flow:
+
+Customer
+    ↓
+Conversation
+    ↓
+Message Memory
+    ↓
+Intent Detection
+    ↓
+Knowledge Retrieval
+    ↓
+Ticket Control
+    ↓
+Bitey Response
+    ↓
+AI Logs
+"""
+
+
+from app.services.customer_service import (
+    get_or_create_customer
+)
+
+from app.services.conversation_service import (
+    get_or_create_conversation,
+    update_conversation
+)
+
+from app.services.message_service import (
+    save_customer_message,
+    save_bitey_message
+)
+
+from app.services.intent_service import (
+    detect_intent
+)
+
+from app.services.knowledge_service import (
+    search_knowledge
+)
+
+from app.services.ticket_service import (
+    create_ticket,
+    find_open_ticket
+)
+
+from app.services.ai_log_service import (
+    save_ai_decision
+)
+
+
+
+def process_message(
+    company_id: int,
+    message: str,
+    phone: str,
+    customer_name: str = None,
+    channel: str = "website"
+):
+
+    # ==========================
+    # CUSTOMER
+    # ==========================
+
+    customer = get_or_create_customer(
+        phone=phone,
+        full_name=customer_name,
+        company_id=company_id
+    )
+
+
+    if not customer:
+
+        return {
+            "error": "customer_not_created"
+        }
+
+
+    customer_id = customer["id"]
+
+
+
+    # ==========================
+    # CONVERSATION
+    # ==========================
+
+    conversation = get_or_create_conversation(
+        customer_id=customer_id,
+        channel=channel
+    )
+
+
+    if not conversation:
+
+        return {
+            "error": "conversation_not_created"
+        }
+
+
+    conversation_id = conversation["id"]
+
+
+
+    # ==========================
+    # SAVE CUSTOMER MESSAGE
+    # ==========================
+
+    save_customer_message(
+
+        conversation_id=conversation_id,
+
+        customer_id=customer_id,
+
+        message_content=message,
+
+        channel=channel,
+
+        company_id=company_id
+
+    )
+
+
+
+    # ==========================
+    # INTENT DETECTION
+    # ==========================
+
+    intent_result = detect_intent(
+        company_id,
+        message
+    )
+
+
+    intent = None
+
+    confidence = 0
+
+
+    if intent_result:
+
+        intent = intent_result.get(
+            "intent"
+        )
+
+        confidence = intent_result.get(
+            "confidence",
+            0
+        )
+
+
+
+    # ==========================
+    # KNOWLEDGE SEARCH
+    # ==========================
+
+    knowledge = search_knowledge(
+        company_id,
+        message
+    )
+
+
+    knowledge_found = False
+
+    knowledge_id = None
+
+    knowledge_data = {}
+
+
+    response = (
+        "Obrigado pelo contato. "
+        "Vou analisar sua solicitação."
+    )
+
+
+
+    if knowledge:
+
+
+        knowledge_found = True
+
+
+        knowledge_data = knowledge.get(
+            "data",
+            {}
+        )
+
+
+        knowledge_id = knowledge_data.get(
+            "id"
+        )
+
+
+        response = knowledge_data.get(
+            "answer",
+            response
+        )
+
+
+
+    # ==========================
+    # TICKET CONTROL
+    # ==========================
+
+    ticket = None
+
+
+    if intent:
+
+
+        ticket = find_open_ticket(
+            customer_id,
+            intent
+        )
+
+
+
+    if not ticket:
+
+
+        if (
+
+            knowledge_data
+
+            and knowledge_data.get(
+                "requires_ticket"
+            )
+
+        ):
+
+
+            ticket = create_ticket(
+
+                company_id=company_id,
+
+                customer_id=customer_id,
+
+                title=knowledge_data.get(
+
+                    "title",
+
+                    "Atendimento Bitey"
+
+                ),
+
+                description=message,
+
+                intent=intent
+
+            )
+
+
+
+    # ==========================
+    # ADD TICKET INFORMATION
+    # ==========================
+
+    if ticket:
+
+
+        ticket_code = ticket.get(
+            "ticket_code"
+        )
+
+
+        if ticket_code:
+
+
+            response += (
+
+                "\n\nAtendimento registrado."
+
+                "\nCódigo do ticket: "
+
+                + ticket_code
+
+            )
+
+
+
+    # ==========================
+    # SAVE BITEY RESPONSE
+    # ==========================
+
+    save_bitey_message(
+
+        conversation_id=conversation_id,
+
+        customer_id=customer_id,
+
+        response_text=response,
+
+        intent=intent,
+
+        confidence=confidence,
+
+        channel=channel,
+
+        company_id=company_id
+
+    )
+
+
+
+    # ==========================
+    # UPDATE CONVERSATION
+    # ==========================
+
+    update_conversation(
+
+        conversation_id=conversation_id,
+
+        intent=intent,
+
+        response=response
+
+    )
+
+
+
+    # ==========================
+    # AI LOG
+    # ==========================
+
+    save_ai_decision(
+
+        conversation_id=conversation_id,
+
+        input_message=message,
+
+        intent=intent,
+
+        confidence=confidence,
+
+        response_text=response,
+
+        knowledge_found=knowledge_found,
+
+        knowledge_id=knowledge_id,
+
+        company_id=company_id
+
+    )
+
+
+
+    # ==========================
+    # FINAL RESPONSE
+    # ==========================
+
+    return {
+
+        "customer_id": customer_id,
+
+        "conversation_id": conversation_id,
+
+        "response": response,
+
+        "intent": intent,
+
+        "confidence": confidence,
+
+        "knowledge_found": knowledge_found,
+
+        "ticket_id": (
+
+            ticket.get("id")
+            if ticket
+            else None
+
+        ),
+
+        "ticket_code": (
+
+            ticket.get("ticket_code")
+            if ticket
+            else None
+
+        ),
+
+        "channel": channel
+
+    }

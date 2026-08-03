@@ -1,0 +1,136 @@
+"""
+Ticket Service
+
+Creates and manages Bitey support tickets.
+"""
+
+from datetime import datetime, timezone
+
+from app.supabase_client import supabase
+
+
+
+def get_open_ticket(
+    customer_id: int,
+    company_id: int
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq(
+                "customer_id",
+                customer_id
+            )
+            .eq(
+                "company_id",
+                company_id
+            )
+            .in_(
+                "status",
+                [
+                    "open",
+                    "pending",
+                    "in_progress",
+                    "Aberto"
+                ]
+            )
+            .limit(1)
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print(
+            "[GET OPEN TICKET ERROR]",
+            error
+        )
+
+
+    return None
+
+
+
+def create_ticket(
+    company_id: int,
+    customer_id: int,
+    title: str,
+    description: str,
+    intent: str | None = None,
+    service_id: int | None = None
+):
+
+
+    # Prevent duplicates
+
+    existing_ticket = get_open_ticket(
+        customer_id,
+        company_id
+    )
+
+
+    if existing_ticket:
+
+        return existing_ticket
+
+
+
+    data = {
+
+        "company_id": company_id,
+
+        "customer_id": customer_id,
+
+        "title": title,
+
+        "description": description,
+
+        "status": "open",
+
+        "priority": "normal",
+
+        "intent": intent,
+
+        "service_id": service_id,
+
+        "created_at":
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+
+    }
+
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .insert(data)
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print(
+            "[TICKET SERVICE ERROR]",
+            error
+        )
+
+
+    return None
