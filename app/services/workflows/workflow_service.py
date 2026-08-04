@@ -1,150 +1,121 @@
 """
-Bitey Workflow Router V11
+=====================================================
+BiteFixes Workflow Router V16
+=====================================================
 
 Central workflow dispatcher.
 
-Flow:
+Flow
 
-Intent
-   |
-   v
+Customer
+    │
+    ▼
+Intent Detection
+    │
+    ▼
 Workflow Router
-   |
-   v
-Specialized Business Workflow
-   |
-   v
-Business Result
+    │
+    ▼
+Workflow Module
+    │
+    ▼
+Workflow Result
+
+The router NEVER:
+
+- creates tickets
+- saves messages
+- creates notifications
+
+Those responsibilities belong to Bitey Core.
+
+=====================================================
 """
 
+from __future__ import annotations
 
-from typing import Dict, Any, Callable
-
+from typing import Any, Callable, Dict, Optional
 
 from app.services.workflows import (
+    ai_assistant,
+    camera_installation,
     computer_repair,
+    default,
     hardware_upgrade,
     mobile_repair,
-    camera_installation,
     network_support,
-    default
+    windows_installation,
 )
 
 
-
-# =====================================
+# =====================================================
 # WORKFLOW REGISTRY
-# =====================================
+# =====================================================
 
 WORKFLOW_MAP: Dict[str, Callable] = {
-
 
     "computer_repair":
         computer_repair.execute,
 
-
     "hardware_upgrade":
         hardware_upgrade.execute,
-
 
     "mobile_repair":
         mobile_repair.execute,
 
-
-    "cctv_installation":
-        camera_installation.execute,
-
-
-    "camera_installation":
-        camera_installation.execute,
-
+    "windows_installation":
+        windows_installation.execute,
 
     "network_configuration":
         network_support.execute,
 
+    "network_support":
+        network_support.execute,
+
+    "cctv_installation":
+        camera_installation.execute,
+
+    "camera_installation":
+        camera_installation.execute,
+
+    "ai_assistant":
+        ai_assistant.execute,
+
 }
 
 
-
-# =====================================
-# EXECUTOR
-# =====================================
+# =====================================================
+# ROUTER
+# =====================================================
 
 def execute_workflow(
-
-    intent: str,
-
+    *,
+    intent: Optional[str],
     company_id: int,
-
     customer_id: int,
-
     message: str,
-
-    knowledge: Dict[str, Any] | None = None,
-
-    intent_data: Dict[str, Any] | None = None
-
+    knowledge: Optional[Dict[str, Any]] = None,
+    service: Optional[Dict[str, Any]] = None,
+    language: str = "es",
+    metadata: Optional[Dict[str, Any]] = None,
 ):
 
+    workflow = WORKFLOW_MAP.get(
+        intent,
+        default.execute
+    )
 
     try:
 
-
-        workflow = WORKFLOW_MAP.get(
-            intent
-        )
-
-
-
-        # =============================
-        # DEFAULT WORKFLOW
-        # =============================
-
-        if not workflow:
-
-
-            print(
-                "[WORKFLOW ROUTER]",
-                "default"
-            )
-
-
-            return default.execute(
-
-                company_id=company_id,
-
-                customer_id=customer_id,
-
-                message=message,
-
-                knowledge=knowledge,
-
-                intent=intent_data
-
-            )
-
-
-
-        # =============================
-        # SELECTED WORKFLOW
-        # =============================
-
         print(
-
             "[WORKFLOW ROUTER]",
-
             {
                 "intent": intent,
-
-                "workflow":
-                    workflow.__module__
+                "module": workflow.__module__
             }
-
         )
 
-
-
-        result = workflow(
+        return workflow(
 
             company_id=company_id,
 
@@ -154,102 +125,31 @@ def execute_workflow(
 
             knowledge=knowledge,
 
-            intent=intent_data
+            service=service,
+
+            intent=intent,
+
+            language=language,
+
+            metadata=metadata or {}
 
         )
-
-
-
-        return result
-
-
-
-    except TypeError as error:
-
-
-        """
-        Compatibility mode.
-
-        Some old workflows do not have
-        customer_id parameter.
-        """
-
-
-        print(
-
-            "[WORKFLOW COMPATIBILITY]",
-
-            str(error)
-
-        )
-
-
-        try:
-
-
-            return workflow(
-
-                company_id=company_id,
-
-                message=message,
-
-                knowledge=knowledge,
-
-                intent=intent_data
-
-            )
-
-
-        except Exception as fallback_error:
-
-
-            print(
-
-                "[WORKFLOW FALLBACK ERROR]",
-
-                repr(fallback_error)
-
-            )
-
-
-            return {
-
-
-                "success":False,
-
-
-                "response":
-                    "Workflow unavailable.",
-
-
-                "error":
-                    str(fallback_error)
-
-            }
-
-
 
     except Exception as error:
 
-
         print(
-
-            "[WORKFLOW ROUTER ERROR]",
-
+            "[WORKFLOW ERROR]",
             repr(error)
-
         )
-
 
         return {
 
+            "success": False,
 
-            "success":False,
-
+            "workflow": intent,
 
             "response":
-                "No fue posible ejecutar el proceso.",
-
+                "Workflow execution failed.",
 
             "error":
                 str(error)

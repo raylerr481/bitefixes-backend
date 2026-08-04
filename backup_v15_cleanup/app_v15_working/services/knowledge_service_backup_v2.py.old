@@ -1,0 +1,100 @@
+"""
+Knowledge Service
+
+Bitey knowledge base access layer.
+
+Uses:
+- Supabase
+- knowledge_base table
+
+Multi-company SaaS ready.
+"""
+
+from app.database.supabase import supabase
+
+
+def search_knowledge(
+    company_id: int,
+    message: str
+):
+    """
+    Search answers from company knowledge base.
+    """
+
+    try:
+
+        response = (
+            supabase
+            .table("knowledge_base")
+            .select("*")
+            .eq("company_id", company_id)
+            .eq("is_active", True)
+            .execute()
+        )
+
+
+        if not response.data:
+            return None
+
+
+        message_lower = message.lower()
+
+
+        best_match = None
+        best_score = 0
+
+
+        for item in response.data:
+
+            score = 0
+
+
+            text_fields = [
+                item.get("title", ""),
+                item.get("question", ""),
+                item.get("tags", [])
+            ]
+
+
+            searchable = " ".join(
+                [
+                    str(value)
+                    for value in text_fields
+                ]
+            ).lower()
+
+
+            words = message_lower.split()
+
+
+            for word in words:
+
+                if word in searchable:
+                    score += 1
+
+
+            if score > best_score:
+
+                best_score = score
+                best_match = item
+
+
+
+        if best_match and best_score > 0:
+
+            return best_match
+
+
+
+        return None
+
+
+
+    except Exception as error:
+
+        print(
+            "[KNOWLEDGE ERROR]",
+            error
+        )
+
+        return None

@@ -1,0 +1,350 @@
+"""
+Bitey SaaS Ticket Service
+
+Responsible for:
+
+- Creating support tickets
+- Searching tickets
+- Updating tickets
+- Linking customers
+- Multi-company isolation
+"""
+
+from datetime import datetime, timezone
+
+from app.database.supabase import supabase
+
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# CREATE
+# =====================================================
+
+def create_ticket(
+    company_id: int = DEFAULT_COMPANY_ID,
+    customer_id: int = None,
+    title: str = "New support request",
+    description: str = None,
+    service_id: int = None,
+    priority: str = "Normal",
+    intent: str = None,
+):
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    data = {
+        "empresa_id": company_id,
+        "cliente_id": customer_id,
+        "titulo": title,
+        "descripcion": description,
+        "servicio_id": service_id,
+        "prioridad": priority,
+        "estatus": "Aberto",
+        "categoria": "IA",
+        "intencion": intent,
+        "idioma": "pt",
+        "fecha_recepcion": now,
+        "created_at": now,
+    }
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .insert(data)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as e:
+        print(f"[TICKET CREATE ERROR] {e}")
+
+    return None
+
+
+
+# =====================================================
+# LIST
+# =====================================================
+
+def list_tickets(
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("empresa_id", company_id)
+            .order("id", desc=True)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        print(f"[TICKET LIST ERROR] {e}")
+
+    return []
+
+
+
+def list_customer_tickets(
+    customer_id: int,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("cliente_id", customer_id)
+            .eq("empresa_id", company_id)
+            .order("id", desc=True)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        print(f"[TICKET CUSTOMER LIST ERROR] {e}")
+
+    return []
+
+
+
+# =====================================================
+# GET
+# =====================================================
+
+def get_ticket(
+    ticket_id: int,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("id", ticket_id)
+            .eq("empresa_id", company_id)
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as e:
+
+        print(f"[TICKET GET ERROR] {e}")
+
+    return None
+
+
+
+# =====================================================
+# OPEN TICKETS
+# =====================================================
+
+def get_open_ticket(
+    customer_id: int,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("cliente_id", customer_id)
+            .eq("empresa_id", company_id)
+            .eq("estatus", "Aberto")
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as e:
+
+        print(f"[TICKET OPEN ERROR] {e}")
+
+    return None
+
+
+
+def get_open_ticket_by_service(
+    customer_id: int,
+    service_id: int,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    """
+    Search existing open ticket
+    for same customer and same service.
+    """
+
+    if not service_id:
+        return None
+
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("cliente_id", customer_id)
+            .eq("empresa_id", company_id)
+            .eq("servicio_id", service_id)
+            .eq("estatus", "Aberto")
+            .limit(1)
+            .execute()
+        )
+
+
+        if result.data:
+            return result.data[0]
+
+
+    except Exception as e:
+
+        print(
+            f"[TICKET OPEN SERVICE ERROR] {e}"
+        )
+
+
+    return None
+
+
+
+# =====================================================
+# UPDATE
+# =====================================================
+
+def update_ticket_status(
+    ticket_id: int,
+    status: str,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .update(
+                {
+                    "estatus": status
+                }
+            )
+            .eq("id", ticket_id)
+            .eq("empresa_id", company_id)
+            .execute()
+        )
+
+
+        if result.data:
+            return result.data[0]
+
+
+    except Exception as e:
+
+        print(f"[TICKET UPDATE STATUS ERROR] {e}")
+
+
+    return None
+
+
+
+def update_ticket(
+    ticket_id: int,
+    data: dict,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .update(data)
+            .eq("id", ticket_id)
+            .eq("empresa_id", company_id)
+            .execute()
+        )
+
+
+        if result.data:
+            return result.data[0]
+
+
+    except Exception as e:
+
+        print(f"[TICKET UPDATE ERROR] {e}")
+
+
+    return None
+
+
+
+# =====================================================
+# CLOSE / CANCEL
+# =====================================================
+
+def close_ticket(
+    ticket_id: int,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    return update_ticket_status(
+        ticket_id,
+        "Fechado",
+        company_id
+    )
+
+
+
+def cancel_ticket(
+    ticket_id: int,
+    company_id: int = DEFAULT_COMPANY_ID
+):
+
+    return update_ticket_status(
+        ticket_id,
+        "Cancelado",
+        company_id
+    )
+
+
+
+# =====================================================
+# LEGACY COMPATIBILITY
+# =====================================================
+
+crear_ticket = create_ticket
+listar_tickets = list_tickets
+listar_tickets_cliente = list_customer_tickets
+obtener_ticket = get_ticket
+buscar_ticket_abierto = get_open_ticket
+buscar_ticket_abierto_servicio = get_open_ticket_by_service
+actualizar_estado_ticket = update_ticket_status
+actualizar_ticket = update_ticket
+cerrar_ticket = close_ticket
+cancelar_ticket = cancel_ticket

@@ -1,0 +1,274 @@
+"""
+Bitey Core Engine
+
+Central AI orchestration layer.
+
+Flow:
+
+Channel
+   |
+   v
+Bitey Engine
+   |
+   +-- Customer Service
+   |
+   +-- Chat Memory Service
+   |
+   +-- Knowledge Service
+   |
+   +-- Intent Service
+   |
+   +-- Ticket Service
+
+"""
+
+from app.services.customer_service import (
+    get_or_create_customer,
+)
+
+from app.services.chat_memory import (
+    save_message,
+    update_message_intent,
+    update_message_ticket,
+)
+
+from app.services.knowledge_service import (
+    search_knowledge,
+)
+
+from app.services.intent_service import (
+    detect_intent,
+)
+
+from app.services.ticket_service import (
+    create_ticket,
+)
+
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# PROCESS MESSAGE
+# =====================================================
+
+def process_message(
+    company_id: int,
+    message: str,
+    whatsapp: str | None = None,
+    channel: str = "web",
+):
+
+    # -------------------------------------------------
+    # CUSTOMER
+    # -------------------------------------------------
+
+    customer = get_or_create_customer(
+        company_id=company_id,
+        whatsapp=whatsapp,
+    )
+
+    customer_id = customer.get(
+        "id"
+    )
+
+
+    # -------------------------------------------------
+    # SAVE USER MESSAGE
+    # -------------------------------------------------
+
+    user_message = save_message(
+        company_id=company_id,
+        customer_id=customer_id,
+        message=message,
+        role="user",
+        channel=channel,
+    )
+
+
+    message_id = None
+
+    if user_message:
+        message_id = user_message.get(
+            "id"
+        )
+
+
+    # -------------------------------------------------
+    # INITIAL VALUES
+    # -------------------------------------------------
+
+    intent = None
+    confidence = 0
+    service_id = None
+    response = None
+    requires_ticket = False
+    knowledge_found = False
+
+
+    # -------------------------------------------------
+    # SEARCH KNOWLEDGE BASE
+    # -------------------------------------------------
+
+    knowledge = search_knowledge(
+        company_id,
+        message,
+    )
+
+
+    if knowledge:
+
+        knowledge_found = True
+
+        intent = knowledge.get(
+            "intent"
+        )
+
+        service_id = knowledge.get(
+            "service_id"
+        )
+
+        response = knowledge.get(
+            "answer"
+        )
+
+        requires_ticket = knowledge.get(
+            "requires_ticket",
+            False
+        )
+
+        # Knowledge base has maximum confidence
+
+        confidence = 100
+
+
+
+    # -------------------------------------------------
+    # INTENT DETECTION FALLBACK
+    # -------------------------------------------------
+
+    if not intent:
+
+        intent_result = detect_intent(
+            company_id,
+            message,
+        )
+
+
+        if intent_result:
+
+            intent = intent_result.get(
+                "intent"
+            )
+
+            confidence = intent_result.get(
+                "confidence",
+                0
+            )
+
+
+    # -------------------------------------------------
+    # UPDATE USER MESSAGE AI DATA
+    # -------------------------------------------------
+
+    if message_id:
+
+        update_message_intent(
+            message_id=message_id,
+            intent=intent,
+            service_id=service_id,
+        )
+
+
+    # -------------------------------------------------
+    # CREATE SUPPORT TICKET
+    # -------------------------------------------------
+
+    ticket_id = None
+
+
+    if requires_ticket and service_id:
+
+
+        ticket = create_ticket(
+            company_id=company_id,
+            customer_id=customer_id,
+            service_id=service_id,
+            intent=intent,
+            description=message,
+            channel=channel,
+        )
+
+
+        if ticket:
+
+            ticket_id = ticket.get(
+                "id"
+            )
+
+
+            if message_id:
+
+                update_message_ticket(
+                    message_id=message_id,
+                    ticket_id=ticket_id,
+                )
+
+
+    # -------------------------------------------------
+    # DEFAULT RESPONSE
+    # -------------------------------------------------
+
+    if not response:
+
+        response = (
+            "Obrigado pela mensagem. "
+            "Vou analisar sua solicitação."
+        )
+
+
+    # -------------------------------------------------
+    # SAVE BITEY RESPONSE
+    # -------------------------------------------------
+
+    bot_message = save_message(
+        company_id=company_id,
+        customer_id=customer_id,
+        message=response,
+        role="assistant",
+        intent=intent,
+        service_id=service_id,
+        ticket_id=ticket_id,
+        channel=channel,
+    )
+
+
+    # -------------------------------------------------
+    # RETURN RESULT
+    # -------------------------------------------------
+
+    return {
+
+        "customer_id": customer_id,
+
+        "message": message,
+
+        "response": response,
+
+        "intent": intent,
+
+        "confidence": confidence,
+
+        "service_id": service_id,
+
+        "ticket_id": ticket_id,
+
+        "knowledge_found": knowledge_found,
+
+        "bot_message_id": (
+            bot_message.get("id")
+            if bot_message
+            else None
+        ),
+
+    }

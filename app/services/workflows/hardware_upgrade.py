@@ -1,29 +1,26 @@
 """
-Hardware Upgrade Workflow
+=====================================================
+BiteFixes Hardware Upgrade Workflow V16
+=====================================================
 
-Handles hardware upgrade requests.
+Workflow:
+    Hardware Upgrade
 
-Examples:
+Responsibilities:
+    • SSD upgrades
+    • RAM upgrades
+    • Performance optimization
+    • Workflow response generation
 
-- SSD upgrade
-- RAM upgrade
-- Performance improvement
-- Hardware optimization
+This module NEVER:
+    • Creates tickets
+    • Saves messages
+    • Creates notifications
+    • Accesses the database
 
+Those responsibilities belong to Bitey Core.
 
-Architecture:
-
-Bitey
- |
- v
-Workflow Service
- |
- v
-Hardware Upgrade Workflow
- |
- +--> Ticket Service
- |
- +--> Base Utilities
+=====================================================
 """
 
 from __future__ import annotations
@@ -33,152 +30,99 @@ from typing import Any, Dict, Optional
 from app.services.workflows.base import (
     build_response,
     build_error,
-    add_action,
     extract_knowledge,
-    get_or_create_ticket,
 )
 
+# =====================================================
+# CONSTANTS
+# =====================================================
+
+WORKFLOW_NAME = "hardware_upgrade"
+
+DEFAULT_RESPONSE = (
+    "Podemos mejorar el rendimiento del notebook "
+    "instalando un SSD y ampliando la memoria RAM."
+)
+
+DEFAULT_ACTIONS = [
+    "hardware_upgrade",
+    "technical_support",
+]
 
 # =====================================================
-# EXECUTE
+# WORKFLOW
 # =====================================================
-
 
 def execute(
+    *,
     company_id: int,
     customer_id: int,
     message: str,
     knowledge: Optional[Dict[str, Any]] = None,
-    intent: Optional[Dict[str, Any]] = None,
+    service: Optional[Dict[str, Any]] = None,
+    intent: Optional[str] = None,
+    language: str = "es",
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Execute hardware upgrade workflow.
+    Executes the Hardware Upgrade workflow.
+
+    Parameters
+    ----------
+    company_id
+    customer_id
+    message
+    knowledge
+    service
+    intent
+    language
+    metadata
+
+    Returns
+    -------
+    Standard workflow response.
     """
-
-    actions = []
-
 
     try:
 
-        add_action(
-            actions,
-            "hardware_upgrade_started"
-        )
-
-
-        knowledge_data = extract_knowledge(
-            knowledge
-        )
-
+        info = extract_knowledge(knowledge)
 
         response = (
-            knowledge_data.get("response")
-            or
-            "Podemos realizar upgrade de SSD "
-            "e memória RAM para melhorar "
-            "o desempenho do equipamento."
+            info.get("response")
+            or DEFAULT_RESPONSE
         )
 
-
-        service_id = knowledge_data.get(
-            "service_id"
-        )
-
-
-        workflow_intent = (
-            knowledge_data.get("intent")
-            or
-            (
-                intent.get("intent")
-                if intent
-                else "hardware_upgrade"
+        service_id = (
+            info.get("service_id")
+            or (
+                service.get("id")
+                if service
+                else None
             )
         )
 
-
-        ticket = None
-
-
-        if knowledge_data.get(
-            "requires_ticket",
-            True
-        ):
-
-            ticket = get_or_create_ticket(
-
-                company_id=company_id,
-
-                customer_id=customer_id,
-
-                title="Hardware Upgrade",
-
-                description=message,
-
-                service_id=service_id,
-
-                intent=workflow_intent
-
-            )
-
-
-            if ticket:
-
-                add_action(
-                    actions,
-                    "ticket_created_or_found"
-                )
-
-
-                response += (
-
-                    "\n\nSeu atendimento foi registrado. "
-
-                    f"Código do ticket: "
-                    f"{ticket.get('codigo_ticket')}"
-
-                )
-
+        workflow_metadata = {
+            "workflow": WORKFLOW_NAME,
+            "language": language,
+            **(metadata or {}),
+        }
 
         return build_response(
-
             response=response,
-
-            intent=workflow_intent,
-
-            ticket=ticket,
-
+            intent=intent,
             service_id=service_id,
-
-            actions=actions,
-
-            metadata={
-
-                "workflow":
-                    "hardware_upgrade"
-
-            }
-
+            actions=DEFAULT_ACTIONS.copy(),
+            metadata=workflow_metadata,
         )
-
 
     except Exception as exc:
 
-
         print(
-            "[HARDWARE WORKFLOW ERROR]",
-            exc
+            f"[{WORKFLOW_NAME.upper()} ERROR]",
+            repr(exc),
         )
 
-
         return build_error(
-
-            message=(
-                "No fue posible procesar "
-                "el upgrade de hardware."
-            ),
-
+            message="No fue posible ejecutar el workflow.",
             error=str(exc),
-
-            actions=actions
-
         )

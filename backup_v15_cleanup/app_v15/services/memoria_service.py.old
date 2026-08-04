@@ -1,0 +1,122 @@
+"""
+Bitey Memory Service
+
+Customer memory and conversation context.
+"""
+
+from app.supabase_client import supabase
+
+
+
+def get_customer_history(
+    customer_id: int,
+    limit: int = 10
+):
+
+    try:
+
+        result = (
+
+            supabase
+
+            .table("messages")
+
+            .select("*")
+
+            .eq(
+                "customer_id",
+                customer_id
+            )
+
+            .order(
+                "created_at",
+                desc=True
+            )
+
+            .limit(limit)
+
+            .execute()
+
+        )
+
+
+        return result.data or []
+
+
+    except Exception as error:
+
+        print(
+            "[MEMORY SERVICE ERROR]",
+            error
+        )
+
+        return []
+
+
+
+def get_customer_tickets(
+    customer_id: int
+):
+
+    try:
+
+        result = (
+
+            supabase
+
+            .table("tickets")
+
+            .select("*")
+
+            .eq(
+                "customer_id",
+                customer_id
+            )
+
+            .order(
+                "created_at",
+                desc=True
+            )
+
+            .execute()
+
+        )
+
+
+        return result.data or []
+
+
+    except Exception as error:
+
+        print(
+            "[TICKET MEMORY ERROR]",
+            error
+        )
+
+        return []
+
+
+
+def build_customer_context(
+    customer_id: int
+):
+
+    history = get_customer_history(
+        customer_id
+    )
+
+
+    tickets = get_customer_tickets(
+        customer_id
+    )
+
+
+    return {
+
+        "customer_id": customer_id,
+
+        "recent_messages": history,
+
+        "tickets": tickets
+
+    }

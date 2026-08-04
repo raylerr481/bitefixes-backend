@@ -1,0 +1,571 @@
+"""
+Bitey AI Core
+
+Main engine responsible for:
+
+- customer management
+- conversation management
+- language normalization
+- intent detection
+- knowledge search
+- ticket creation
+- conversation updates
+"""
+
+
+from app.database.supabase import supabase_manager
+from app.services.ticket_service import create_ticket
+from app.core.language import normalize_message
+
+
+
+def find_customer_by_phone(
+    company_id,
+    phone
+):
+
+    supabase = supabase_manager.get_client()
+
+    try:
+
+        result = (
+            supabase
+            .table("customers")
+            .select("*")
+            .eq("company_id", company_id)
+            .eq("phone", phone)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+
+        print("[CUSTOMER ERROR]", error)
+
+    return None
+
+
+
+def create_customer(
+    company_id,
+    phone,
+    name
+):
+
+    supabase = supabase_manager.get_client()
+
+    try:
+
+        result = (
+            supabase
+            .table("customers")
+            .insert(
+                {
+                    "company_id": company_id,
+                    "phone": phone,
+                    "full_name": name,
+                    "preferred_language": "pt-BR",
+                    "customer_type": "individual",
+                    "is_active": True
+                }
+            )
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+
+        print("[CREATE CUSTOMER ERROR]", error)
+
+    return None
+
+
+
+def find_or_create_conversation(
+    customer_id
+):
+
+    supabase = supabase_manager.get_client()
+
+    try:
+
+        result = (
+            supabase
+            .table("conversations")
+            .select("*")
+            .eq(
+                "customer_id",
+                customer_id
+            )
+            .eq(
+                "status",
+                "active"
+            )
+            .limit(1)
+            .execute()
+        )
+
+
+        if result.data:
+            return result.data[0]
+
+
+
+        result = (
+            supabase
+            .table("conversations")
+            .insert(
+                {
+                    "customer_id": customer_id,
+                    "channel": "website",
+                    "status": "active",
+                    "agent": "bitey",
+                    "handled_by_ai": True,
+                    "requires_human": False
+                }
+            )
+            .execute()
+        )
+
+
+        if result.data:
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print("[CONVERSATION ERROR]", error)
+
+
+    return None
+
+
+
+def detect_intent(
+    message
+):
+
+    text = normalize_message(
+        message
+    )
+
+
+    text = text.lower().strip()
+
+
+
+    if (
+        (
+            "notebook" in text
+            or "computador" in text
+            or "pc" in text
+        )
+        and
+        (
+            "lento" in text
+            or "lenta" in text
+            or "trava" in text
+            or "upgrade" in text
+        )
+    ):
+
+        return "hardware_upgrade", 1
+
+
+
+    if (
+        "tela" in text
+        and
+        (
+            "quebrada" in text
+            or "quebrou" in text
+            or "rota" in text
+            or "trocar" in text
+        )
+    ):
+
+        return "screen_repair", 1
+
+
+
+    if (
+        "bateria" in text
+        and
+        (
+            "ruim" in text
+            or "descarrega" in text
+        )
+    ):
+
+        return "battery_problem", 1
+
+
+
+    if (
+        "wifi" in text
+        or "internet" in text
+        or "rede" in text
+    ):
+
+        return "network_support", 1
+
+
+
+    return None, 0
+
+
+
+def find_knowledge(
+    message,
+    intent
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("knowledge_base")
+            .select("*")
+            .execute()
+        )
+
+
+        if not result.data:
+
+            return None
+
+
+
+        # Prioridade por intenção
+
+        for item in result.data:
+
+
+            item_intent = str(
+                item.get("intent","")
+            ).lower()
+
+
+
+            if intent and item_intent == intent.lower():
+
+                return item
+
+
+
+        # fallback por texto
+
+        words = [
+            w.lower()
+            for w in message.split()
+            if len(w) > 3
+        ]
+
+
+        best = None
+        score = 0
+
+
+
+        for item in result.data:
+
+
+            content = (
+                str(item.get("question",""))
+                +
+                " "
+                +
+                str(item.get("answer",""))
+            ).lower()
+
+
+
+            current = 0
+
+
+            for word in words:
+
+                if word in content:
+
+                    current += 1
+
+
+
+            if current > score:
+
+                score = current
+                best = item
+
+
+
+        return best
+
+
+    except Exception as error:
+
+        print("[KNOWLEDGE ERROR]", error)
+
+
+    return None
+
+
+
+def find_existing_ticket(
+    customer_id,
+    intent
+):
+
+    if not intent:
+
+        return None
+
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("id")
+            .eq(
+                "customer_id",
+                customer_id
+            )
+            .eq(
+                "intent",
+                intent
+            )
+            .eq(
+                "status",
+                "open"
+            )
+            .order(
+                "id",
+                desc=True
+            )
+            .limit(1)
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]["id"]
+
+
+    except Exception as error:
+
+        print("[TICKET SEARCH ERROR]", error)
+
+
+    return None
+
+
+
+def update_conversation(
+    conversation_id,
+    ticket_id,
+    intent,
+    response
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        (
+            supabase
+            .table("conversations")
+            .update(
+                {
+                    "ticket_id": ticket_id,
+                    "last_intent": intent,
+                    "last_response": response,
+                    "handled_by_ai": True,
+                    "requires_human": False
+                }
+            )
+            .eq(
+                "id",
+                conversation_id
+            )
+            .execute()
+        )
+
+
+    except Exception as error:
+
+        print("[UPDATE ERROR]", error)
+
+
+
+def process_message(
+    company_id: int,
+    phone: str,
+    message: str,
+    customer_name: str
+):
+
+
+    customer = find_customer_by_phone(
+        company_id,
+        phone
+    )
+
+
+    if not customer:
+
+        customer = create_customer(
+            company_id,
+            phone,
+            customer_name
+        )
+
+
+    if not customer:
+
+        return {
+            "error": "customer_failed"
+        }
+
+
+
+    customer_id = customer["id"]
+
+
+
+    conversation = find_or_create_conversation(
+        customer_id
+    )
+
+
+    if not conversation:
+
+        return {
+            "error": "conversation_failed"
+        }
+
+
+
+    conversation_id = conversation["id"]
+
+
+
+    intent, confidence = detect_intent(
+        message
+    )
+
+
+
+    knowledge = find_knowledge(
+        message,
+        intent
+    )
+
+
+
+    if knowledge:
+
+        response = knowledge.get(
+            "answer"
+        )
+
+    else:
+
+        response = (
+            "Recebi sua solicitação. "
+            "Vou encaminhar para análise técnica."
+        )
+
+
+
+    ticket_id = find_existing_ticket(
+        customer_id,
+        intent
+    )
+
+
+
+    if not ticket_id and intent:
+
+
+        titles = {
+
+            "hardware_upgrade":
+                "Notebook lento",
+
+            "screen_repair":
+                "Troca de tela",
+
+            "battery_problem":
+                "Problema de bateria",
+
+            "network_support":
+                "Problema de rede"
+
+        }
+
+
+
+        ticket = create_ticket(
+
+            company_id=company_id,
+
+            customer_id=customer_id,
+
+            title=titles.get(
+                intent,
+                "Novo atendimento"
+            ),
+
+            description=message,
+
+            intent=intent
+
+        )
+
+
+        if ticket:
+
+            ticket_id = ticket["id"]
+
+
+
+    update_conversation(
+        conversation_id,
+        ticket_id,
+        intent,
+        response
+    )
+
+
+
+    return {
+
+        "customer_id": customer_id,
+
+        "conversation_id": conversation_id,
+
+        "response": response,
+
+        "intent": intent,
+
+        "confidence": confidence,
+
+        "knowledge_found": bool(knowledge),
+
+        "ticket_id": ticket_id,
+
+        "channel": "website"
+
+    }

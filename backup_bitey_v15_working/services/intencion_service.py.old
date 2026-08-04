@@ -1,0 +1,109 @@
+"""
+Bitey Intent Service
+
+Detects the user's intent using the synonym database.
+"""
+
+import unicodedata
+
+from app.database.supabase import supabase
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# TEXT NORMALIZATION
+# =====================================================
+
+def normalize_text(text: str) -> str:
+
+    if not text:
+        return ""
+
+    text = text.lower()
+
+    text = unicodedata.normalize("NFD", text)
+
+    text = "".join(
+        c for c in text
+        if unicodedata.category(c) != "Mn"
+    )
+
+    return text
+
+
+# =====================================================
+# LOAD SYNONYMS
+# =====================================================
+
+def load_synonyms(
+    company_id: int = DEFAULT_COMPANY_ID,
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("sinonimos_ia")
+            .select("*")
+            .eq("empresa_id", company_id)
+            .order("peso", desc=True)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as error:
+
+        print(f"[INTENT LOAD ERROR] {error}")
+
+        return []
+
+
+# =====================================================
+# DETECT INTENT
+# =====================================================
+
+def detectar_intencion(
+    mensaje: str,
+    company_id: int = DEFAULT_COMPANY_ID,
+):
+
+    mensaje = normalize_text(mensaje)
+
+    sinonimos = load_synonyms(company_id)
+
+    mejor = None
+    mayor_peso = -1
+
+    for item in sinonimos:
+
+        palabra = normalize_text(
+            item.get("sinonimo", "")
+        )
+
+        if palabra and palabra in mensaje:
+
+            peso = item.get("peso", 1)
+
+            if peso > mayor_peso:
+
+                mayor_peso = peso
+
+                mejor = item
+
+    if not mejor:
+        return None
+
+    return {
+        "intencion": mejor.get("intencion"),
+        "servicio_id": mejor.get("servicio_id"),
+        "confianza": mayor_peso,
+    }
+
+
+# =====================================================
+# COMPATIBILITY
+# =====================================================
+
+detect_intent = detectar_intencion

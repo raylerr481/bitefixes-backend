@@ -1,28 +1,33 @@
 """
+=====================================================
+BiteFixes Workflow Base Utilities V16
+=====================================================
+
+Shared utilities for the BiteFixes Workflow Engine.
+
+Responsibilities
+----------------
+✓ Standard workflow responses
+✓ Error handling
+✓ Workflow actions
+✓ Knowledge extraction
+✓ Ticket management
+✓ CRM preparation
+
+Architecture
+
+Bitey Core
+    │
+    ▼
+Workflow Router
+    │
+    ▼
+Workflow Module
+    │
+    ▼
 Workflow Base Utilities
 
-Shared utilities for BiteFixes workflow engine.
-
-Responsibilities:
-
-- Standardize workflow responses.
-- Handle workflow errors.
-- Manage workflow actions.
-- Extract knowledge information.
-- Create or reuse support tickets.
-
-Architecture:
-
-Bitey
-  |
-  v
-Workflow Service
-  |
-  v
-Workflow Modules
-  |
-  v
-Base Utilities
+=====================================================
 """
 
 from __future__ import annotations
@@ -39,7 +44,6 @@ from app.services.ticket_service import (
 # RESPONSE BUILDERS
 # =====================================================
 
-
 def build_response(
     response: str,
     intent: Optional[str] = None,
@@ -49,18 +53,14 @@ def build_response(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Creates a standardized successful workflow response.
+    Standard successful workflow response.
     """
 
     return {
         "success": True,
         "response": response,
         "ticket": ticket,
-        "ticket_id": (
-            ticket.get("id")
-            if ticket
-            else None
-        ),
+        "ticket_id": ticket.get("id") if ticket else None,
         "service_id": service_id,
         "intent": intent,
         "actions": actions or [],
@@ -74,7 +74,7 @@ def build_error(
     actions: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Creates a standardized workflow error response.
+    Standard workflow error response.
     """
 
     return {
@@ -91,9 +91,8 @@ def build_error(
 
 
 # =====================================================
-# ACTION MANAGEMENT
+# ACTIONS
 # =====================================================
-
 
 def add_action(
     actions: List[str],
@@ -110,15 +109,14 @@ def add_action(
 
 
 # =====================================================
-# KNOWLEDGE HELPERS
+# KNOWLEDGE
 # =====================================================
-
 
 def extract_knowledge(
     knowledge: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Extracts normalized information from knowledge results.
+    Normalizes knowledge base information.
     """
 
     if not knowledge:
@@ -130,30 +128,16 @@ def extract_knowledge(
         }
 
     return {
-
-        "response": knowledge.get(
-            "answer"
-        ),
-
-        "service_id": knowledge.get(
-            "service_id"
-        ),
-
-        "intent": knowledge.get(
-            "intent"
-        ),
-
-        "requires_ticket": knowledge.get(
-            "requires_ticket",
-            False
-        ),
+        "response": knowledge.get("answer"),
+        "service_id": knowledge.get("service_id"),
+        "intent": knowledge.get("intent"),
+        "requires_ticket": knowledge.get("requires_ticket", False),
     }
 
 
 # =====================================================
 # TICKET MANAGEMENT
 # =====================================================
-
 
 def get_or_create_ticket(
     company_id: int,
@@ -162,38 +146,40 @@ def get_or_create_ticket(
     description: str,
     service_id: Optional[int],
     intent: Optional[str],
+    language: str = "es",
+    channel: str = "website",
+    ticket_type: str = "technical_support",
 ) -> Optional[Dict[str, Any]]:
     """
-    Returns an existing open ticket or creates a new one.
+    Returns an existing open ticket.
+    Creates a new ticket if none exists.
     """
 
     try:
 
         ticket = get_open_ticket(
-            customer_id,
-            service_id
+            customer_id=customer_id,
+            service_id=service_id,
         )
 
         if ticket:
             return ticket
 
-
         return create_ticket(
-            company_id,
-            customer_id,
-            title,
-            description,
-            service_id,
-            intent,
+            customer_id=customer_id,
+            service_id=service_id,
+            description=description,
+            title=title,
+            intent=intent,
+            company_id=company_id,
+            channel=channel,
+            language=language,
+            ticket_type=ticket_type,
         )
-
 
     except Exception as exc:
 
-        print(
-            "[WORKFLOW TICKET ERROR]",
-            exc
-        )
+        print("[WORKFLOW TICKET ERROR]", exc)
 
         return None
 
@@ -201,7 +187,6 @@ def get_or_create_ticket(
 # =====================================================
 # METADATA
 # =====================================================
-
 
 def merge_metadata(
     base: Optional[Dict[str, Any]],
@@ -211,7 +196,7 @@ def merge_metadata(
     Merges workflow metadata.
     """
 
-    result = {}
+    result: Dict[str, Any] = {}
 
     if base:
         result.update(base)

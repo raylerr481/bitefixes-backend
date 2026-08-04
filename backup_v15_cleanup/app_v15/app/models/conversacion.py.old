@@ -1,0 +1,11 @@
+from pydantic import BaseModel
+from typing import Optional
+
+
+class Conversation(BaseModel):
+
+    id: int
+    empresa_id: int
+    cliente_id: int
+    canal: str
+    estado: Optional[str] = "open"

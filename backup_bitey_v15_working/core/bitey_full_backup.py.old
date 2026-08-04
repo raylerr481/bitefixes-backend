@@ -1,0 +1,364 @@
+"""
+Bitey Core AI Engine
+
+Responsible for:
+- understanding customer messages
+- finding knowledge answers
+- creating support tickets
+- managing conversations
+"""
+
+from app.database.supabase import supabase_manager
+from app.services.ticket_service import create_ticket
+
+
+def detect_intent(message: str):
+    """
+    Simple intent classifier.
+    Later can be replaced by LLM classifier.
+    """
+
+    text = message.lower()
+
+    rules = {
+
+        "hardware_upgrade": [
+            "notebook lento",
+            "computador lento",
+            "pc lento",
+            "upgrade",
+            "memória",
+            "ssd",
+            "ram"
+        ],
+
+        "screen_repair": [
+            "tela quebrada",
+            "trocar tela",
+            "tela rachada",
+            "display",
+            "lcd"
+        ],
+
+        "battery_problem": [
+            "bateria",
+            "não segura carga",
+            "descarrega rápido"
+        ],
+
+        "network_support": [
+            "wifi",
+            "internet",
+            "rede"
+        ]
+    }
+
+
+    for intent, words in rules.items():
+
+        for word in words:
+
+            if word in text:
+                return intent, 1
+
+
+    return None, 0
+
+
+
+def find_knowledge(intent, message):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("knowledge_base")
+            .select("*")
+            .execute()
+        )
+
+
+        if not result.data:
+            return None
+
+
+        text = message.lower()
+
+
+        for item in result.data:
+
+            question = (
+                str(item.get("question",""))
+                .lower()
+            )
+
+            answer = (
+                str(item.get("answer",""))
+                .lower()
+            )
+
+
+            if (
+                any(
+                    word in question or word in answer
+                    for word in text.split()
+                    if len(word) > 3
+                )
+            ):
+                return item
+
+
+    except Exception as error:
+
+        print(
+            "[KNOWLEDGE ERROR]",
+            error
+        )
+
+
+    return None
+
+
+
+
+def find_open_ticket(
+    customer_id,
+    intent
+):
+
+    if not intent:
+        return None
+
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("tickets")
+            .select("id")
+            .eq(
+                "customer_id",
+                customer_id
+            )
+            .eq(
+                "intent",
+                intent
+            )
+            .eq(
+                "status",
+                "open"
+            )
+            .order(
+                "id",
+                desc=True
+            )
+            .limit(1)
+            .execute()
+        )
+
+
+        if result.data:
+            return result.data[0]["id"]
+
+
+    except Exception as error:
+
+        print(
+            "[OPEN TICKET ERROR]",
+            error
+        )
+
+
+    return None
+
+
+
+
+def update_conversation(
+    conversation_id,
+    ticket_id,
+    intent,
+    response
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        (
+            supabase
+            .table("conversations")
+            .update(
+                {
+                    "ticket_id": ticket_id,
+                    "last_intent": intent,
+                    "last_response": response,
+                    "handled_by_ai": True,
+                    "requires_human": False
+                }
+            )
+            .eq(
+                "id",
+                conversation_id
+            )
+            .execute()
+        )
+
+
+    except Exception as error:
+
+        print(
+            "[CONVERSATION ERROR]",
+            error
+        )
+
+
+
+
+
+def process_message(
+    company_id: int,
+    phone: str,
+    message: str,
+    customer_name: str
+):
+
+
+    supabase = supabase_manager.get_client()
+
+
+    customer_id = 1
+
+
+    conversation_id = 1
+
+
+
+    intent, confidence = detect_intent(
+        message
+    )
+
+
+
+    knowledge = find_knowledge(
+        intent,
+        message
+    )
+
+
+
+    if knowledge:
+
+        response = knowledge.get(
+            "answer"
+        )
+
+    else:
+
+        response = (
+            "Recebi sua solicitação. "
+            "Vou encaminhar para análise técnica."
+        )
+
+
+
+    ticket_id = find_open_ticket(
+        customer_id,
+        intent
+    )
+
+
+
+    if not ticket_id:
+
+
+        title_map = {
+
+            "hardware_upgrade":
+                "Notebook lento",
+
+            "screen_repair":
+                "Troca de tela",
+
+            "battery_problem":
+                "Problema de bateria",
+
+            "network_support":
+                "Problema de rede"
+        }
+
+
+        title = title_map.get(
+            intent,
+            "Novo atendimento"
+        )
+
+
+        ticket = create_ticket(
+
+            company_id=company_id,
+
+            customer_id=customer_id,
+
+            title=title,
+
+            description=message,
+
+            intent=intent
+
+        )
+
+
+        if ticket:
+
+            ticket_id = ticket["id"]
+
+
+
+    update_conversation(
+
+        conversation_id,
+
+        ticket_id,
+
+        intent,
+
+        response
+
+    )
+
+
+
+    return {
+
+        "customer_id":
+            customer_id,
+
+        "conversation_id":
+            conversation_id,
+
+        "response":
+            response,
+
+        "intent":
+            intent,
+
+        "confidence":
+            confidence,
+
+        "knowledge_found":
+            bool(knowledge),
+
+        "ticket_id":
+            ticket_id,
+
+        "channel":
+            "website"
+    }

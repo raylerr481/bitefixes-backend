@@ -1,0 +1,10 @@
+from pydantic import BaseModel
+from typing import Optional
+
+
+class Cliente(BaseModel):
+    id: Optional[int] = None
+    nombre: Optional[str] = None
+    whatsapp: str
+    email: Optional[str] = None
+    canal_origen: Optional[str] = "web"

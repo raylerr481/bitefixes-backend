@@ -1,0 +1,170 @@
+"""
+Bitey History Service
+
+Manages customer conversation history.
+
+Database table:
+
+historial_chats
+"""
+
+from datetime import datetime, timezone
+
+from app.database.supabase import supabase
+
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# SAVE MESSAGE
+# =====================================================
+
+def save_message(
+    customer_id: int,
+    message: str,
+    role: str = "user",
+    company_id: int = DEFAULT_COMPANY_ID,
+    channel: str = "web",
+    intent: str | None = None,
+    service_id: int | None = None,
+    ticket_id: int | None = None,
+):
+
+    try:
+
+        data = {
+
+            "empresa_id": company_id,
+
+            "cliente_id": customer_id,
+
+            "mensaje": message,
+
+            "rol": role,
+
+            "remitente": None,
+
+            "canal": channel,
+
+            "intencion": intent,
+
+            "servicio_id": service_id,
+
+            "ticket_id": ticket_id,
+
+            "tipo_mensaje": "texto",
+
+            "created_at": datetime.now(
+                timezone.utc
+            ).isoformat()
+
+        }
+
+
+        result = (
+
+            supabase
+
+            .table(
+                "historial_chats"
+            )
+
+            .insert(
+                data
+            )
+
+            .execute()
+
+        )
+
+
+        return result.data
+
+
+    except Exception as error:
+
+        print(
+            "[HISTORY SAVE ERROR]",
+            error
+        )
+
+        return None
+
+
+
+# =====================================================
+# GET CUSTOMER HISTORY
+# =====================================================
+
+def get_customer_history(
+    customer_id: int,
+    company_id: int = DEFAULT_COMPANY_ID,
+    limit: int = 10
+):
+
+    try:
+
+        result = (
+
+            supabase
+
+            .table(
+                "historial_chats"
+            )
+
+            .select("*")
+
+            .eq(
+                "empresa_id",
+                company_id
+            )
+
+            .eq(
+                "cliente_id",
+                customer_id
+            )
+
+            .order(
+                "created_at",
+                desc=True
+            )
+
+            .limit(
+                limit
+            )
+
+            .execute()
+
+        )
+
+
+        return result.data or []
+
+
+    except Exception as error:
+
+        print(
+            "[HISTORY ERROR]",
+            error
+        )
+
+        return []
+
+
+
+# =====================================================
+# LEGACY COMPATIBILITY
+# =====================================================
+
+def obtener_historial_cliente(
+    cliente_id: int,
+    empresa_id: int = DEFAULT_COMPANY_ID,
+    limite: int = 10
+):
+
+    return get_customer_history(
+        customer_id=cliente_id,
+        company_id=empresa_id,
+        limit=limite
+    )

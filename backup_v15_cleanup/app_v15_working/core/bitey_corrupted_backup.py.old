@@ -1,0 +1,89 @@
+from app.database.supabase import supabase_manager
+from app.core.language import normalize_message
+
+
+supabase = supabase_manager.get_client()
+
+
+def find_customer_by_phone(phone):
+    try:
+        result = (
+            supabase
+            .table("customers")
+            .select("*")
+            .eq("phone", phone)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+        print("[CUSTOMER SEARCH ERROR]", error)
+
+    return None
+
+
+
+def create_customer(phone, name):
+
+    data = {
+        "phone": phone,
+        "name": name
+    }
+
+    result = (
+        supabase
+        .table("customers")
+        .insert(data)
+        .execute()
+    )
+
+    return result.data[0]
+
+
+
+def find_or_create_customer(phone, name):
+
+    customer = find_customer_by_phone(phone)
+
+    if customer:
+        return customer
+
+    return create_customer(phone, name)
+
+
+
+def find_or_create_conversation(
+    customer_id,
+    company_id
+):
+
+    result = (
+        supabase
+        .table("conversations")
+        .select("*")
+        .eq("customer_id", customer_id)
+        .eq("company_id", company_id)
+        .execute()
+    )
+
+
+    if result.data:
+        return result.data[0]
+
+
+    data = {
+        "customer_id": customer_id,
+        "company_id": company_id
+    }
+
+
+    result = (
+        supabase
+        .table("conversations")
+        .insert(data)
+        .execute()
+    )
+
+    return result.data[0]

@@ -1,0 +1,122 @@
+"""
+Bitey History Service
+
+Compatibility layer for conversation history.
+
+This service delegates all persistence to chat_memory.py
+while preserving the legacy API used throughout the project.
+"""
+
+from app.services.chat_memory import (
+    save_message,
+    get_memory,
+    get_recent_context,
+    get_last_message,
+    update_message_intent,
+    update_message_ticket,
+)
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# SAVE MESSAGE
+# =====================================================
+
+def guardar_mensaje(
+    cliente_id: int,
+    mensaje: str,
+    rol: str = "user",
+    canal: str = "web",
+    intencion: str | None = None,
+    servicio_id: int | None = None,
+    ticket_id: int | None = None,
+    confianza: int | None = None,
+):
+    """
+    Legacy wrapper used by Bitey.
+    """
+
+    return save_message(
+        company_id=DEFAULT_COMPANY_ID,
+        customer_id=cliente_id,
+        message=mensaje,
+        role=rol,
+        intent=intencion,
+        service_id=servicio_id,
+        ticket_id=ticket_id,
+        channel=canal,
+    )
+
+
+# =====================================================
+# GET HISTORY
+# =====================================================
+
+def obtener_historial(
+    cliente_id: int,
+    limite: int = 20,
+):
+    return get_memory(
+        customer_id=cliente_id,
+        company_id=DEFAULT_COMPANY_ID,
+        limit=limite,
+    )
+
+
+# =====================================================
+# GET CONTEXT
+# =====================================================
+
+def obtener_contexto(
+    cliente_id: int,
+    limite: int = 10,
+):
+    return get_recent_context(
+        customer_id=cliente_id,
+        company_id=DEFAULT_COMPANY_ID,
+        limit=limite,
+    )
+
+
+# =====================================================
+# LAST MESSAGE
+# =====================================================
+
+def obtener_ultimo_mensaje(
+    cliente_id: int,
+):
+    return get_last_message(
+        customer_id=cliente_id,
+        company_id=DEFAULT_COMPANY_ID,
+    )
+
+
+# =====================================================
+# UPDATE INTENT
+# =====================================================
+
+def actualizar_intencion(
+    mensaje_id: int,
+    intencion: str,
+    servicio_id: int | None = None,
+):
+    return update_message_intent(
+        message_id=mensaje_id,
+        intent=intencion,
+        service_id=servicio_id,
+    )
+
+
+# =====================================================
+# UPDATE TICKET
+# =====================================================
+
+def actualizar_ticket(
+    mensaje_id: int,
+    ticket_id: int,
+):
+    return update_message_ticket(
+        message_id=mensaje_id,
+        ticket_id=ticket_id,
+    )

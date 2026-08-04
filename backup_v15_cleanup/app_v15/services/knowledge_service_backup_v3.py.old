@@ -1,0 +1,220 @@
+"""
+Bitey Knowledge Service
+
+Responsible for:
+
+- Searching company knowledge base
+- Matching customer questions
+- Returning answers
+- Supporting SaaS multi company
+
+Database:
+
+knowledge_base
+"""
+
+import unicodedata
+import re
+
+from app.database.supabase import supabase
+
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# TEXT NORMALIZATION
+# =====================================================
+
+def normalize_text(text: str) -> str:
+
+    if not text:
+        return ""
+
+    text = text.lower()
+
+    text = unicodedata.normalize(
+        "NFD",
+        text
+    )
+
+    text = "".join(
+        c
+        for c in text
+        if unicodedata.category(c) != "Mn"
+    )
+
+    text = re.sub(
+        r"[^a-z0-9\s]",
+        " ",
+        text
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    return text.strip()
+
+
+
+# =====================================================
+# WORDS
+# =====================================================
+
+def extract_words(text):
+
+    return set(
+        normalize_text(text).split()
+    )
+
+
+
+# =====================================================
+# SEARCH KNOWLEDGE
+# =====================================================
+
+def search_knowledge(
+    company_id: int,
+    message: str
+):
+
+    try:
+
+        result = (
+
+            supabase
+
+            .table(
+                "knowledge_base"
+            )
+
+            .select("*")
+
+            .eq(
+                "company_id",
+                company_id
+            )
+
+            .eq(
+                "is_active",
+                True
+            )
+
+            .execute()
+
+        )
+
+
+        knowledge_items = result.data or []
+
+
+        if not knowledge_items:
+
+            return None
+
+
+
+        user_words = extract_words(
+            message
+        )
+
+
+        best = None
+        best_score = 0
+
+
+
+        for item in knowledge_items:
+
+
+            score = 0
+
+
+            title_words = extract_words(
+                item.get(
+                    "title",
+                    ""
+                )
+            )
+
+
+            question_words = extract_words(
+                item.get(
+                    "question",
+                    ""
+                )
+            )
+
+
+            tags = item.get(
+                "tags",
+                []
+            )
+
+
+            tag_words = set()
+
+
+            if isinstance(tags,list):
+
+                for tag in tags:
+
+                    tag_words.update(
+                        extract_words(tag)
+                    )
+
+
+
+            score += len(
+                user_words & title_words
+            ) * 3
+
+
+            score += len(
+                user_words & question_words
+            ) * 2
+
+
+            score += len(
+                user_words & tag_words
+            ) * 4
+
+
+
+            if score > best_score:
+
+                best_score = score
+
+                best = item
+
+
+
+        if best_score < 3:
+
+            return None
+
+
+
+        return best
+
+
+
+    except Exception as error:
+
+        print(
+            "[KNOWLEDGE ERROR]",
+            error
+        )
+
+        return None
+
+
+
+# =====================================================
+# COMPATIBILITY
+# =====================================================
+
+buscar_conocimiento = search_knowledge

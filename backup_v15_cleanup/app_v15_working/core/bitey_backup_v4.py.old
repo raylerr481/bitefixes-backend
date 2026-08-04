@@ -1,0 +1,322 @@
+"""
+Bitey Core Engine
+
+Central AI orchestration layer.
+
+Architecture:
+
+Channel
+    |
+    v
+Bitey Core
+    |
+    +--> Customer
+    |
+    +--> Memory
+    |
+    +--> Knowledge
+    |
+    +--> Intent Detection
+    |
+    +--> Ticket Management
+
+Multi-company SaaS ready.
+"""
+
+
+from app.services.customer_service import (
+    get_or_create_customer
+)
+
+from app.services.chat_memory import (
+    save_message,
+    get_memory
+)
+
+from app.services.knowledge_service import (
+    search_knowledge
+)
+
+from app.services.intent_service import (
+    detect_intent
+)
+
+from app.services.ticket_service import (
+    create_ticket,
+    get_open_ticket_by_service
+)
+
+
+DEFAULT_COMPANY_ID = 1
+
+
+
+def process_message(
+    company_id: int = DEFAULT_COMPANY_ID,
+    message: str = "",
+    whatsapp: str = "",
+    customer_name: str | None = None,
+    channel: str = "web",
+):
+
+    """
+    Main Bitey workflow.
+    """
+
+
+    # ===============================
+    # CUSTOMER
+    # ===============================
+
+    customer = get_or_create_customer(
+        company_id=company_id,
+        whatsapp=whatsapp,
+        name=customer_name
+    )
+
+
+    if not customer:
+
+        return {
+            "error": "customer_not_found"
+        }
+
+
+    customer_id = customer["id"]
+
+
+
+    # ===============================
+    # USER MESSAGE MEMORY
+    # ===============================
+
+    save_message(
+
+        company_id=company_id,
+
+        customer_id=customer_id,
+
+        message=message,
+
+        role="user",
+
+        channel=channel
+
+    )
+
+
+
+    # ===============================
+    # LOAD MEMORY
+    # ===============================
+
+    memory = get_memory(
+        customer_id
+    )
+
+
+
+    intent = None
+
+    service_id = None
+
+    response = None
+
+    ticket = None
+
+
+
+    # ===============================
+    # KNOWLEDGE SEARCH
+    # ===============================
+
+
+    knowledge = search_knowledge(
+
+        message,
+
+        company_id
+
+    )
+
+
+
+    if knowledge:
+
+
+        intent = knowledge.get(
+            "intent"
+        )
+
+
+        service_id = knowledge.get(
+            "service_id"
+        )
+
+
+        response = knowledge.get(
+            "answer"
+        )
+
+
+        requires_ticket = knowledge.get(
+            "requires_ticket",
+            False
+        )
+
+
+
+    else:
+
+
+        detected = detect_intent(
+
+            message,
+
+            company_id
+
+        )
+
+
+        if detected:
+
+
+            intent = detected.get(
+                "intent"
+            )
+
+
+            service_id = detected.get(
+                "service_id"
+            )
+
+
+
+        requires_ticket = True
+
+
+        response = (
+            "Entendi sua solicitação. "
+            "Vou registrar o atendimento."
+        )
+
+
+
+    # ===============================
+    # TICKET CONTROL
+    # ===============================
+
+
+    if service_id:
+
+
+        ticket = get_open_ticket_by_service(
+
+            customer_id,
+
+            service_id,
+
+            company_id
+
+        )
+
+
+
+    if not ticket and requires_ticket:
+
+
+        ticket = create_ticket(
+
+            company_id=company_id,
+
+            customer_id=customer_id,
+
+            title="Novo atendimento",
+
+            description=message,
+
+            service_id=service_id,
+
+            priority="Normal",
+
+            intent=intent
+
+        )
+
+
+
+    ticket_id = None
+
+
+    if ticket:
+
+        ticket_id = ticket.get(
+            "id"
+        )
+
+        response += (
+            f" Atendimento registrado. "
+            f"Ticket #{ticket_id}."
+        )
+
+
+
+    # ===============================
+    # BOT MEMORY
+    # ===============================
+
+
+    save_message(
+
+        company_id=company_id,
+
+        customer_id=customer_id,
+
+        message=response,
+
+        role="bot",
+
+        intent=intent,
+
+        service_id=service_id,
+
+        ticket_id=ticket_id,
+
+        channel=channel
+
+    )
+
+
+
+    # ===============================
+    # RESPONSE
+    # ===============================
+
+
+    return {
+
+
+        "company_id": company_id,
+
+
+        "channel": channel,
+
+
+        "customer": customer,
+
+
+        "memory": memory,
+
+
+        "intent": intent,
+
+
+        "service_id": service_id,
+
+
+        "ticket_id": ticket_id,
+
+
+        "response": response
+
+    }

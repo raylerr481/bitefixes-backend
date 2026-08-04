@@ -1,0 +1,181 @@
+"""
+Chat Memory Service
+
+Manages BiteFixes conversation memory.
+
+Responsibilities:
+
+- Save messages.
+- Retrieve customer memory.
+- Maintain conversation history.
+"""
+
+
+from datetime import datetime, timezone
+
+from app.database.supabase import supabase
+
+
+
+DEFAULT_COMPANY_ID = 1
+
+
+
+# =====================================================
+# SAVE MESSAGE
+# =====================================================
+
+def save_message(
+    company_id: int,
+    customer_id: int,
+    message: str,
+    role: str,
+    intent: str = None,
+    service_id: int = None,
+    ticket_id: int = None,
+    channel: str = "web"
+):
+
+
+    data = {
+
+        "empresa_id": company_id,
+
+        "cliente_id": customer_id,
+
+        "mensaje": message,
+
+        "rol": role,
+
+        "remitente": None,
+
+        "canal": channel,
+
+        "intencion": intent,
+
+        "servicio_id": service_id,
+
+        "ticket_id": ticket_id,
+
+        "tipo_mensaje": "texto",
+
+        "created_at":
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+
+    }
+
+
+    try:
+
+        result = (
+            supabase
+            .table("historial_chats")
+            .insert(data)
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print(
+            f"[MEMORY] Save error: {error}"
+        )
+
+
+    return None
+
+
+
+# =====================================================
+# GET MEMORY
+# =====================================================
+
+def get_memory(
+    customer_id: int,
+    limit: int = 20
+):
+
+
+    try:
+
+        result = (
+
+            supabase
+
+            .table(
+                "historial_chats"
+            )
+
+            .select("*")
+
+            .eq(
+                "cliente_id",
+                customer_id
+            )
+
+            .order(
+                "created_at",
+                desc=True
+            )
+
+            .limit(
+                limit
+            )
+
+            .execute()
+
+        )
+
+
+        return result.data or []
+
+
+    except Exception as error:
+
+        print(
+            f"[MEMORY] Read error: {error}"
+        )
+
+
+        return []
+
+
+
+# =====================================================
+# CUSTOMER MEMORY
+# =====================================================
+
+def get_customer_memory(
+    customer_id: int
+):
+
+    return get_memory(
+        customer_id
+    )
+
+
+
+# =====================================================
+# LEGACY COMPATIBILITY
+# =====================================================
+
+def obtener_memoria_cliente(
+    cliente_id: int
+):
+
+    return get_memory(
+        cliente_id
+    )
+
+
+
+# Old compatibility name
+
+guardar_mensaje = save_message

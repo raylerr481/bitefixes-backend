@@ -1,0 +1,152 @@
+"""
+Legacy IA Engine
+
+Compatibility layer.
+
+The new orchestration is implemented in app.core.bitey.
+This module is kept only for backward compatibility.
+"""
+
+from app.services.customer_service import get_or_create_customer
+from app.services.chat_memory import save_message
+from app.services.intent_service import detect_intent
+from app.services.knowledge_service import search_knowledge
+from app.services.ticket_service import (
+    find_open_ticket,
+    create_ticket,
+)
+
+
+def analyze_message(
+    message: str,
+    whatsapp: str = None,
+    customer_name: str = None,
+    company_id: int = 1,
+):
+    """
+    Legacy compatibility function.
+    """
+
+    # ==========================
+    # CUSTOMER
+    # ==========================
+
+    customer = get_or_create_customer(
+        whatsapp=whatsapp,
+        name=customer_name,
+        company_id=company_id,
+    )
+
+    customer_id = customer["id"]
+
+    # ==========================
+    # SAVE USER MESSAGE
+    # ==========================
+
+    save_message(
+        company_id=company_id,
+        customer_id=customer_id,
+        message=message,
+        role="user",
+    )
+
+    # ==========================
+    # INTENT
+    # ==========================
+
+    detected = detect_intent(
+        message,
+        company_id,
+    )
+
+    if not detected:
+
+        response = (
+            "Não consegui identificar exatamente sua solicitação. "
+            "Pode fornecer mais detalhes?"
+        )
+
+        save_message(
+            company_id=company_id,
+            customer_id=customer_id,
+            message=response,
+            role="bot",
+        )
+
+        return {
+            "customer": customer,
+            "intent": None,
+            "response": response,
+        }
+
+    intent = detected.get("intent")
+    service_id = detected.get("service_id")
+
+    # ==========================
+    # KNOWLEDGE
+    # ==========================
+
+    knowledge = search_knowledge(
+        message,
+        company_id,
+    )
+
+    if knowledge:
+
+        response = knowledge.get(
+            "answer",
+            "Encontrei informações para sua solicitação.",
+        )
+
+        if knowledge.get("requires_ticket"):
+
+            ticket = find_open_ticket(
+                company_id=company_id,
+                customer_id=customer_id,
+                service_id=service_id,
+            )
+
+            if not ticket:
+
+                ticket = create_ticket(
+                    company_id=company_id,
+                    customer_id=customer_id,
+                    title=knowledge.get("title", intent),
+                    description=message,
+                    service_id=service_id,
+                    priority=knowledge.get("priority", "Normal"),
+                )
+
+    else:
+
+        response = (
+            "Posso ajudá-lo com essa solicitação. "
+            "Vou analisar os detalhes."
+        )
+
+    # ==========================
+    # SAVE BOT RESPONSE
+    # ==========================
+
+    save_message(
+        company_id=company_id,
+        customer_id=customer_id,
+        message=response,
+        role="bot",
+        intent=intent,
+        service_id=service_id,
+    )
+
+    return {
+        "customer": customer,
+        "intent": intent,
+        "service_id": service_id,
+        "response": response,
+    }
+
+
+# ------------------------------------------------------------------
+# Legacy aliases (temporary)
+# ------------------------------------------------------------------
+
+analizar_mensaje = analyze_message

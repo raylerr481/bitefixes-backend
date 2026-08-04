@@ -1,0 +1,710 @@
+"""
+Bitey AI Core
+
+Main engine responsible for:
+
+- customer management
+- conversation management
+- intent detection
+- knowledge search
+- ticket creation
+- conversation updates
+"""
+
+
+from app.database.supabase import supabase_manager
+from app.services.ticket_service import create_ticket
+
+
+
+
+# =====================================================
+# CUSTOMER MANAGEMENT
+# =====================================================
+
+
+def find_customer_by_phone(
+    company_id,
+    phone
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("customers")
+            .select("*")
+            .eq(
+                "company_id",
+                company_id
+            )
+            .eq(
+                "phone",
+                phone
+            )
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print(
+            "[CUSTOMER SEARCH ERROR]",
+            error
+        )
+
+
+    return None
+
+
+
+
+
+def create_customer(
+    company_id,
+    phone,
+    name
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("customers")
+            .insert(
+                {
+                    "company_id": company_id,
+                    "phone": phone,
+                    "full_name": name,
+                    "preferred_language": "pt-BR",
+                    "customer_type": "individual",
+                    "is_active": True
+                }
+            )
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print(
+            "[CUSTOMER CREATE ERROR]",
+            error
+        )
+
+
+    return None
+
+
+
+
+
+# =====================================================
+# CONVERSATIONS
+# =====================================================
+
+
+def find_or_create_conversation(
+    customer_id
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("conversations")
+            .select("*")
+            .eq(
+                "customer_id",
+                customer_id
+            )
+            .eq(
+                "status",
+                "active"
+            )
+            .limit(1)
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+
+        result = (
+            supabase
+            .table("conversations")
+            .insert(
+                {
+                    "customer_id": customer_id,
+                    "channel": "website",
+                    "status": "active",
+                    "agent": "bitey",
+                    "handled_by_ai": True,
+                    "requires_human": False
+                }
+            )
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as error:
+
+        print(
+            "[CONVERSATION CREATE ERROR]",
+            error
+        )
+
+
+    return None
+# =====================================================
+# INTENT DETECTION
+# =====================================================
+
+
+def detect_intent(
+    message: str
+):
+
+    text = message.lower().strip()
+
+
+
+    # Laptop / Notebook lento
+
+    if (
+        (
+            "notebook" in text
+            or "laptop" in text
+            or "computador" in text
+            or "computadora" in text
+            or "pc" in text
+            or "desktop" in text
+        )
+        and
+        (
+            "lento" in text
+            or "lenta" in text
+            or "lentos" in text
+            or "lentitud" in text
+            or "travando" in text
+            or "trava" in text
+            or "desempenho" in text
+            or "mejorar" in text
+            or "melhorar" in text
+            or "upgrade" in text
+        )
+    ):
+
+        return "hardware_upgrade", 1
+
+
+
+
+    # Tela / pantalla quebrada
+
+    if (
+        (
+            "tela" in text
+            or "pantalla" in text
+            or "display" in text
+        )
+        and
+        (
+            "rota" in text
+            or "roto" in text
+            or "quebrada" in text
+            or "quebrado" in text
+            or "quebrou" in text
+            or "trocar" in text
+            or "cambiar" in text
+            or "substituir" in text
+        )
+    ):
+
+        return "mobile_screen_repair", 1
+
+
+
+
+
+    # Bateria
+
+    if (
+        "bateria" in text
+        and
+        (
+            "ruim" in text
+            or "fraca" in text
+            or "descarga" in text
+            or "descarrega" in text
+            or "carga" in text
+        )
+    ):
+
+        return "battery_problem", 1
+
+
+
+
+
+    # Rede / Wifi
+
+    if (
+        "wifi" in text
+        or "internet" in text
+        or "rede" in text
+        or "conexion" in text
+        or "conexão" in text
+    ):
+
+        return "network_support", 1
+
+
+
+
+
+    # Computador sem funcionar
+
+    if (
+        (
+            "computador" in text
+            or "pc" in text
+            or "desktop" in text
+        )
+        and
+        (
+            "nao funciona" in text
+            or "não funciona" in text
+            or "não liga" in text
+            or "no enciende" in text
+        )
+    ):
+
+        return "computer_repair", 1
+
+
+
+
+
+    return None, 0
+
+
+
+
+
+# =====================================================
+# KNOWLEDGE BASE SEARCH
+# =====================================================
+
+
+def find_knowledge(
+    message,
+    intent=None
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("knowledge_base")
+            .select("*")
+            .execute()
+        )
+
+
+        if not result.data:
+
+            return None
+
+
+
+
+        words = [
+
+            word.lower()
+
+            for word in message.split()
+
+            if len(word) > 2
+
+        ]
+
+
+
+        best = None
+        best_score = 0
+
+
+
+
+        for item in result.data:
+
+
+            score = 0
+
+
+
+            item_intent = item.get(
+                "intent"
+            )
+
+
+
+            # Prioriza intent igual
+
+            if intent and item_intent == intent:
+
+                score += 10
+
+
+
+
+            content = (
+
+                str(item.get("title", ""))
+
+                + " "
+
+                + str(item.get("question", ""))
+
+                + " "
+
+                + str(item.get("answer", ""))
+
+                + " "
+
+                + " ".join(
+                    item.get("tags", [])
+                )
+
+            ).lower()
+
+
+
+
+            for word in words:
+
+                if word in content:
+
+                    score += 1
+
+
+
+
+            if score > best_score:
+
+                best_score = score
+
+                best = item
+
+
+
+
+
+        return best
+
+
+
+    except Exception as error:
+
+        print(
+            "[KNOWLEDGE ERROR]",
+            error
+        )
+
+
+
+    return None
+# =====================================================
+# INTENT DETECTION
+# =====================================================
+
+
+def detect_intent(
+    message: str
+):
+
+    text = message.lower().strip()
+
+
+
+    # Laptop / Notebook lento
+
+    if (
+        (
+            "notebook" in text
+            or "laptop" in text
+            or "computador" in text
+            or "computadora" in text
+            or "pc" in text
+            or "desktop" in text
+        )
+        and
+        (
+            "lento" in text
+            or "lenta" in text
+            or "lentos" in text
+            or "lentitud" in text
+            or "travando" in text
+            or "trava" in text
+            or "desempenho" in text
+            or "mejorar" in text
+            or "melhorar" in text
+            or "upgrade" in text
+        )
+    ):
+
+        return "hardware_upgrade", 1
+
+
+
+
+    # Tela / pantalla quebrada
+
+    if (
+        (
+            "tela" in text
+            or "pantalla" in text
+            or "display" in text
+        )
+        and
+        (
+            "rota" in text
+            or "roto" in text
+            or "quebrada" in text
+            or "quebrado" in text
+            or "quebrou" in text
+            or "trocar" in text
+            or "cambiar" in text
+            or "substituir" in text
+        )
+    ):
+
+        return "mobile_screen_repair", 1
+
+
+
+
+
+    # Bateria
+
+    if (
+        "bateria" in text
+        and
+        (
+            "ruim" in text
+            or "fraca" in text
+            or "descarga" in text
+            or "descarrega" in text
+            or "carga" in text
+        )
+    ):
+
+        return "battery_problem", 1
+
+
+
+
+
+    # Rede / Wifi
+
+    if (
+        "wifi" in text
+        or "internet" in text
+        or "rede" in text
+        or "conexion" in text
+        or "conexão" in text
+    ):
+
+        return "network_support", 1
+
+
+
+
+
+    # Computador sem funcionar
+
+    if (
+        (
+            "computador" in text
+            or "pc" in text
+            or "desktop" in text
+        )
+        and
+        (
+            "nao funciona" in text
+            or "não funciona" in text
+            or "não liga" in text
+            or "no enciende" in text
+        )
+    ):
+
+        return "computer_repair", 1
+
+
+
+
+
+    return None, 0
+
+
+
+
+
+# =====================================================
+# KNOWLEDGE BASE SEARCH
+# =====================================================
+
+
+def find_knowledge(
+    message,
+    intent=None
+):
+
+    supabase = supabase_manager.get_client()
+
+
+    try:
+
+        result = (
+            supabase
+            .table("knowledge_base")
+            .select("*")
+            .execute()
+        )
+
+
+        if not result.data:
+
+            return None
+
+
+
+
+        words = [
+
+            word.lower()
+
+            for word in message.split()
+
+            if len(word) > 2
+
+        ]
+
+
+
+        best = None
+        best_score = 0
+
+
+
+
+        for item in result.data:
+
+
+            score = 0
+
+
+
+            item_intent = item.get(
+                "intent"
+            )
+
+
+
+            # Prioriza intent igual
+
+            if intent and item_intent == intent:
+
+                score += 10
+
+
+
+
+            content = (
+
+                str(item.get("title", ""))
+
+                + " "
+
+                + str(item.get("question", ""))
+
+                + " "
+
+                + str(item.get("answer", ""))
+
+                + " "
+
+                + " ".join(
+                    item.get("tags", [])
+                )
+
+            ).lower()
+
+
+
+
+            for word in words:
+
+                if word in content:
+
+                    score += 1
+
+
+
+
+            if score > best_score:
+
+                best_score = score
+
+                best = item
+
+
+
+
+
+        return best
+
+
+
+    except Exception as error:
+
+        print(
+            "[KNOWLEDGE ERROR]",
+            error
+        )
+
+
+
+    return None
+    

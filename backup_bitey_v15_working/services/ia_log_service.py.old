@@ -1,0 +1,100 @@
+"""
+AI Log Service
+
+Stores Bitey AI decisions and responses.
+"""
+
+from app.database.supabase import supabase
+
+
+def save_ai_decision(
+    conversation_id: int,
+    input_message: str,
+    intent: str,
+    confidence: int,
+    response_text: str,
+    knowledge_found: bool,
+    knowledge_id: int = None,
+    company_id: int = None,
+    model_used: str = "bitey-core",
+):
+    """
+    Save AI decision log.
+    """
+
+    try:
+
+        data = {
+            "conversation_id": conversation_id,
+            "input_message": input_message,
+            "detected_intent": intent,
+            "confidence": confidence,
+            "knowledge_found": knowledge_found,
+            "knowledge_id": knowledge_id,
+            "ai_response": response_text,
+            "model_used": model_used,
+        }
+
+
+        if company_id:
+
+            data["company_id"] = company_id
+
+
+        result = (
+            supabase.table("ai_logs")
+            .insert(data)
+            .execute()
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+        return None
+
+
+    except Exception as error:
+
+        print(
+            "[AI LOG ERROR]",
+            error
+        )
+
+        return None
+
+
+
+def get_ai_logs(
+    company_id: int,
+    limit: int = 50,
+):
+    """
+    Retrieve AI decisions.
+    """
+
+    try:
+
+        result = (
+            supabase.table("ai_logs")
+            .select("*")
+            .eq("company_id", company_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+
+
+        return result.data or []
+
+
+    except Exception as error:
+
+        print(
+            "[AI LOG ERROR]",
+            error
+        )
+
+        return []

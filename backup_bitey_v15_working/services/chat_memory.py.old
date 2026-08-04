@@ -1,0 +1,221 @@
+"""
+Bitey Chat Memory Service
+
+Central conversation memory layer.
+
+Responsibilities:
+- Save user messages
+- Save assistant responses
+- Retrieve conversation history
+- Build AI context
+- Update AI metadata
+- Link messages with tickets
+"""
+
+from datetime import datetime, timezone
+
+from app.database.supabase import supabase
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# SAVE MESSAGE
+# =====================================================
+
+def save_message(
+    company_id: int = DEFAULT_COMPANY_ID,
+    customer_id: int | None = None,
+    message: str = "",
+    role: str = "user",
+    intent: str | None = None,
+    service_id: int | None = None,
+    ticket_id: int | None = None,
+    channel: str = "web",
+    conversation_id: int | None = None,
+    sender: str | None = None,
+):
+
+    data = {
+        "empresa_id": company_id,
+        "cliente_id": customer_id,
+        "conversacion_id": conversation_id,
+        "mensaje": message,
+        "rol": role,
+        "remitente": sender,
+        "canal": channel,
+        "intencion": intent,
+        "servicio_id": service_id,
+        "ticket_id": ticket_id,
+        "tipo_mensaje": "texto",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        result = (
+            supabase
+            .table("historial_chats")
+            .insert(data)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+        print(f"[MEMORY SAVE ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# GET MEMORY
+# =====================================================
+
+def get_memory(
+    customer_id: int,
+    company_id: int = DEFAULT_COMPANY_ID,
+    limit: int = 20,
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("historial_chats")
+            .select("*")
+            .eq("empresa_id", company_id)
+            .eq("cliente_id", customer_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+
+        return list(reversed(result.data or []))
+
+    except Exception as error:
+        print(f"[MEMORY READ ERROR] {error}")
+        return []
+
+
+# =====================================================
+# BUILD CONTEXT
+# =====================================================
+
+def get_recent_context(
+    customer_id: int,
+    company_id: int = DEFAULT_COMPANY_ID,
+    limit: int = 10,
+):
+
+    context = []
+
+    for item in get_memory(customer_id, company_id, limit):
+
+        role = item.get("rol")
+
+        if role == "assistant":
+            role = "bot"
+
+        context.append({
+            "role": role,
+            "content": item.get("mensaje"),
+        })
+
+    return context
+
+
+# =====================================================
+# LAST MESSAGE
+# =====================================================
+
+def get_last_message(
+    customer_id: int,
+    company_id: int = DEFAULT_COMPANY_ID,
+):
+
+    memory = get_memory(customer_id, company_id, 1)
+
+    if memory:
+        return memory[-1]
+
+    return None
+
+
+# =====================================================
+# UPDATE MESSAGE INTENT
+# =====================================================
+
+def update_message_intent(
+    message_id: int,
+    intent: str | None = None,
+    service_id: int | None = None,
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("historial_chats")
+            .update({
+                "intencion": intent,
+                "servicio_id": service_id,
+            })
+            .eq("id", message_id)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+        print(f"[MEMORY INTENT UPDATE ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# UPDATE MESSAGE TICKET
+# =====================================================
+
+def update_message_ticket(
+    message_id: int,
+    ticket_id: int,
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("historial_chats")
+            .update({
+                "ticket_id": ticket_id,
+            })
+            .eq("id", message_id)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as error:
+        print(f"[MEMORY TICKET UPDATE ERROR] {error}")
+
+    return None
+
+
+# =====================================================
+# COMPATIBILITY ALIASES
+# =====================================================
+
+guardar_mensaje = save_message
+
+obtener_memoria = get_memory
+
+obtener_memoria_cliente = get_memory
+
+get_customer_memory = get_memory
+
+build_context = get_recent_context
+
+last_message = get_last_message

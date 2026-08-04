@@ -1,0 +1,100 @@
+"""
+Bitey Knowledge Service
+
+Searches the knowledge base and returns the best answer.
+"""
+
+from app.database.supabase import supabase
+
+DEFAULT_COMPANY_ID = 1
+
+
+# =====================================================
+# GET KNOWLEDGE RESPONSE
+# =====================================================
+
+def obtener_respuesta(
+    intencion: str,
+    servicio_id: int | None = None,
+    company_id: int = DEFAULT_COMPANY_ID,
+):
+
+    if not intencion:
+        return None
+
+    try:
+
+        consulta = (
+            supabase
+            .table("base_conhecimento")
+            .select("*")
+            .eq("empresa_id", company_id)
+            .eq("activo", True)
+            .eq("intencion", intencion)
+        )
+
+        if servicio_id:
+            consulta = consulta.eq(
+                "servicio_id",
+                servicio_id
+            )
+
+        resultado = (
+            consulta
+            .limit(1)
+            .execute()
+        )
+
+        if resultado.data:
+            return resultado.data[0]
+
+    except Exception as error:
+
+        print(
+            f"[KNOWLEDGE ERROR] {error}"
+        )
+
+    return None
+
+
+# =====================================================
+# SEARCH KNOWLEDGE
+# =====================================================
+
+def buscar_conocimiento(
+    mensaje: str,
+    company_id: int = DEFAULT_COMPANY_ID,
+):
+
+    if not mensaje:
+        return []
+
+    try:
+
+        resultado = (
+            supabase
+            .table("base_conhecimento")
+            .select("*")
+            .eq("empresa_id", company_id)
+            .eq("activo", True)
+            .ilike("pregunta", f"%{mensaje}%")
+            .execute()
+        )
+
+        return resultado.data or []
+
+    except Exception as error:
+
+        print(
+            f"[KNOWLEDGE SEARCH ERROR] {error}"
+        )
+
+        return []
+
+
+# =====================================================
+# COMPATIBILITY
+# =====================================================
+
+search_knowledge = buscar_conocimiento
+get_answer = obtener_respuesta
