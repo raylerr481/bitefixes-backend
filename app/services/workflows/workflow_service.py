@@ -1,146 +1,96 @@
 """
-=====================================================
-BiteFixes Workflow Router V16
-=====================================================
-
-Central workflow dispatcher.
-
-Flow
-
-Customer
-    │
-    ▼
-Intent Detection
-    │
-    ▼
-Workflow Router
-    │
-    ▼
-Workflow Module
-    │
-    ▼
-Workflow Result
-
-The router NEVER:
-
-- creates tickets
-- saves messages
-- creates notifications
-
-Those responsibilities belong to Bitey Core.
-
-=====================================================
+Bitey Workflow Router V18
+Central workflow executor
 """
 
-from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
-
-from app.services.workflows import (
-    ai_assistant,
-    camera_installation,
-    computer_repair,
-    default,
-    hardware_upgrade,
-    mobile_repair,
-    network_support,
-    windows_installation,
-)
+import importlib
 
 
-# =====================================================
-# WORKFLOW REGISTRY
-# =====================================================
 
-WORKFLOW_MAP: Dict[str, Callable] = {
-
-    "computer_repair":
-        computer_repair.execute,
-
-    "hardware_upgrade":
-        hardware_upgrade.execute,
-
-    "mobile_repair":
-        mobile_repair.execute,
-
-    "windows_installation":
-        windows_installation.execute,
-
-    "network_configuration":
-        network_support.execute,
-
-    "network_support":
-        network_support.execute,
+WORKFLOW_MAP = {
 
     "cctv_installation":
-        camera_installation.execute,
+        "app.services.workflows.camera_installation",
 
-    "camera_installation":
-        camera_installation.execute,
+    "windows_installation":
+        "app.services.workflows.windows_installation",
 
-    "ai_assistant":
-        ai_assistant.execute,
+    "hardware_upgrade":
+        "app.services.workflows.hardware_upgrade",
+
+    "computer_repair":
+        "app.services.workflows.computer_repair"
 
 }
 
 
-# =====================================================
-# ROUTER
-# =====================================================
 
 def execute_workflow(
-    *,
-    intent: Optional[str],
-    company_id: int,
-    customer_id: int,
-    message: str,
-    knowledge: Optional[Dict[str, Any]] = None,
-    service: Optional[Dict[str, Any]] = None,
-    language: str = "es",
-    metadata: Optional[Dict[str, Any]] = None,
+    intent,
+    message,
+    company_id=None,
+    customer_id=None,
+    service_id=None,
+    customer=None,
+    language=None,
+    knowledge=None,
+    **kwargs
 ):
 
-    workflow = WORKFLOW_MAP.get(
-        intent,
-        default.execute
-    )
+
+    module_path = WORKFLOW_MAP.get(intent)
+
+
+    if not module_path:
+
+        return {
+
+            "success": False,
+
+            "workflow": None,
+
+            "response":
+                "No workflow configured."
+
+        }
+
+
 
     try:
 
-        print(
-            "[WORKFLOW ROUTER]",
-            {
-                "intent": intent,
-                "module": workflow.__module__
-            }
-        )
+        module = importlib.import_module(module_path)
 
-        return workflow(
+
+
+        result = module.execute(
+
+            message=message,
 
             company_id=company_id,
 
             customer_id=customer_id,
 
-            message=message,
-
-            knowledge=knowledge,
-
-            service=service,
+            service_id=service_id,
 
             intent=intent,
 
-            language=language,
+            customer=customer,
 
-            metadata=metadata or {}
+            language=language
 
         )
 
-    except Exception as error:
 
-        print(
-            "[WORKFLOW ERROR]",
-            repr(error)
-        )
+        return result
+
+
+
+    except Exception as e:
+
+
+        print("[WORKFLOW EXECUTION ERROR]", repr(e))
+
 
         return {
 
@@ -152,6 +102,6 @@ def execute_workflow(
                 "Workflow execution failed.",
 
             "error":
-                str(error)
+                str(e)
 
         }

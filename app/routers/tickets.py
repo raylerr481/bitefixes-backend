@@ -1,131 +1,222 @@
-# app/routers/tickets.py
+"""
+BiteFixes Tickets Router V16
+
+HTTP API layer for ticket management.
+
+Responsibilities:
+- Receive ticket API requests
+- Call ticket_service
+- Return JSON responses
+
+Does NOT:
+- Create business logic
+- Detect intent
+- Manage workflows
+- Talk directly with Supabase
+
+Architecture:
+
+Client
+  |
+  v
+FastAPI Router
+  |
+  v
+Ticket Service
+  |
+  v
+Supabase
+"""
+
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 
 from app.services.ticket_service import (
-    listar_tickets,
+    create_ticket,
+    process_ticket,
+    find_open_ticket,
+    update_ticket_language,
     obtener_ticket,
-    crear_ticket,
-    actualizar_ticket,
-    cerrar_ticket,
-    cancelar_ticket,
+    listar_tickets,
 )
+
 
 router = APIRouter(
     prefix="/tickets",
     tags=["Tickets"]
 )
 
+
 # =====================================================
-# LISTAR TICKETS
+# LIST TICKETS
 # =====================================================
 
 @router.get("/")
-def listar():
-    return listar_tickets()
+def list_tickets():
+
+    try:
+
+        tickets = listar_tickets()
+
+        return {
+            "status": "success",
+            "tickets": tickets
+        }
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error)
+        )
+
 
 
 # =====================================================
-# OBTENER TICKET
+# GET TICKET BY ID
 # =====================================================
 
 @router.get("/{ticket_id}")
-def obtener(ticket_id: int):
+def get_ticket(ticket_id: int):
 
-    ticket = obtener_ticket(ticket_id)
+    try:
 
-    if ticket is None:
+        ticket = obtener_ticket(ticket_id)
+
+        if not ticket:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Ticket not found"
+            )
+
+
+        return {
+            "status": "success",
+            "ticket": ticket
+        }
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as error:
+
         raise HTTPException(
-            status_code=404,
-            detail="Ticket no encontrado"
+            status_code=500,
+            detail=str(error)
         )
 
-    return ticket
 
 
 # =====================================================
-# CREAR TICKET
+# CREATE TICKET
 # =====================================================
 
 @router.post("/")
-def crear(
-    cliente_id: int,
-    servicio_id: int,
-    descripcion: str,
-    titulo: str = "Nuevo Ticket"
+def create_ticket_endpoint(
+    customer_id: int,
+    service_id: Optional[int] = None,
+    description: str = "",
+    title: str = "Support Request",
+    intent: Optional[str] = None,
+    company_id: int = 1,
+    channel: str = "website",
+    language: str = "es"
 ):
 
-    ticket = crear_ticket(
-        cliente_id=cliente_id,
-        servicio_id=servicio_id,
-        descripcion=descripcion,
-        titulo=titulo
-    )
+    try:
 
-    if ticket is None:
+        ticket = create_ticket(
+            customer_id=customer_id,
+            service_id=service_id,
+            description=description,
+            title=title,
+            intent=intent,
+            company_id=company_id,
+            channel=channel,
+            language=language
+        )
+
+
+        return {
+            "status": "success",
+            "ticket": ticket
+        }
+
+
+    except Exception as error:
+
         raise HTTPException(
             status_code=500,
-            detail="No fue posible crear el ticket."
+            detail=str(error)
         )
 
-    return ticket
 
 
 # =====================================================
-# ACTUALIZAR TICKET
+# FIND OPEN TICKET
 # =====================================================
 
-@router.put("/{ticket_id}")
-def actualizar(
-    ticket_id: int,
-    datos: dict
+@router.get("/customer/{customer_id}/open")
+def get_open_ticket(
+    customer_id: int,
+    service_id: Optional[int] = None
 ):
 
-    ticket = actualizar_ticket(
-        ticket_id,
-        datos
-    )
+    try:
 
-    if ticket is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Ticket no encontrado."
+        ticket = find_open_ticket(
+            customer_id=customer_id,
+            service_id=service_id
         )
 
-    return ticket
+
+        return {
+            "status": "success",
+            "ticket": ticket
+        }
 
 
-# =====================================================
-# CERRAR TICKET
-# =====================================================
+    except Exception as error:
 
-@router.put("/{ticket_id}/cerrar")
-def cerrar(ticket_id: int):
-
-    ticket = cerrar_ticket(ticket_id)
-
-    if ticket is None:
         raise HTTPException(
-            status_code=404,
-            detail="Ticket no encontrado."
+            status_code=500,
+            detail=str(error)
         )
 
-    return ticket
 
 
 # =====================================================
-# CANCELAR TICKET
+# UPDATE TICKET LANGUAGE
 # =====================================================
 
-@router.put("/{ticket_id}/cancelar")
-def cancelar(ticket_id: int):
+@router.patch("/{ticket_id}/language")
+def change_ticket_language(
+    ticket_id: int,
+    language: str
+):
 
-    ticket = cancelar_ticket(ticket_id)
+    try:
 
-    if ticket is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Ticket no encontrado."
+        result = update_ticket_language(
+            ticket_id=ticket_id,
+            language=language
         )
 
-    return ticket
+
+        return {
+            "status": "success",
+            "ticket": result
+        }
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error)
+        )

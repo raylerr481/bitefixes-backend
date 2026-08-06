@@ -1,137 +1,286 @@
 """
-Knowledge Service
-Search answers from knowledge_base.
+BiteFixes Knowledge Service V2
+
+Responsibilities:
+
+- Search knowledge base
+- Multilingual answers
+- Intent priority
+- Tag matching
+- Keyword ranking
+- AI context support
 
 Priority:
-1. Exact intent match
-2. Keyword match
-3. Return None
+
+1. Intent + language
+2. Intent
+3. Keyword score
+4. Return None
 """
+
 
 from app.database.supabase import database
 
 
-def search_knowledge(
-    message: str,
-    company_id: int = 1,
-    intent: str = None
-):
-    """
-    Returns:
-    {
-        "answer": "...",
-        "requires_ticket": True,
-        ...
-    }
-    """
+def normalize_text(text):
 
-    try:
+    if not text:
+        return ""
 
-        # -----------------------------
-        # Search by intent
-        # -----------------------------
-
-        if intent:
-
-            result = (
-                database
-                .table("knowledge_base")
-                .select("*")
-                .eq("company_id", company_id)
-                .eq("intent", intent)
-                .limit(1)
-                .execute()
-            )
-
-            if result.data:
-                return result.data[0]
-
-        # -----------------------------
-        # Keyword search
-        # -----------------------------
-
-        words = [
-            w.strip().lower()
-            for w in message.split()
-            if len(w.strip()) >= 3
-        ]
-
-        if not words:
-            return None
-
-        result = (
-            database
-            .table("knowledge_base")
-            .select("*")
-            .eq("company_id", company_id)
-            .execute()
-        )
-
-        rows = result.data or []
-
-        best = None
-        score = 0
-
-        for row in rows:
-
-            text = (
-                (
-                    row.get("question") or ""
-                )
-                + " "
-                + (
-                    row.get("keywords") or ""
-                )
-            ).lower()
-
-            points = sum(
-                1
-                for word in words
-                if word in text
-            )
-
-            if points > score:
-                score = points
-                best = row
-
-        if best:
-            return best
-
-        return None
-
-    except Exception as error:
-
-        print(
-            "[KNOWLEDGE ERROR]",
-            error
-        )
-
-        return None
-
-
-# -----------------------------------
-# Compatibility aliases
-# -----------------------------------
-
-def buscar_conocimiento(
-    mensaje,
-    company_id=1,
-    intent=None
-):
-    return search_knowledge(
-        mensaje,
-        company_id,
-        intent
+    return (
+        str(text)
+        .lower()
+        .replace("á","a")
+        .replace("é","e")
+        .replace("í","i")
+        .replace("ó","o")
+        .replace("ú","u")
+        .replace("ã","a")
+        .replace("õ","o")
+        .replace("ç","c")
+        .strip()
     )
 
 
-def get_answer(
-    message,
-    company_id=1,
-    intent=None
+
+def calculate_score(message,row):
+
+    message = normalize_text(message)
+
+    score = 0
+
+
+    fields = [
+
+        row.get("title"),
+
+        row.get("question"),
+
+        row.get("answer"),
+
+    ]
+
+
+    tags = row.get("tags")
+
+
+    if isinstance(tags,list):
+
+        fields.extend(tags)
+
+
+    elif tags:
+
+        fields.append(tags)
+
+
+
+    text = normalize_text(
+        " ".join(
+            [
+                str(x)
+                for x in fields
+                if x
+            ]
+        )
+    )
+
+
+
+    words = message.split()
+
+
+
+    for word in words:
+
+        if len(word)<3:
+            continue
+
+
+        if word in text:
+
+            score += 5
+
+
+
+    return score
+
+
+
+
+
+def search_knowledge(
+        message:str,
+        company_id:int=1,
+        intent:str=None,
+        language:str=None
 ):
+
+
+    try:
+
+
+        rows = (
+
+            database
+
+            .table("knowledge_base")
+
+            .select("*")
+
+            .eq(
+                "company_id",
+                company_id
+            )
+
+            .eq(
+                "is_active",
+                True
+            )
+
+            .execute()
+
+            .data
+
+        )
+
+
+        if not rows:
+
+            return None
+
+
+
+        # ----------------------------
+        # Intent + Language
+        # ----------------------------
+
+
+        if intent:
+
+
+            for row in rows:
+
+
+                if row.get("intent") != intent:
+
+                    continue
+
+
+
+                row_language = row.get(
+                    "language"
+                )
+
+
+
+                if language and row_language:
+
+                    if row_language == language:
+
+                        return row
+
+
+
+        # ----------------------------
+        # Intent only
+        # ----------------------------
+
+
+        if intent:
+
+
+            for row in rows:
+
+
+                if row.get("intent")==intent:
+
+                    return row
+
+
+
+        # ----------------------------
+        # Keyword ranking
+        # ----------------------------
+
+
+        best = None
+
+        best_score = 0
+
+
+
+        for row in rows:
+
+
+            score = calculate_score(
+                message,
+                row
+            )
+
+
+
+            if score > best_score:
+
+                best_score = score
+
+                best = row
+
+
+
+        if best_score >=5:
+
+            return best
+
+
+
+        return None
+
+
+
+    except Exception as error:
+
+
+        print(
+            "[KNOWLEDGE SERVICE ERROR]",
+            error
+        )
+
+
+        return None
+
+
+
+
+
+# Compatibility
+
+def buscar_conocimiento(
+        mensaje,
+        company_id=1,
+        intent=None,
+        language=None
+):
+
+    return search_knowledge(
+        mensaje,
+        company_id,
+        intent,
+        language
+    )
+
+
+
+def get_answer(
+        message,
+        company_id=1,
+        intent=None,
+        language=None
+):
+
     return search_knowledge(
         message,
         company_id,
-        intent
+        intent,
+        language
     )

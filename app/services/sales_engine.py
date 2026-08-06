@@ -1,181 +1,179 @@
 """
-BiteFixes Sales Engine V2
+Bitey Sales Engine V2
 
-Commercial intelligence layer.
+Genera respuestas comerciales inteligentes
+para servicios, ventas y captación de leads.
 
-Responsibilities:
-- Detect business context
-- Read customer memory
-- Generate contextual sales conversations
-- Support AI Assistant sales flow
+Compatible con:
+- Supabase
+- base_conhecimento
+- historial_chats
+- AI Assistant
+- CRM
 """
 
 
-def has_business_context(memory):
+def normalize_items(items):
+
     """
-    Detect if customer already provided business information.
+    Convierte cualquier entrada en lista segura.
     """
 
-    if not memory:
-        return False
+    if not items:
+        return []
+
+    if isinstance(items, list):
+        return items
+
+    return [items]
+
+
+
+def has_business_context(context):
+
+    """
+    Detecta si el cliente habla de empresa/negocio.
+    """
+
+    items = normalize_items(context)
 
 
     keywords = [
         "empresa",
         "negocio",
+        "loja",
         "tienda",
-        "clientes",
-        "whatsapp",
+        "cliente",
         "ventas",
-        "soporte",
-        "servicio",
-        "local"
+        "automatizar",
+        "atender",
+        "whatsapp",
+        "crm"
     ]
 
 
-    for item in memory:
-
-        content = item.get(
-            "content",
-            ""
-        ).lower()
+    for item in items:
 
 
-        for keyword in keywords:
+        if isinstance(item, dict):
 
-            if keyword in content:
+            content = (
+                item.get("content")
+                or
+                item.get("message_content")
+                or
+                item.get("texto")
+                or
+                ""
+            )
+
+
+        else:
+
+            content = str(item)
+
+
+
+        content = content.lower()
+
+
+
+        for word in keywords:
+
+            if word in content:
                 return True
+
 
 
     return False
 
 
 
-def extract_business_context(memory):
-    """
-    Extract customer information from memory.
-    """
-
-    if not memory:
-        return ""
-
-
-    result = []
-
-
-    for item in memory:
-
-        if item.get("role") == "customer":
-
-            result.append(
-                item.get(
-                    "content",
-                    ""
-                )
-            )
-
-
-    return " ".join(result)
-
-
 
 def generate_ai_assistant_response(
-    customer_name,
-    memory=None
+        message,
+        customer_context=None,
+        knowledge=None
 ):
-    """
-    Generate AI Assistant commercial response.
-    """
 
 
     business_detected = has_business_context(
-        memory
+        customer_context
     )
 
 
-    if business_detected:
+    text = message.lower()
 
 
-        context = extract_business_context(
-            memory
-        )
+
+    if business_detected or "empresa" in text:
 
 
-        return f"""
-Perfecto {customer_name}.
+        return {
 
-Entendi que sua empresa precisa de um assistente IA.
+            "response":
+            (
+            "Excelente. Bitey AI puede ayudarte "
+            "a automatizar la atención de clientes, "
+            "WhatsApp, página web, CRM y procesos "
+            "de tu empresa."
+            ),
 
-Informações identificadas:
+            "intent":
+            "ai_assistant",
 
-{context}
-
-
-O Bitey AI Assistant pode ajudar sua empresa com:
-
-✅ Atendimento automático pelo WhatsApp
-
-✅ Respostas inteligentes para clientes
-
-✅ Criação automática de tickets
-
-✅ Organização de pedidos e serviços
-
-✅ Acompanhamento de clientes
+            "lead":
+            True
+        }
 
 
-Para montar uma solução adequada:
 
-1. Quantos clientes sua empresa atende por mês?
-
-2. Você utiliza WhatsApp Business atualmente?
-
-3. Deseja automatizar vendas e suporte?
-"""
+    return {
 
 
-    return f"""
-Perfeito {customer_name}.
+        "response":
+        (
+        "Bitey AI es un asistente inteligente "
+        "para empresas que permite automatizar "
+        "atención y soporte."
+        ),
 
-Podemos criar um assistente IA personalizado para sua empresa.
+        "intent":
+        "ai_assistant",
 
-O Bitey AI Assistant ajuda empresas a:
+        "lead":
+        False
 
-✅ atender clientes automaticamente
+    }
 
-✅ responder perguntas frequentes
-
-✅ organizar suporte
-
-✅ automatizar processos internos
-
-
-Para recomendar a melhor solução:
-
-Qual é o tipo da sua empresa e quais processos deseja automatizar?
-"""
 
 
 
 def generate_sales_response(
-    intent,
-    customer_name,
-    memory=None
+        intent,
+        message,
+        customer_context=None,
+        knowledge=None
 ):
-    """
-    Main commercial router.
-    """
 
 
     if intent == "ai_assistant":
 
+
         return generate_ai_assistant_response(
-            customer_name,
-            memory
+            message,
+            customer_context,
+            knowledge
         )
 
 
-    return (
-        "Obrigado pelo contato. "
-        "Um especialista irá ajudar você."
-    )
+
+    return {
+
+
+        "response":
+        "Gracias por contactarnos. Un especialista revisará tu solicitud.",
+
+        "lead":
+        False
+    }

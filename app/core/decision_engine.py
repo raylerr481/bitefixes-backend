@@ -7,13 +7,13 @@ Responsibilities:
 - Resolve customer intent
 - Resolve service
 - Route sales
-- Route technical workflows
+- Route support workflows
 - Return execution plan
 
 Does NOT:
-- create tickets
-- save messages
-- notify admins
+- Create tickets
+- Save messages
+- Send notifications
 
 Those belong to Bitey Core.
 """
@@ -21,10 +21,26 @@ Those belong to Bitey Core.
 
 from typing import Dict, Any
 
-from app.services.service_resolver import resolve_service
-from app.services.sales_engine import generate_sales_response
-from app.services.workflows.workflow_service import execute_workflow
 
+from app.services.service_resolver import (
+    resolve_service
+)
+
+
+from app.services.workflows.workflow_service import (
+    execute_workflow
+)
+
+
+from app.services.sales_engine import (
+    generate_sales_response
+)
+
+
+
+# =====================================================
+# INTENT GROUPS
+# =====================================================
 
 
 SALES_INTENTS = {
@@ -32,7 +48,7 @@ SALES_INTENTS = {
     "ai_assistant",
     "sales",
     "quote",
-    "purchase",
+    "purchase"
 
 }
 
@@ -44,6 +60,8 @@ SUPPORT_INTENTS = {
 
     "hardware_upgrade",
 
+    "upgrade_hardware",
+
     "windows_installation",
 
     "mobile_repair",
@@ -54,10 +72,15 @@ SUPPORT_INTENTS = {
 
     "network_configuration",
 
-    "software_problem",
+    "software_problem"
 
 }
 
+
+
+# =====================================================
+# MAIN ENGINE
+# =====================================================
 
 
 def make_decision(
@@ -67,35 +90,61 @@ def make_decision(
     intent: Dict,
     knowledge=None,
     memory=None,
-    channel="unknown",
+    channel="unknown"
 ):
-
-    """
-    Main Bitey reasoning engine.
-    Returns execution plan.
-    """
 
 
     try:
 
 
-        intent_name = None
+        # ================================
+        # SAFETY NORMALIZATION
+        # ================================
 
-        confidence = 0
+
+        if customer is None:
+
+            customer = {}
 
 
 
-        if isinstance(intent, dict):
+        if memory is None:
 
-            intent_name = intent.get(
-                "intent"
-            )
+            memory = {}
 
-            confidence = intent.get(
-                "confidence",
-                0
-            )
 
+
+        if not isinstance(memory, dict):
+
+            memory = {
+
+                "summary": memory
+
+            }
+
+
+
+        if intent is None:
+
+            intent = {}
+
+
+
+        intent_name = intent.get(
+            "intent"
+        )
+
+
+        confidence = intent.get(
+            "confidence",
+            0
+        )
+
+
+
+        # ================================
+        # SERVICE RESOLUTION
+        # ================================
 
 
         service = resolve_service(
@@ -111,6 +160,7 @@ def make_decision(
         service_id = None
 
 
+
         if service:
 
             service_id = service.get(
@@ -120,9 +170,7 @@ def make_decision(
 
 
         print(
-
             "[DECISION ENGINE]",
-
             {
 
                 "intent":
@@ -135,95 +183,119 @@ def make_decision(
                     service_id
 
             }
-
         )
 
 
 
         metadata = {
 
+
             "intent":
                 intent_name,
 
+
             "confidence":
                 confidence,
+
+
+            "channel":
+                channel
+
 
         }
 
 
 
-        # =====================================
+        # =================================================
         # SALES ROUTE
-        # =====================================
+        # =================================================
 
 
         if intent_name in SALES_INTENTS:
+
+
+            customer_name = customer.get(
+
+                "full_name",
+
+                "Cliente"
+
+            )
+
 
 
             response = generate_sales_response(
 
                 intent_name,
 
-                customer.get(
-                    "full_name",
-                    "Cliente"
-                ),
+                customer_name,
 
                 memory
 
             )
 
 
+
             return {
 
 
                 "action":
+
                     "sales",
+
 
 
                 "create_ticket":
+
                     True,
 
 
+
                 "ticket_type":
+
                     "sales",
 
 
+
                 "response":
+
                     response,
 
 
-                "workflow":
-                    None,
-
-
-                "ticket":
-                    None,
-
 
                 "service":
+
                     service,
 
 
+
                 "service_id":
+
                     service_id,
 
 
+
+                "workflow":
+
+                    None,
+
+
+
                 "metadata":
+
                     metadata
+
 
             }
 
 
 
-
-        # =====================================
-        # TECHNICAL ROUTE
-        # =====================================
+        # =================================================
+        # SUPPORT ROUTE
+        # =================================================
 
 
         if intent_name in SUPPORT_INTENTS:
-
 
 
             workflow = execute_workflow(
@@ -246,22 +318,35 @@ def make_decision(
 
 
 
+            if workflow is None:
+
+                workflow = {}
+
+
+
             return {
 
 
                 "action":
+
                     "workflow",
 
 
+
                 "create_ticket":
+
                     True,
 
 
+
                 "ticket_type":
+
                     "technical_support",
 
 
+
                 "response":
+
                     workflow.get(
 
                         "response",
@@ -271,82 +356,111 @@ def make_decision(
                     ),
 
 
+
                 "workflow":
+
                     intent_name,
 
 
+
                 "ticket":
+
                     workflow.get(
                         "ticket"
                     ),
 
 
+
                 "service":
+
                     service,
 
 
+
                 "service_id":
+
                     service_id,
 
 
+
                 "metadata":
+
                     metadata
+
 
             }
 
 
 
-
-
-        # =====================================
-        # DEFAULT
-        # =====================================
+        # =================================================
+        # DEFAULT ROUTE
+        # =================================================
 
 
         return {
 
 
             "action":
+
                 "support",
+
 
 
             "create_ticket":
+
                 True,
 
 
+
             "ticket_type":
-                "support",
+
+                "technical_support",
+
 
 
             "response":
-                "Gracias por contactar BiteFixes. Vamos a revisar tu solicitud.",
+
+                "Gracias por contactar BiteFixes.",
+
 
 
             "workflow":
-                "default",
 
-
-            "ticket":
                 None,
 
 
+
+            "ticket":
+
+                None,
+
+
+
             "service":
+
                 service,
 
 
+
             "service_id":
+
                 service_id,
 
 
+
             "metadata":
+
                 metadata
+
 
         }
 
 
 
-
     except Exception as error:
+
+
+        import traceback
 
 
         print(
@@ -358,54 +472,81 @@ def make_decision(
         )
 
 
+        traceback.print_exc()
+
+
+
         return {
 
 
             "action":
+
                 "error",
 
 
+
             "create_ticket":
+
                 False,
 
 
+
+            "ticket_type":
+
+                None,
+
+
+
             "response":
+
                 "Error procesando solicitud.",
 
 
+
             "workflow":
+
                 None,
+
 
 
             "ticket":
+
                 None,
+
 
 
             "service":
+
                 None,
 
 
+
             "service_id":
-                None
+
+                None,
+
+
+            "metadata":
+
+                {}
 
         }
 
 
 
 
-
-# ==========================================
-# Compatibility wrapper
-# ==========================================
+# =====================================================
+# COMPATIBILITY WRAPPER
+# =====================================================
 
 
 def decision_engine(
-    company_id:int,
-    customer:dict,
-    message:str,
-    intent:dict,
+    company_id,
+    customer,
+    message,
+    intent,
     knowledge=None,
-    memory=None,
+    memory=None
 ):
 
 

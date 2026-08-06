@@ -1,82 +1,38 @@
 """
-Bitey Computer Repair Workflow V13
-
-Handles:
-- Desktop repair
-- Notebook repair
-- Hardware failures
-- Diagnostics
-
-Does NOT:
-- create tickets
-- save messages
-- notify admins
+Bitey Workflow
+Computer Repair
 """
 
 
 def execute(
-    company_id: int,
-    customer_id: int,
-    message: str,
-    knowledge=None,
-    intent=None
+    message,
+    company_id=None,
+    customer_id=None,
+    service_id=None,
+    intent=None,
+    customer=None,
+    language=None
 ):
 
-    try:
+    return {
 
-        response = (
-            "Podemos realizar diagnóstico e reparo "
-            "do computador ou notebook."
-        )
+        "success": True,
 
+        "workflow":
+            "computer_repair",
 
-        return {
+        "response":
+            "Vamos a revisar tu equipo y realizar "
+            "el diagnóstico técnico correspondiente.",
 
-            "success": True,
+        "metadata": {
 
-            "workflow":
-                "computer_repair",
-
-            "requires_ticket":
-                True,
-
-            "priority":
-                "normal",
-
-            "response":
-                response,
-
-            "metadata":
-            {
-
-                "company_id":
-                    company_id,
-
-                "customer_id":
-                    customer_id,
-
-                "category":
-                    "computer_repair"
-
-            }
+            "company_id": company_id,
+            "customer_id": customer_id,
+            "service_id": service_id,
+            "intent": intent,
+            "language": language
 
         }
 
-
-    except Exception as error:
-
-
-        return {
-
-            "success": False,
-
-            "workflow":
-                "computer_repair",
-
-            "response":
-                "Erro no workflow de reparo.",
-
-            "error":
-                str(error)
-
-        }
+    }

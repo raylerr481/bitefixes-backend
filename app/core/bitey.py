@@ -1,66 +1,49 @@
 """
 =====================================================
-BITEY CORE V15
+Bitey Core V16.2
 =====================================================
 
-Central AI Orchestration Engine
+Main AI Orchestrator
 
-Flow
+Flow:
 
 Customer
-↓
-
+ |
 Language Detection
-↓
-
-Conversation
-
-↓
-
+ |
 Customer Context
-
-↓
-
+ |
+Conversation
+ |
 Save Customer Message
-
-↓
-
+ |
 Intent Detection
-
-↓
-
+ |
 Knowledge Search
-
-↓
-
+ |
 Decision Engine
-
-↓
-
-Workflow
-
-↓
-
-Ticket
-
-↓
-
+ |
+ +--> Ticket Service
+ |
+ +--> Quote Service
+ |
 Notification
-
-↓
-
+ |
 Response Builder
-
-↓
-
+ |
 Save AI Message
+ |
+Update Conversation
+ |
+Return Result
 
-↓
-
-Return
+=====================================================
 """
 
-from app.services.customer_service import get_or_create_customer
+
+from app.services.customer_service import (
+    get_or_create_customer
+)
 
 from app.services.conversation_service import (
     get_or_create_conversation,
@@ -88,6 +71,10 @@ from app.services.ticket_service import (
     process_ticket
 )
 
+from app.services.quote_service import (
+    create_quote
+)
+
 from app.services.notification_service import (
     notify_event
 )
@@ -105,6 +92,12 @@ from app.services.response_builder import (
 )
 
 
+
+# =====================================================
+# PROCESS MESSAGE
+# =====================================================
+
+
 def process_message(
     company_id: int,
     message: str,
@@ -113,65 +106,114 @@ def process_message(
     channel: str = "website"
 ):
 
+
     print("\n==============================")
-    print("BITEY CORE V15")
+    print("BITEY CORE V16.2")
     print("==============================")
-    print(message)
+
+
 
     try:
 
-        # ======================================
+
+
+        # =================================================
         # LANGUAGE
-        # ======================================
+        # =================================================
 
-        language = detect_language(message)
 
-        print("[LANGUAGE]", language)
+        language = detect_language(
+            message
+        )
 
-        # ======================================
+
+        print(
+            "[LANGUAGE]",
+            language
+        )
+
+
+
+        # =================================================
         # CUSTOMER
-        # ======================================
+        # =================================================
+
 
         customer = get_or_create_customer(
+
             company_id,
+
             whatsapp,
+
             customer_name
+
         )
+
 
         customer_id = customer["id"]
 
-        print("[CUSTOMER]", customer_id)
 
-        # ======================================
+
+        print(
+            "[CUSTOMER]",
+            customer_id
+        )
+
+
+
+        # =================================================
         # CONVERSATION
-        # ======================================
+        # =================================================
+
 
         conversation = get_or_create_conversation(
+
             customer_id,
+
             channel
+
         )
+
 
         conversation_id = conversation["id"]
 
-        print("[CONVERSATION]", conversation_id)
 
-        # ======================================
+
+        print(
+            "[CONVERSATION]",
+            conversation_id
+        )
+
+
+
+        # =================================================
         # MEMORY
-        # ======================================
+        # =================================================
+
 
         context = build_customer_context(
+
             customer_id,
+
             company_id
+
         )
+
 
         memory = context.get(
+
             "summary",
+
             {}
+
         )
 
-        # ======================================
+
+
+        # =================================================
         # SAVE CUSTOMER MESSAGE
-        # ======================================
+        # =================================================
+
 
         save_customer_message(
 
@@ -187,40 +229,80 @@ def process_message(
 
         )
 
-        print("[CUSTOMER MESSAGE SAVED]")
 
-        # ======================================
+
+        print(
+            "[CUSTOMER MESSAGE SAVED]"
+        )
+
+
+
+        # =================================================
         # INTENT
-        # ======================================
+        # =================================================
+
 
         intent = detect_intent(
+
             message,
+
             company_id
+
         )
 
-        intent_name = intent.get("intent")
+
+        intent_name = intent.get(
+            "intent"
+        )
+
 
         confidence = intent.get(
+
             "confidence",
+
             0
+
         )
 
-        print("[INTENT]", intent)
 
-        # ======================================
+
+        print(
+            "[INTENT]",
+            intent
+        )
+
+
+
+        # =================================================
         # KNOWLEDGE
-        # ======================================
+        # =================================================
+
 
         knowledge = search_knowledge(
+
             message,
-            company_id
+
+            company_id,
+
+            intent_name,
+
+            language
+
         )
 
-        print("[KNOWLEDGE]", bool(knowledge))
 
-        # ======================================
-        # DECISION
-        # ======================================
+
+        print(
+            "[KNOWLEDGE]",
+            bool(knowledge)
+        )
+
+
+
+        # =================================================
+        # DECISION ENGINE
+        # =================================================
+
 
         decision = decision_engine(
 
@@ -238,33 +320,55 @@ def process_message(
 
         )
 
+
+
         if not decision:
+
 
             decision = {
 
-                "action": "support",
 
-                "create_ticket": True,
+                "action":
+                    "support",
 
-                "ticket_type": "technical_support",
 
-                "response": ""
+                "create_ticket":
+                    True,
+
+
+                "ticket_type":
+                    "technical_support",
+
+
+                "response":
+                    {
+
+                    "response":
+                        "Solicitud recibida."
+
+                    }
 
             }
 
-        print("[DECISION]", decision)
+
+
+        print(
+            "[DECISION]",
+            decision
+        )
+
+
 
         service_id = decision.get(
             "service_id"
         )
 
-        workflow = decision.get(
-            "workflow"
-        )
 
-        # ======================================
+
+        # =================================================
         # TICKET
-        # ======================================
+        # =================================================
+
 
         ticket = process_ticket(
 
@@ -278,9 +382,20 @@ def process_message(
 
             description=message,
 
-            title=decision.get(
-                "action",
-                "support"
+            title=(
+
+                decision
+
+                .get(
+                    "service",
+                    {}
+                )
+
+                .get(
+                    "name",
+                    intent_name or "Support"
+                )
+
             ),
 
             channel=channel,
@@ -288,46 +403,128 @@ def process_message(
             language=language,
 
             ticket_type=decision.get(
+
                 "ticket_type",
+
                 "technical_support"
+
             ),
 
             create_ticket=decision.get(
+
                 "create_ticket",
+
                 False
+
+            ),
+
+            requires_quote=decision.get(
+
+                "requires_quote",
+
+                False
+
             )
 
         )
 
-        print("[TICKET]", ticket)
 
-        ticket_id = None
 
-        if ticket:
+        print(
+            "[TICKET]",
+            ticket
+        )
 
-            ticket_id = ticket.get("id")
 
-        # ======================================
-        # RESPONSE BUILDER
-        # ======================================
 
-        response = build_response(
+        ticket_id = (
 
-            knowledge=knowledge,
+            ticket.get("id")
 
-            language=language,
+            if ticket
 
-            ticket=ticket
+            else None
 
         )
 
-        print("[RESPONSE BUILDER OK]")
 
-        # ======================================
+
+        # =================================================
+        # QUOTE
+        # =================================================
+
+
+        quote = None
+
+
+
+        if (
+
+            decision.get(
+                "requires_quote",
+                False
+            )
+
+            and ticket
+
+        ):
+
+
+
+            quote = create_quote(
+
+                company_id=company_id,
+
+                customer_id=customer_id,
+
+                service_id=service_id,
+
+                title=ticket.get(
+                    "title",
+                    "Quote"
+                ),
+
+                description=message,
+
+                ticket_id=ticket_id
+
+            )
+
+
+
+        # =================================================
+        # RESPONSE BUILDER
+        # =================================================
+
+
+        response = build_response(
+
+            decision=decision,
+
+            ticket=ticket,
+
+            knowledge=knowledge,
+
+            language=language
+
+        )
+
+
+
+        print(
+            "[RESPONSE]",
+            response
+        )
+
+
+
+        # =================================================
         # NOTIFICATION
-        # ======================================
+        # =================================================
+
 
         if ticket:
+
 
             notify_event(
 
@@ -347,23 +544,30 @@ def process_message(
 
                 channel=channel,
 
+
                 metadata={
 
-                    "confidence": confidence,
+                    "confidence":
+                        confidence,
 
-                    "language": language,
+                    "language":
+                        language,
 
-                    "ticket_code": ticket.get(
-                        "ticket_code"
-                    )
+                    "quote_id":
+                        quote.get("id")
+                        if quote
+                        else None
 
                 }
 
             )
 
-        # ======================================
+
+
+        # =================================================
         # SAVE AI MESSAGE
-        # ======================================
+        # =================================================
+
 
         save_bitey_message(
 
@@ -387,11 +591,18 @@ def process_message(
 
         )
 
-        print("[BITEY MESSAGE SAVED]")
 
-        # ======================================
-        # UPDATE CONVERSATION
-        # ======================================
+
+        print(
+            "[BITEY MESSAGE SAVED]"
+        )
+
+
+
+        # =================================================
+        # UPDATE CONTEXT
+        # =================================================
+
 
         update_conversation_context(
 
@@ -405,54 +616,95 @@ def process_message(
 
         )
 
-        # ======================================
-        # RETURN
-        # ======================================
+
 
         return {
 
-            "success": True,
 
-            "customer_id": customer_id,
+            "success":
+                True,
 
-            "conversation_id": conversation_id,
 
-            "language": language,
+            "customer_id":
+                customer_id,
 
-            "intent": intent_name,
 
-            "confidence": confidence,
+            "conversation_id":
+                conversation_id,
 
-            "knowledge": knowledge,
 
-            "knowledge_found": bool(knowledge),
+            "language":
+                language,
 
-            "decision": decision,
 
-            "workflow": workflow,
+            "intent":
+                intent_name,
 
-            "ticket": ticket,
 
-            "ticket_id": ticket_id,
+            "confidence":
+                confidence,
 
-            "response": response
+
+            "knowledge":
+                knowledge,
+
+
+            "knowledge_found":
+                bool(knowledge),
+
+
+            "decision":
+                decision,
+
+
+            "ticket":
+                ticket,
+
+
+            "ticket_id":
+                ticket_id,
+
+
+            "quote":
+                quote,
+
+
+            "response":
+                response
 
         }
 
+
+
     except Exception as error:
+
+
 
         import traceback
 
-        print("[BITEY CORE ERROR]", error)
+
+        print(
+            "[BITEY CORE ERROR]",
+            error
+        )
+
 
         traceback.print_exc()
 
+
+
         return {
 
-            "success": False,
 
-            "error": str(error),
+            "success":
+                False,
 
-            "response": "Erro ao processar sua solicitação."
+
+            "error":
+                str(error),
+
+
+            "response":
+                "Error procesando solicitud."
 
         }

@@ -1,151 +1,308 @@
 """
-Bitey Response Builder V8
+Bitey Response Builder V2
 
-Responsible for:
-- Creating final AI responses
-- Language adaptation
-- Ticket confirmation
-- Multi-channel output
+Responsable de construir la respuesta final enviada al cliente.
+
+Soporta:
+- Español
+- Portugués
+- Inglés
+- Tickets
+- Knowledge base
+- Sales
+- Web
+- WhatsApp
+- App
+
+Compatible con Bitey Core V15
 """
 
 
-def build_response(
-    knowledge=None,
-    language="pt",
+def get_language_text(language, texts):
+
+    language = (language or "es").lower()
+
+    if language.startswith("pt"):
+        return texts.get("pt", texts.get("es"))
+
+    if language.startswith("en"):
+        return texts.get("en", texts.get("es"))
+
+    return texts.get("es")
+
+
+# -------------------------------------------------
+# Ticket response
+# -------------------------------------------------
+
+def build_ticket_response(
     ticket=None,
-    fallback=None
+    language="es",
+    customer_name=None
 ):
 
-    try:
-
-        response = ""
-
-
-        # ===============================
-        # KNOWLEDGE ANSWER
-        # ===============================
-
-        if knowledge:
-
-            response = knowledge.get(
-                "answer",
-                ""
-            )
+    if not ticket:
+        return ""
 
 
-        # ===============================
-        # FALLBACK
-        # ===============================
-
-        if not response:
-
-            response = fallback or (
-                "Obrigado por contactar Bitey. "
-                "Sua solicitação foi recebida."
-            )
+    ticket_code = None
 
 
+    if isinstance(ticket, dict):
 
-        # ===============================
-        # TRANSLATION PT -> ES
-        # ===============================
-
-        if language == "es":
-
-            replacements = {
-
-                "Podemos melhorar":
-                    "Podemos mejorar",
-
-                "o desempenho":
-                    "el rendimiento",
-
-                "do notebook":
-                    "del notebook",
-
-                "com upgrade":
-                    "con una mejora",
-
-                "de SSD":
-                    "de SSD",
-
-                "e memória RAM":
-                    "y memoria RAM",
-
-                "Sua solicitação":
-                    "Tu solicitud",
-
-                "foi recebida":
-                    "fue recibida",
-
-                "Seu atendimento":
-                    "Tu atención",
-
-                "foi registrado":
-                    "fue registrado"
-
-            }
-
-
-            for old, new in replacements.items():
-
-                response = response.replace(
-                    old,
-                    new
-                )
-
-
-
-        # ===============================
-        # TICKET
-        # ===============================
-
-        if ticket:
-
-
-            ticket_code = ticket.get(
-                "ticket_code"
-            )
-
-
-            if ticket_code:
-
-
-                if language == "es":
-
-                    response += (
-
-                        "\n\nTu solicitud fue registrada."
-
-                        f"\nCódigo del ticket: {ticket_code}"
-
-                    )
-
-                else:
-
-                    response += (
-
-                        "\n\nSeu atendimento foi registrado."
-
-                        f"\nCódigo do ticket: {ticket_code}"
-
-                    )
-
-
-
-        return response.strip()
-
-
-
-    except Exception as error:
-
-
-        print(
-            "[RESPONSE BUILDER ERROR]",
-            error
+        ticket_code = (
+            ticket.get("ticket_code")
+            or ticket.get("codigo_ticket")
+            or ticket.get("id")
         )
 
+
+    messages = {
+
+        "es":
+        "Tu solicitud fue registrada correctamente.",
+
+        "pt":
+        "Sua solicitação foi registrada corretamente.",
+
+        "en":
+        "Your request has been registered successfully."
+
+    }
+
+
+    response = get_language_text(
+        language,
+        messages
+    )
+
+
+    if ticket_code:
+
+
+        codes = {
+
+            "es":
+            f"\n\nCódigo del ticket: {ticket_code}",
+
+            "pt":
+            f"\n\nCódigo do chamado: {ticket_code}",
+
+            "en":
+            f"\n\nTicket code: {ticket_code}"
+
+        }
+
+
+        response += codes.get(
+            language,
+            codes["es"]
+        )
+
+
+    return response
+
+
+
+# -------------------------------------------------
+# Sales response
+# -------------------------------------------------
+
+def build_sales_response(
+    response,
+    ticket=None,
+    language="es"
+):
+
+
+    if isinstance(response, dict):
+
+        message = response.get(
+            "response",
+            ""
+        )
+
+    else:
+
+        message = str(response or "")
+
+
+
+    ticket_message = build_ticket_response(
+        ticket,
+        language
+    )
+
+
+    if ticket_message:
 
         return (
-            "Erro ao gerar resposta."
+            message
+            +
+            "\n\n"
+            +
+            ticket_message
         )
+
+
+    return message
+
+
+
+# -------------------------------------------------
+# Knowledge response
+# -------------------------------------------------
+
+def build_knowledge_response(
+    knowledge,
+    language="es"
+):
+
+
+    if not knowledge:
+        return ""
+
+
+    if isinstance(knowledge, dict):
+
+        return (
+            knowledge.get("answer")
+            or
+            knowledge.get("content")
+            or
+            knowledge.get("response")
+            or
+            ""
+        )
+
+
+    return str(knowledge)
+
+
+
+# -------------------------------------------------
+# FINAL BUILDER
+# -------------------------------------------------
+
+def build_final_response(
+    decision=None,
+    ticket=None,
+    knowledge=None,
+    language="es"
+):
+
+
+    if not decision:
+
+
+        return get_language_text(
+            language,
+            {
+
+                "es":
+                "No pude procesar tu solicitud.",
+
+                "pt":
+                "Não consegui processar sua solicitação.",
+
+                "en":
+                "I could not process your request."
+
+            }
+        )
+
+
+
+    action = decision.get(
+        "action"
+    )
+
+
+    response = decision.get(
+        "response"
+    )
+
+
+
+    if action == "sales":
+
+
+        return build_sales_response(
+            response,
+            ticket,
+            language
+        )
+
+
+
+    if knowledge:
+
+
+        knowledge_response = build_knowledge_response(
+            knowledge,
+            language
+        )
+
+
+        if knowledge_response:
+
+            return knowledge_response
+
+
+
+    if isinstance(response,str):
+
+        return response
+
+
+
+    if isinstance(response,dict):
+
+        return response.get(
+            "response",
+            ""
+        )
+
+
+
+    return get_language_text(
+        language,
+        {
+
+            "es":
+            "Solicitud recibida.",
+
+            "pt":
+            "Solicitação recebida.",
+
+            "en":
+            "Request received."
+
+        }
+    )
+
+
+
+# -------------------------------------------------
+# Compatibilidad Core V15
+# -------------------------------------------------
+
+def build_response(
+    decision=None,
+    ticket=None,
+    knowledge=None,
+    language="es",
+    **kwargs
+):
+
+    return build_final_response(
+
+        decision=decision,
+
+        ticket=ticket,
+
+        knowledge=knowledge,
+
+        language=language
+
+    )

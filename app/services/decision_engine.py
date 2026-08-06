@@ -1,48 +1,67 @@
 """
-Bitey Decision Engine V11
+BiteFixes Decision Engine V12
 
 Central business reasoning layer.
 
 Responsibilities:
-
 - Resolve customer intent
 - Resolve service
 - Route sales
 - Route workflows
+- Decide ticket creation
+- Decide quote creation
 - Return execution plan
 
 Does NOT:
-- create tickets
-- notify admins
-- save messages
+- Create tickets
+- Create quotes
+- Notify admins
+- Save messages
 
 Those belong to Bitey Core.
 """
 
+
 from typing import Dict, Any
+
 
 from app.services.service_resolver import (
     resolve_service
 )
 
+
 from app.services.workflows.workflow_service import (
     execute_workflow
 )
+
 
 from app.services.sales_engine import (
     generate_sales_response
 )
 
 
+
+# =====================================================
+# SALES INTENTS
+# =====================================================
+
 SALES_INTENTS = {
 
     "ai_assistant",
+
     "sales",
+
     "quote",
+
     "purchase"
 
 }
 
+
+
+# =====================================================
+# SUPPORT INTENTS
+# =====================================================
 
 SUPPORT_INTENTS = {
 
@@ -66,22 +85,44 @@ SUPPORT_INTENTS = {
 
 
 
+# =====================================================
+# QUOTE REQUIRED INTENTS
+# =====================================================
+
+QUOTE_INTENTS = {
+
+    "ai_assistant",
+
+    "sales",
+
+    "quote",
+
+    "purchase",
+
+    "cctv_installation",
+
+    "camera_installation",
+
+    "network_configuration",
+
+    "hardware_upgrade"
+
+}
+
+
+
+# =====================================================
+# MAIN DECISION ENGINE
+# =====================================================
+
 def make_decision(
-
-    company_id:int,
-
-    customer:Dict,
-
-    message:str,
-
-    intent:Dict,
-
+    company_id: int,
+    customer: Dict,
+    message: str,
+    intent: Dict,
     knowledge=None,
-
     memory=None,
-
     channel="unknown"
-
 ):
 
 
@@ -97,12 +138,17 @@ def make_decision(
             "intent"
         )
 
+
         confidence = intent.get(
             "confidence",
             0
         )
 
 
+
+    # -------------------------------------
+    # Resolve Service
+    # -------------------------------------
 
     service = resolve_service(
 
@@ -111,6 +157,45 @@ def make_decision(
         intent_name
 
     )
+
+
+
+    service_id = (
+
+        service.get("id")
+
+        if service
+
+        else None
+
+    )
+
+
+
+    requires_quote = (
+
+        intent_name in QUOTE_INTENTS
+
+    )
+
+
+
+    metadata = {
+
+
+        "intent":
+            intent_name,
+
+
+        "confidence":
+            confidence,
+
+
+        "requires_quote":
+            requires_quote
+
+
+    }
 
 
 
@@ -123,13 +208,17 @@ def make_decision(
             "intent":
                 intent_name,
 
+
             "confidence":
                 confidence,
 
+
             "service_id":
-                service.get("id")
-                if service
-                else None
+                service_id,
+
+
+            "requires_quote":
+                requires_quote
 
         }
 
@@ -137,34 +226,12 @@ def make_decision(
 
 
 
-    service_id = (
-
-        service.get("id")
-        if service
-        else None
-
-    )
-
-
-
-    metadata = {
-
-        "intent":
-            intent_name,
-
-        "confidence":
-            confidence
-
-    }
-
-
-
-    # ======================
-    # SALES
-    # ======================
-
+    # =================================================
+    # SALES ROUTE
+    # =================================================
 
     if intent_name in SALES_INTENTS:
+
 
 
         response = generate_sales_response(
@@ -172,13 +239,17 @@ def make_decision(
             intent_name,
 
             customer.get(
+
                 "full_name",
+
                 "Cliente"
+
             ),
 
             memory
 
         )
+
 
 
         return {
@@ -190,6 +261,10 @@ def make_decision(
 
             "create_ticket":
                 True,
+
+
+            "requires_quote":
+                requires_quote,
 
 
             "ticket_type":
@@ -220,12 +295,12 @@ def make_decision(
 
 
 
-    # ======================
-    # SUPPORT WORKFLOW
-    # ======================
-
+    # =================================================
+    # SUPPORT ROUTE
+    # =================================================
 
     if intent_name in SUPPORT_INTENTS:
+
 
 
         workflow = execute_workflow(
@@ -259,11 +334,16 @@ def make_decision(
                 True,
 
 
+            "requires_quote":
+                requires_quote,
+
+
             "ticket_type":
                 "technical_support",
 
 
             "response":
+
                 workflow.get(
 
                     "response",
@@ -273,14 +353,17 @@ def make_decision(
                 ),
 
 
+
             "workflow":
                 intent_name,
 
 
             "ticket":
+
                 workflow.get(
                     "ticket"
                 ),
+
 
 
             "service":
@@ -299,10 +382,9 @@ def make_decision(
 
 
 
-    # ======================
-    # DEFAULT
-    # ======================
-
+    # =================================================
+    # DEFAULT ROUTE
+    # =================================================
 
     return {
 
@@ -315,12 +397,18 @@ def make_decision(
             True,
 
 
+        "requires_quote":
+            requires_quote,
+
+
         "ticket_type":
             "support",
 
 
         "response":
+
             "Gracias por contactar BiteFixes.",
+
 
 
         "workflow":
@@ -343,20 +431,17 @@ def make_decision(
 
 
 
+# =====================================================
+# COMPATIBILITY WRAPPER
+# =====================================================
+
 def decision_engine(
-
     company_id,
-
     customer,
-
     message,
-
     intent,
-
     knowledge=None,
-
     memory=None
-
 ):
 
 
