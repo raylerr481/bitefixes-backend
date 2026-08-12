@@ -1,106 +1,58 @@
+﻿"""
+Bitey Workflow
+Default / Fallback
+Multilingual ES / PT / EN
+
+Used when no specialized workflow matches
+the customer's request.
 """
-Default Workflow
-
-Fallback workflow for BiteFixes.
-
-Responsibilities:
-
-- Handle unknown intents.
-- Return a standard response.
-- Avoid unnecessary ticket creation.
-- Provide workflow metadata.
-
-Architecture:
-
-Bitey
- |
- v
-Workflow Service
- |
- v
-Default Workflow
- |
- v
-Base Utilities
-"""
-
-from __future__ import annotations
-
-from typing import Any, Dict, Optional
-
-from app.services.workflows.base import (
-    build_response,
-    add_action,
-)
-
-
-# =====================================================
-# EXECUTE DEFAULT WORKFLOW
-# =====================================================
 
 
 def execute(
-    company_id: int,
-    customer_id: int,
-    message: str,
-    knowledge: Optional[Dict[str, Any]] = None,
-    intent: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """
-    Execute fallback workflow.
+    message,
+    company_id=None,
+    customer_id=None,
+    service_id=None,
+    intent=None,
+    customer=None,
+    language=None,
+    knowledge=None,
+    **kwargs
+):
+    normalized_language = (language or "es").lower()
 
-    Used when no specialized workflow
-    matches the customer request.
-    """
-
-    actions = []
-
-
-    add_action(
-        actions,
-        "default_workflow_executed"
-    )
-
-
-    detected_intent = None
-
-
-    if intent:
-
-        detected_intent = intent.get(
-            "intent"
+    if normalized_language.startswith("pt"):
+        response = (
+            "Obrigado pela mensagem. "
+            "Recebi sua solicitação e vou direcioná-la "
+            "para análise."
         )
 
+    elif normalized_language.startswith("en"):
+        response = (
+            "Thank you for your message. "
+            "I received your request and will "
+            "forward it for review."
+        )
 
-    response = (
-        "Obrigado pela mensagem. "
-        "Recebi sua solicitação e "
-        "vou direcionar para análise."
-    )
+    else:
+        response = (
+            "Gracias por tu mensaje. "
+            "Recibí tu solicitud y la enviaré "
+            "para su análisis."
+        )
 
-
-    return build_response(
-
-        response=response,
-
-        intent=detected_intent,
-
-        ticket=None,
-
-        service_id=None,
-
-        actions=actions,
-
-        metadata={
-
-            "workflow": "default",
-
+    return {
+        "success": True,
+        "workflow": "default",
+        "response": response,
+        "ticket": None,
+        "ticket_id": None,
+        "service_id": service_id,
+        "intent": intent,
+        "metadata": {
             "company_id": company_id,
-
             "customer_id": customer_id,
-
-            "message": message
-
-        }
-
-    )
+            "language": language or "es",
+        },
+    }

@@ -1,23 +1,8 @@
-"""
+﻿"""
 BiteFixes Workflow
-CCTV Installation Workflow V18
-
-Handles:
-- CCTV installation requests
-- DVR/NVR setup
-- Network configuration
-- Remote access setup
-
-Architecture:
-Bitey Core
-    |
-Decision Engine
-    |
-Workflow Router
-    |
-camera_installation.execute()
+CCTV Installation
+Multilingual ES / PT / EN
 """
-
 
 def execute(
     message=None,
@@ -28,62 +13,45 @@ def execute(
     intent=None,
     knowledge=None,
     customer=None,
-    language="pt",
+    language=None,
     **kwargs
 ):
+    normalized_language = (language or "es").lower()
 
-    response_pt = (
-        "Realizamos instalação de câmeras de segurança, "
-        "configuração de DVR/NVR, ajustes de rede "
-        "e acesso remoto para monitoramento."
-    )
+    if normalized_language.startswith("pt"):
+        response = (
+            "Realizamos instalação de câmeras de segurança, "
+            "configuração de DVR/NVR, ajustes de rede "
+            "e acesso remoto para monitoramento."
+        )
 
-    response_es = (
-        "Realizamos instalación de cámaras de seguridad, "
-        "configuración de DVR/NVR, ajustes de red "
-        "y acceso remoto para monitoreo."
-    )
-
-    response_en = (
-        "We perform security camera installation, "
-        "DVR/NVR configuration, network adjustments "
-        "and remote monitoring setup."
-    )
-
-
-    if language == "es":
-        response = response_es
-
-    elif language == "en":
-        response = response_en
+    elif normalized_language.startswith("en"):
+        response = (
+            "We perform security camera installation, "
+            "DVR/NVR configuration, network adjustments "
+            "and remote monitoring setup."
+        )
 
     else:
-        response = response_pt
-
-
+        response = (
+            "Realizamos instalación de cámaras de seguridad, "
+            "configuración de DVR/NVR, ajustes de red "
+            "y acceso remoto para monitoreo."
+        )
 
     return {
-
         "success": True,
-
         "workflow": "cctv_installation",
-
         "response": response,
-
         "service_id": service_id,
-
         "intent": intent,
-
         "metadata": {
-
             "company_id": company_id,
-
             "customer_id": customer_id,
-
-            "language": language,
-
-            "workflow": "camera_installation"
-
-        }
-
+            "conversation_id": conversation_id,
+            "service_id": service_id,
+            "intent": intent,
+            "language": language or "es",
+            "workflow": "cctv_installation",
+        },
     }

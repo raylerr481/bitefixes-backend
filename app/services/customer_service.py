@@ -1,168 +1,266 @@
 """
 Customer Service
 
-Handles customer creation,
-retrieval and updates.
+Responsible for customer management.
+
+Supports:
+
+- Website customers
+- WhatsApp customers
+- Mobile App customers
+- Other channels
+
+Architecture:
+Customer identified by company + phone
 """
+
+from datetime import datetime
 
 from app.database.supabase import database
 
 
-def get_customer(
-    company_id: int,
-    phone: str
-):
-    """
-    Returns a customer by phone.
-    """
 
-    result = (
-        database
-        .table("customers")
-        .select("*")
-        .eq("company_id", company_id)
-        .eq("phone", phone)
-        .limit(1)
-        .execute()
-    )
+# =====================================================
+# GET CUSTOMER BY PHONE
+# =====================================================
 
-    if result.data:
-        return result.data[0]
-
-    return None
-
-
-
-def create_customer(
-    company_id: int,
+def get_customer_by_phone(
     phone: str,
-    full_name: str = "Customer"
+    company_id: int = 1
 ):
-    """
-    Creates a new customer.
-    """
-
-    data = {
-        "company_id": company_id,
-        "phone": phone,
-        "full_name": full_name
-    }
-
-    result = (
-        database
-        .table("customers")
-        .insert(data)
-        .execute()
-    )
-
-    if result.data:
-        return result.data[0]
-
-    return None
-
-
-
-def update_customer(
-    customer_id: int,
-    data: dict
-):
-    """
-    Updates customer information.
-    """
-
-    result = (
-        database
-        .table("customers")
-        .update(data)
-        .eq("id", customer_id)
-        .execute()
-    )
-
-    if result.data:
-        return result.data[0]
-
-    return None
-
-
-
-def get_or_create_customer(
-    company_id: int,
-    phone: str,
-    full_name: str = "Customer"
-):
-    """
-    Retrieves existing customer
-    or creates a new one.
-    """
 
     try:
 
-        customer = get_customer(
-            company_id,
-            phone
+        if not phone:
+            return None
+
+
+        result = (
+
+            database
+
+            .table("customers")
+
+            .select("*")
+
+            .eq(
+                "company_id",
+                company_id
+            )
+
+            .eq(
+                "phone",
+                phone
+            )
+
+            .execute()
+
         )
 
-        if customer:
 
-            if (
-                full_name
-                and full_name != customer.get("full_name")
-            ):
+        if result.data:
 
-                customer = update_customer(
-                    customer["id"],
-                    {
-                        "full_name": full_name
-                    }
-                )
-
-            return customer
+            return result.data[0]
 
 
-        return create_customer(
-            company_id,
-            phone,
-            full_name
-        )
+        return None
 
 
     except Exception as error:
 
         print(
-            "[CUSTOMER SERVICE ERROR]",
+            "[CUSTOMER LOOKUP ERROR]",
             error
         )
 
-        raise
+        return None
 
 
 
-def get_or_create_customer_by_phone(
+# =====================================================
+# CREATE CUSTOMER
+# =====================================================
+
+def create_customer(
+
     company_id: int,
-    phone: str,
-    name: str = None
-):
-    """
-    Compatibility alias.
-    """
 
-    return get_or_create_customer(
-        company_id=company_id,
-        phone=phone,
-        full_name=name or "Customer"
+    phone: str,
+
+    name: str = "Customer"
+
+):
+
+    try:
+
+
+        customer = {
+
+
+            "company_id":
+
+                company_id,
+
+
+            "full_name":
+
+                name,
+
+
+            "phone":
+
+                phone,
+
+
+            "preferred_language":
+
+                "pt-BR",
+
+
+            "customer_type":
+
+                "individual",
+
+
+            "is_active":
+
+                True,
+
+
+            "last_access":
+
+                datetime.utcnow().isoformat()
+
+        }
+
+
+
+        result = (
+
+            database
+
+            .table("customers")
+
+            .insert(customer)
+
+            .execute()
+
+        )
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+        return None
+
+
+
+    except Exception as error:
+
+
+        print(
+
+            "[CUSTOMER CREATE ERROR]",
+
+            error
+
+        )
+
+
+        return None
+
+
+
+# =====================================================
+# GET OR CREATE CUSTOMER
+# =====================================================
+
+def get_or_create_customer(
+
+    company_id: int,
+
+    phone: str,
+
+    name: str = "Customer"
+
+):
+
+
+    customer = get_customer_by_phone(
+
+        phone,
+
+        company_id
+
     )
 
 
+    if customer:
+
+
+        return customer
+
+
+
+    return create_customer(
+
+        company_id,
+
+        phone,
+
+        name
+
+    )
+# =====================================================
+# COMPATIBILITY ALIAS
+# =====================================================
 
 def get_customer_by_whatsapp(
-    company_id: int,
-    whatsapp: str
+    whatsapp: str,
+    company_id: int = 1
 ):
+
+    return get_customer_by_phone(
+        whatsapp,
+        company_id
+    )
+# =====================================================
+# GET CUSTOMER BY CHANNEL
+# =====================================================
+
+def get_customer_by_channel(
+    channel: str,
+    value: str,
+    company_id: int = 1
+):
+
     """
-    Compatibility alias.
+    Find customer by communication channel.
+
+    Supported channels:
+
+    - whatsapp
+    - phone
     """
 
-    return get_customer(
-        company_id,
-        whatsapp
-    )
+    if not value:
+        return None
+
+
+    channel = channel.lower()
+
+
+    if channel in [
+        "whatsapp",
+        "phone"
+    ]:
+
+        return get_customer_by_phone(
+            value,
+            company_id
+        )
+
+
+    return None

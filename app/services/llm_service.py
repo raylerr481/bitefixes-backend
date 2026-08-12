@@ -1,56 +1,78 @@
 """
-BiteFixes Prompt Builder
+BiteFixes LLM Service
 
-Creates a structured prompt for any LLM.
+Prompt preparation layer.
 """
+
 
 from app.services.ia_engine import analyze_message
 
 
+
 SYSTEM_PROMPT = """
+
 You are Bitey.
 
 You are the virtual AI assistant of BiteFixes.
 
-Your goals:
+Rules:
 
 - Answer professionally.
 - Be concise.
 - Use company knowledge.
-- Recommend services.
-- Help customers.
+- Recommend only existing services.
 - Never invent services.
+
 """
+
 
 
 def build_prompt(
     message,
-    memory,
+    memory=None,
     last_intent=None,
     service=None,
     knowledge=None
 ):
 
-    analysis = analyze_message(message)
 
-    prompt = {
+    analysis = analyze_message(
+        message
+    )
 
-        "system": SYSTEM_PROMPT,
 
-        "message": message,
+    return {
 
-        "normalized": analysis["normalized"],
 
-        "words": analysis["words"],
+        "system":
+            SYSTEM_PROMPT,
 
-        "last_intent": last_intent,
 
-        "memory": memory,
+        "message":
+            message,
 
-        "service": service,
 
-        "knowledge": knowledge
+        "normalized":
+            analysis["normalized"],
+
+
+        "words":
+            analysis["words"],
+
+
+        "last_intent":
+            last_intent,
+
+
+        "memory":
+            memory,
+
+
+        "service":
+            service,
+
+
+        "knowledge":
+            knowledge
 
     }
-
-    return prompt

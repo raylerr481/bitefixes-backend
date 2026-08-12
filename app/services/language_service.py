@@ -1,9 +1,8 @@
 """
-Bitey Language Service V1
+Bitey Language Service V2
 
-Detects user language and prepares multilingual responses.
+Detects:
 
-Supported:
 - Spanish
 - Portuguese
 - English
@@ -13,7 +12,8 @@ Supported:
 def detect_language(text: str) -> str:
 
     if not text:
-        return "pt"
+        return "es"
+
 
     text = text.lower()
 
@@ -22,14 +22,40 @@ def detect_language(text: str) -> str:
         "hola",
         "quiero",
         "necesito",
+        "necesita",
         "mi",
+        "mis",
         "esta",
         "está",
+        "tengo",
         "puedo",
         "cambiar",
-        "lento",
         "problema",
-        "ayuda"
+        "ayuda",
+        "instalar",
+        "camaras",
+        "cámaras",
+        "tienda",
+        "empresa",
+        "computadora",
+        "ordenador"
+    ]
+
+
+    portuguese_words = [
+        "ola",
+        "quero",
+        "preciso",
+        "minha",
+        "meu",
+        "tenho",
+        "problema",
+        "ajuda",
+        "instalar",
+        "câmeras",
+        "loja",
+        "empresa",
+        "computador"
     ]
 
 
@@ -40,119 +66,75 @@ def detect_language(text: str) -> str:
         "problem",
         "help",
         "computer",
-        "laptop"
+        "laptop",
+        "install"
     ]
 
 
-    spanish_score = sum(
-        1 for word in spanish_words
-        if word in text
+    scores = {
+
+        "es":
+            sum(
+                1
+                for word in spanish_words
+                if word in text
+            ),
+
+        "pt":
+            sum(
+                1
+                for word in portuguese_words
+                if word in text
+            ),
+
+        "en":
+            sum(
+                1
+                for word in english_words
+                if word in text
+            )
+
+    }
+
+
+    language = max(
+        scores,
+        key=scores.get
     )
 
 
-    english_score = sum(
-        1 for word in english_words
-        if word in text
-    )
+    # Si hay empate o no hay señales
+    if scores[language] == 0:
 
-
-    if spanish_score > english_score and spanish_score > 0:
         return "es"
 
 
-    if english_score > spanish_score:
-        return "en"
-
-
-    return "pt"
+    return language
 
 
 
 def normalize_language(language):
 
+    if language:
+
+        language = language.lower()
+
+
     if language in [
         "es",
-        "en",
-        "pt"
+        "pt",
+        "en"
     ]:
         return language
 
 
-    return "pt"
+    return "es"
 
 
 
 def translate_response(
-    response:str,
-    language:str
+    response: str,
+    language: str
 ):
-
-    """
-    Temporary translator layer.
-
-    Later connects with LLM.
-    """
-
-
-    if not response:
-        return response
-
-
-    language = normalize_language(
-        language
-    )
-
-
-    if language == "es":
-
-        replacements = {
-
-            "Podemos melhorar":
-                "Podemos mejorar",
-
-            "desempenho":
-                "rendimiento",
-
-            "memória RAM":
-                "memoria RAM",
-
-            "Seu atendimento foi registrado":
-                "Su atención fue registrada",
-
-            "Código do ticket":
-                "Código del ticket"
-
-        }
-
-
-        for old,new in replacements.items():
-            response = response.replace(
-                old,
-                new
-            )
-
-
-    elif language == "en":
-
-        replacements = {
-
-            "Podemos melhorar o desempenho do notebook com upgrade de SSD e memória RAM.":
-            "We can improve notebook performance with SSD and RAM upgrade.",
-
-            "Seu atendimento foi registrado.":
-            "Your request has been registered.",
-
-            "Código do ticket":
-            "Ticket code"
-
-        }
-
-
-        for old,new in replacements.items():
-            response=response.replace(
-                old,
-                new
-            )
-
 
     return response

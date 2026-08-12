@@ -1,6 +1,7 @@
-"""
+﻿"""
 Bitey Workflow
 Computer Repair
+Multilingual
 """
 
 
@@ -14,6 +15,29 @@ def execute(
     language=None
 ):
 
+    normalized_language = (language or "es").lower()
+
+    if normalized_language.startswith("pt"):
+
+        response = (
+            "Vamos verificar o seu computador e realizar "
+            "o diagnóstico técnico necessário."
+        )
+
+    elif normalized_language.startswith("en"):
+
+        response = (
+            "We will inspect your computer and perform "
+            "the necessary technical diagnosis."
+        )
+
+    else:
+
+        response = (
+            "Vamos a revisar tu equipo y realizar "
+            "el diagnóstico técnico correspondiente."
+        )
+
     return {
 
         "success": True,
@@ -22,8 +46,7 @@ def execute(
             "computer_repair",
 
         "response":
-            "Vamos a revisar tu equipo y realizar "
-            "el diagnóstico técnico correspondiente.",
+            response,
 
         "metadata": {
 

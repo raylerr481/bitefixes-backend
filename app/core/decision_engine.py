@@ -1,25 +1,24 @@
 """
-Bitey Decision Engine V12
+Bitey Decision Engine V13
 
-Central business reasoning layer.
+Business reasoning layer.
 
 Responsibilities:
-- Resolve customer intent
+
+- Resolve intent
 - Resolve service
-- Route sales
-- Route support workflows
-- Return execution plan
+- Decide sales/support/knowledge
+- Prepare execution plan
 
 Does NOT:
 - Create tickets
 - Save messages
-- Send notifications
+- Notify
 
-Those belong to Bitey Core.
 """
 
 
-from typing import Dict, Any
+from typing import Dict
 
 
 from app.services.service_resolver import (
@@ -38,23 +37,26 @@ from app.services.sales_engine import (
 
 
 
-# =====================================================
-# INTENT GROUPS
-# =====================================================
-
-
 SALES_INTENTS = {
 
     "ai_assistant",
-    "sales",
+
     "quote",
-    "purchase"
+
+    "purchase",
+
+    "sales",
+
+    "cctv_installation",
+
+    "camera_installation"
 
 }
 
 
 
 SUPPORT_INTENTS = {
+
 
     "computer_repair",
 
@@ -66,10 +68,6 @@ SUPPORT_INTENTS = {
 
     "mobile_repair",
 
-    "cctv_installation",
-
-    "camera_installation",
-
     "network_configuration",
 
     "software_problem"
@@ -78,16 +76,12 @@ SUPPORT_INTENTS = {
 
 
 
-# =====================================================
-# MAIN ENGINE
-# =====================================================
-
 
 def make_decision(
-    company_id: int,
-    customer: Dict,
-    message: str,
-    intent: Dict,
+    company_id:int,
+    customer:Dict,
+    message:str,
+    intent:Dict,
     knowledge=None,
     memory=None,
     channel="unknown"
@@ -97,36 +91,11 @@ def make_decision(
     try:
 
 
-        # ================================
-        # SAFETY NORMALIZATION
-        # ================================
+        customer = customer or {}
 
+        memory = memory or {}
 
-        if customer is None:
-
-            customer = {}
-
-
-
-        if memory is None:
-
-            memory = {}
-
-
-
-        if not isinstance(memory, dict):
-
-            memory = {
-
-                "summary": memory
-
-            }
-
-
-
-        if intent is None:
-
-            intent = {}
+        intent = intent or {}
 
 
 
@@ -142,11 +111,6 @@ def make_decision(
 
 
 
-        # ================================
-        # SERVICE RESOLUTION
-        # ================================
-
-
         service = resolve_service(
 
             company_id,
@@ -160,7 +124,6 @@ def make_decision(
         service_id = None
 
 
-
         if service:
 
             service_id = service.get(
@@ -169,25 +132,7 @@ def make_decision(
 
 
 
-        print(
-            "[DECISION ENGINE]",
-            {
-
-                "intent":
-                    intent_name,
-
-                "confidence":
-                    confidence,
-
-                "service_id":
-                    service_id
-
-            }
-        )
-
-
-
-        metadata = {
+        metadata={
 
 
             "intent":
@@ -206,31 +151,86 @@ def make_decision(
 
 
 
-        # =================================================
-        # SALES ROUTE
-        # =================================================
+
+        print(
+            "[DECISION]",
+            {
+                "intent":intent_name,
+                "service_id":service_id
+            }
+        )
+
+
+
+        # =====================================
+        # KNOWLEDGE WITHOUT ACTION
+        # =====================================
+
+
+        if (
+
+            knowledge
+
+            and
+
+            not intent_name
+
+        ):
+
+
+            return {
+
+
+                "action":
+                    "knowledge",
+
+
+                "create_ticket":
+                    False,
+
+
+                "ticket_type":
+                    None,
+
+
+                "response":
+                    knowledge,
+
+
+                "service":
+                    service,
+
+
+                "service_id":
+                    service_id,
+
+
+                "metadata":
+                    metadata
+
+            }
+
+
+
+
+        # =====================================
+        # SALES
+        # =====================================
 
 
         if intent_name in SALES_INTENTS:
 
 
-            customer_name = customer.get(
 
-                "full_name",
-
-                "Cliente"
-
-            )
-
-
-
-            response = generate_sales_response(
+            sales = generate_sales_response(
 
                 intent_name,
 
-                customer_name,
+                message,
 
-                memory
+                memory,
+
+                knowledge
 
             )
 
@@ -240,49 +240,34 @@ def make_decision(
 
 
                 "action":
-
                     "sales",
-
 
 
                 "create_ticket":
-
                     True,
 
 
+                "requires_quote":
+                    True,
+
 
                 "ticket_type":
-
                     "sales",
 
 
-
                 "response":
-
-                    response,
-
+                    sales,
 
 
                 "service":
-
                     service,
 
 
-
                 "service_id":
-
                     service_id,
 
 
-
-                "workflow":
-
-                    None,
-
-
-
                 "metadata":
-
                     metadata
 
 
@@ -290,12 +275,15 @@ def make_decision(
 
 
 
-        # =================================================
-        # SUPPORT ROUTE
-        # =================================================
+
+
+        # =====================================
+        # SUPPORT
+        # =====================================
 
 
         if intent_name in SUPPORT_INTENTS:
+
 
 
             workflow = execute_workflow(
@@ -317,10 +305,7 @@ def make_decision(
             )
 
 
-
-            if workflow is None:
-
-                workflow = {}
+            workflow = workflow or {}
 
 
 
@@ -328,25 +313,22 @@ def make_decision(
 
 
                 "action":
-
                     "workflow",
 
 
-
                 "create_ticket":
-
                     True,
 
 
+                "requires_quote":
+                    False,
+
 
                 "ticket_type":
-
                     "technical_support",
 
 
-
                 "response":
-
                     workflow.get(
 
                         "response",
@@ -356,104 +338,67 @@ def make_decision(
                     ),
 
 
-
                 "workflow":
-
                     intent_name,
 
 
-
-                "ticket":
-
-                    workflow.get(
-                        "ticket"
-                    ),
-
-
-
                 "service":
-
                     service,
 
 
-
                 "service_id":
-
                     service_id,
 
 
-
                 "metadata":
-
                     metadata
-
 
             }
 
 
 
-        # =================================================
-        # DEFAULT ROUTE
-        # =================================================
+
+        # =====================================
+        # DEFAULT
+        # =====================================
 
 
         return {
 
 
             "action":
-
                 "support",
 
 
-
             "create_ticket":
-
                 True,
 
 
-
             "ticket_type":
-
                 "technical_support",
 
 
+            "requires_quote":
+                False,
+
 
             "response":
-
                 "Gracias por contactar BiteFixes.",
 
 
-
-            "workflow":
-
-                None,
-
-
-
-            "ticket":
-
-                None,
-
-
-
             "service":
-
                 service,
 
 
-
             "service_id":
-
                 service_id,
 
 
-
             "metadata":
-
                 metadata
 
-
         }
+
 
 
 
@@ -461,15 +406,6 @@ def make_decision(
 
 
         import traceback
-
-
-        print(
-
-            "[DECISION ENGINE ERROR]",
-
-            repr(error)
-
-        )
 
 
         traceback.print_exc()
@@ -480,64 +416,27 @@ def make_decision(
 
 
             "action":
-
                 "error",
 
 
-
             "create_ticket":
-
                 False,
 
 
-
-            "ticket_type":
-
-                None,
-
-
-
             "response":
-
                 "Error procesando solicitud.",
 
 
-
-            "workflow":
-
-                None,
-
-
-
-            "ticket":
-
-                None,
-
-
-
             "service":
-
                 None,
-
 
 
             "service_id":
-
-                None,
-
-
-            "metadata":
-
-                {}
+                None
 
         }
 
 
-
-
-# =====================================================
-# COMPATIBILITY WRAPPER
-# =====================================================
 
 
 def decision_engine(
@@ -546,7 +445,8 @@ def decision_engine(
     message,
     intent,
     knowledge=None,
-    memory=None
+    memory=None,
+    channel="unknown"
 ):
 
 
@@ -562,6 +462,8 @@ def decision_engine(
 
         knowledge,
 
-        memory
+        memory,
+
+        channel
 
     )

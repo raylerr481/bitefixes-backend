@@ -5,7 +5,7 @@ Initial AI brain training data.
 """
 
 
-from app.supabase_client import supabase
+from app.database.supabase import supabase
 
 
 

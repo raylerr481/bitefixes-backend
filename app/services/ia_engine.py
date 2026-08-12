@@ -4,15 +4,18 @@ BiteFixes IA Engine V4
 Conversation preparation layer.
 
 Responsibilities:
+
 - Normalize user message
 - Prepare AI context
 - Combine memory and state
 - Support Bitey reasoning
 """
 
+
 from app.utils.normalizer import (
     normalizar_texto
 )
+
 
 
 def prepare_conversation_context(
@@ -31,31 +34,48 @@ def prepare_conversation_context(
 
     context = {
 
-        "message": message,
+        "message":
+            message,
 
-        "normalized_message": normalized_message,
 
-        "memory": memory,
+        "normalized_message":
+            normalized_message,
 
-        "memory_size": len(memory),
 
-        "memory_state": memory_state,
+        "memory":
+            memory,
 
-        "last_intent": memory_state.get(
-            "last_intent"
-        ),
 
-        "last_sales_intent": memory_state.get(
-            "last_sales_intent"
-        ),
+        "memory_size":
+            len(memory),
 
-        "last_support_intent": memory_state.get(
-            "last_support_intent"
-        ),
 
-        "conversation_stage": memory_state.get(
-            "conversation_stage"
-        )
+        "memory_state":
+            memory_state,
+
+
+        "last_intent":
+            memory_state.get(
+                "last_intent"
+            ),
+
+
+        "last_sales_intent":
+            memory_state.get(
+                "last_sales_intent"
+            ),
+
+
+        "last_support_intent":
+            memory_state.get(
+                "last_support_intent"
+            ),
+
+
+        "conversation_stage":
+            memory_state.get(
+                "conversation_stage"
+            )
 
     }
 
@@ -68,24 +88,19 @@ def analyze_conversation_context(
     context: dict
 ):
 
-    """
-    Basic conversational analysis.
-
-    Later this layer can integrate:
-    - LLM
-    - embeddings
-    - sentiment
-    - customer behavior
-    """
-
 
     analysis = {
 
-        "has_history": False,
+        "has_history":
+            False,
 
-        "previous_intent": None,
 
-        "conversation_stage": None
+        "previous_intent":
+            None,
+
+
+        "conversation_stage":
+            None
 
     }
 
@@ -109,3 +124,35 @@ def analyze_conversation_context(
 
 
     return analysis
+
+
+
+def analyze_message(
+    message: str
+):
+    """
+    Used by prompt_builder
+    """
+
+    normalized = normalizar_texto(
+        message
+    )
+
+
+    words = normalized.split()
+
+
+    return {
+
+        "original":
+            message,
+
+
+        "normalized":
+            normalized,
+
+
+        "words":
+            words
+
+    }

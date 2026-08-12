@@ -1,1050 +1,738 @@
-"""
-BiteFixes / Bitey AI
-Ticket Service V9
+﻿from datetime import datetime
 
-Responsabilidades:
-- Crear tickets
-- Consultar tickets del cliente
-- Detectar tickets abiertos
-- Evitar duplicados
-- Reutilizar tickets existentes
-- Sincronizar idioma
-- Actualizar contexto del ticket
-- Preparado para CRM
-"""
-
-
-from datetime import datetime
 from app.database.supabase import supabase
 
 
+OPEN_STATUS = "open"
 
-# ============================================================
-# Obtener tickets del cliente
-# ============================================================
-
-def get_customer_tickets(
-    customer_id: int,
-    company_id: int = 1
-):
-
-    try:
-
-        response = (
-            supabase
-            .table("tickets")
-            .select("*")
-            .eq("customer_id", customer_id)
-            .eq("company_id", company_id)
-            .order(
-                "created_at",
-                desc=True
-            )
-            .execute()
-        )
-
-        return response.data or []
+ACTIVE_STATUSES = [
+    "open",
+    "in_progress",
+    "pending",
+]
 
 
-    except Exception as e:
-
-        print(
-            "[GET CUSTOMER TICKETS ERROR]",
-            e
-        )
-
-        return []
-
-
-
-# ============================================================
-# Obtener tickets abiertos
-# ============================================================
-
-def get_open_customer_tickets(
-    customer_id: int,
-    company_id: int = 1
-):
-
-    tickets = get_customer_tickets(
-        customer_id,
-        company_id
-    )
-
-
-    open_status = [
-        "open",
-        "pending",
-        "in_progress"
-    ]
-
-
-    return [
-
-        ticket
-
-        for ticket in tickets
-
-        if ticket.get("status")
-        in open_status
-
-    ]
-
-
-
-# ============================================================
-# Buscar ticket abierto por intención
-# ============================================================
-
-def find_open_ticket_by_intent(
-    customer_id: int,
-    intent: str,
-    company_id: int = 1
-):
-
-    tickets = get_open_customer_tickets(
-        customer_id,
-        company_id
-    )
-
-
-    for ticket in tickets:
-
-        if ticket.get("intent") == intent:
-
-            return ticket
-
-
-    return None
-
-
-
-# ============================================================
-# Generar código ticket
-# ============================================================
-
-def generate_ticket_code(
-    ticket_id: int
-):
+def generate_ticket_number(ticket_id=None):
+    """Genera el código del ticket."""
 
     year = datetime.now().year
 
-
-    return (
-        f"BF-{year}-{ticket_id:06d}"
-    )
-
-
-
-# ============================================================
-# Crear ticket
-# ============================================================
-
-def create_ticket(
-    customer_id: int,
-    company_id: int,
-    title: str,
-    description: str,
-    intent: str,
-    service_id: int = None,
-    language: str = "pt-BR",
-    ticket_type: str = "technical_support",
-    channel: str = "website"
-):
+    if ticket_id is not None:
+        return f"BF-{year}-{int(ticket_id):06d}"
 
     try:
-
-
-        # ----------------------------------------
-        # Buscar ticket existente
-        # ----------------------------------------
-
-        existing = find_open_ticket_by_intent(
-            customer_id,
-            intent,
-            company_id
+        result = (
+            supabase
+            .table("tickets")
+            .select("id")
+            .order("id", desc=True)
+            .limit(1)
+            .execute()
         )
 
+        next_id = 1
 
-        if existing:
+        if result.data:
+            next_id = int(result.data[0]["id"]) + 1
 
+        return f"BF-{year}-{next_id:06d}"
 
-            print(
-                "[TICKET REUSED]",
-                existing.get(
-                    "ticket_code"
-                )
-            )
-
-
-            # Actualizar idioma
-            if (
-                language
-                and
-                existing.get("language")
-                != language
-            ):
-
-                update_ticket_language(
-                    existing["id"],
-                    language
-                )
+    except Exception as exc:
+        print(f"[TICKET] ERROR generando número: {exc}")
+        return f"BF-{year}-000001"
 
 
-            return existing
+def create_ticket(
+    customer_id,
+    service_id=None,
+    title=None,
+    description=None,
+    intent=None,
+    language="es",
+    company_id=None,
+    channel="website",
+    ticket_type="technical_support",
+):
+    """Crea un nuevo ticket."""
 
+    if customer_id is None:
+        print("[TICKET] ERROR: customer_id es obligatorio")
+        return None
 
+    now = datetime.now().isoformat()
 
-        # ----------------------------------------
-        # Crear nuevo ticket
-        # ----------------------------------------
+    data = {
+        "customer_id": customer_id,
+        "service_id": service_id,
+        "title": title or "Solicitud de soporte",
+        "description": description,
+        "intent": intent,
+        "language": language,
+        "status": OPEN_STATUS,
+        "priority": "normal",
+        "company_id": company_id,
+        "ticket_type": ticket_type,
+        "channel": channel,
+        "created_at": now,
+        "received_at": now,
+    }
 
-        now = datetime.utcnow().isoformat()
+    data = {
+        key: value
+        for key, value in data.items()
+        if value is not None
+    }
 
-
-        data = {
-
-            "customer_id":
-                customer_id,
-
-
-            "company_id":
-                company_id,
-
-
-            "title":
-                title,
-
-
-            "description":
-                description,
-
-
-            "intent":
-                intent,
-
-
-            "service_id":
-                service_id,
-
-
-            "status":
-                "open",
-
-
-            "priority":
-                "normal",
-
-
-            "language":
-                language,
-
-
-            "ticket_type":
-                ticket_type,
-
-
-            "channel":
-                channel,
-
-
-            "received_at":
-                now,
-
-
-            "created_at":
-                now
-
-        }
-
-
-
+    try:
         result = (
-
             supabase
             .table("tickets")
             .insert(data)
             .execute()
-
         )
-
-
-
-        if not result.data:
-
-            return None
-
-
-
-        ticket = result.data[0]
-
-
-
-        # ----------------------------------------
-        # Crear código BF
-        # ----------------------------------------
-
-        code = generate_ticket_code(
-            ticket["id"]
-        )
-
-
-
-        updated = (
-
-            supabase
-            .table("tickets")
-            .update(
-                {
-                    "ticket_code":
-                    code
-                }
-            )
-            .eq(
-                "id",
-                ticket["id"]
-            )
-            .execute()
-
-        )
-
-
-
-        return updated.data[0]
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[CREATE TICKET ERROR]",
-            e
-        )
-
-
+    except Exception as exc:
+        print(f"[TICKET] ERROR creando ticket: {exc}")
         return None
 
-
-
-
-# ============================================================
-# Actualizar idioma ticket
-# ============================================================
-
-def update_ticket_language(
-    ticket_id: int,
-    language: str
-):
-
-    try:
-
-
-        response = (
-
-            supabase
-            .table("tickets")
-            .update(
-                {
-                    "language":
-                    language
-                }
-            )
-            .eq(
-                "id",
-                ticket_id
-            )
-            .execute()
-
-        )
-
-
-        return response.data
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[UPDATE LANGUAGE ERROR]",
-            e
-        )
-
-
+    if not result.data:
+        print("[TICKET] ERROR: Supabase no devolvió datos")
         return None
 
+    ticket = result.data[0]
 
+    ticket_id = ticket.get("id")
 
-# ============================================================
-# Actualizar ticket
-# ============================================================
+    if ticket_id is None:
+        print("[TICKET] WARNING: ticket creado sin ID")
+        return ticket
 
-def update_ticket(
-    ticket_id: int,
-    data: dict
-):
+    ticket_code = generate_ticket_number(ticket_id)
+
+    code_data = {
+        "ticket_code": ticket_code,
+        "codigo_ticket": ticket_code,
+        "updated_at": datetime.now().isoformat(),
+    }
 
     try:
-
-
-        response = (
-
+        code_result = (
             supabase
             .table("tickets")
-            .update(data)
-            .eq(
-                "id",
-                ticket_id
-            )
+            .update(code_data)
+            .eq("id", ticket_id)
             .execute()
-
         )
 
+        if code_result.data:
+            ticket = code_result.data[0]
 
-        return response.data
-
-
-
-    except Exception as e:
-
-
+    except Exception as exc:
         print(
-            "[UPDATE TICKET ERROR]",
-            e
+            "[TICKET] WARNING: no se pudo actualizar "
+            f"el código: {exc}"
         )
 
+    print(
+        "[TICKET] Nuevo ticket creado:",
+        ticket.get("ticket_code")
+        or ticket.get("codigo_ticket")
+        or f"ID-{ticket_id}",
+    )
 
+    return ticket
+
+
+def obtener_ticket(ticket_id):
+    """Obtiene un ticket por ID."""
+
+    if ticket_id is None:
         return None
 
-
-
-# ============================================================
-# Cerrar ticket
-# ============================================================
-
-def close_ticket(
-    ticket_id: int,
-    solution: str = None
-):
-
     try:
-
-
-        data = {
-
-
-            "status":
-                "completed",
-
-
-            "completed_at":
-                datetime.utcnow().isoformat()
-
-        }
-
-
-
-        if solution:
-
-
-            data["solution"] = solution
-
-
-
-        response = (
-
-            supabase
-            .table("tickets")
-            .update(data)
-            .eq(
-                "id",
-                ticket_id
-            )
-            .execute()
-
-        )
-
-
-        return response.data
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[CLOSE TICKET ERROR]",
-            e
-        )
-
-
-        return None
-
-
-
-# ============================================================
-# Obtener ticket por ID
-# ============================================================
-
-def get_ticket(
-    ticket_id: int
-):
-
-    try:
-
-
-        response = (
-
+        result = (
             supabase
             .table("tickets")
             .select("*")
-            .eq(
-                "id",
-                ticket_id
-            )
-            .single()
-            .execute()
-
-        )
-
-
-        return response.data
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[GET TICKET ERROR]",
-            e
-        )
-
-
-        return None
-        """
-BiteFixes / Bitey AI
-Ticket Service V9
-
-Responsabilidades:
-- Crear tickets
-- Consultar tickets del cliente
-- Detectar tickets abiertos
-- Evitar duplicados
-- Reutilizar tickets existentes
-- Sincronizar idioma
-- Actualizar contexto del ticket
-- Preparado para CRM
-"""
-
-
-from datetime import datetime
-from app.database.supabase import supabase
-
-
-
-# ============================================================
-# Obtener tickets del cliente
-# ============================================================
-
-def get_customer_tickets(
-    customer_id: int,
-    company_id: int = 1
-):
-
-    try:
-
-        response = (
-            supabase
-            .table("tickets")
-            .select("*")
-            .eq("customer_id", customer_id)
-            .eq("company_id", company_id)
-            .order(
-                "created_at",
-                desc=True
-            )
+            .eq("id", ticket_id)
+            .limit(1)
             .execute()
         )
 
-        return response.data or []
+        if result.data:
+            return result.data[0]
 
-
-    except Exception as e:
-
-        print(
-            "[GET CUSTOMER TICKETS ERROR]",
-            e
-        )
-
-        return []
-
-
-
-# ============================================================
-# Obtener tickets abiertos
-# ============================================================
-
-def get_open_customer_tickets(
-    customer_id: int,
-    company_id: int = 1
-):
-
-    tickets = get_customer_tickets(
-        customer_id,
-        company_id
-    )
-
-
-    open_status = [
-        "open",
-        "pending",
-        "in_progress"
-    ]
-
-
-    return [
-
-        ticket
-
-        for ticket in tickets
-
-        if ticket.get("status")
-        in open_status
-
-    ]
-
-
-
-# ============================================================
-# Buscar ticket abierto por intención
-# ============================================================
-
-def find_open_ticket_by_intent(
-    customer_id: int,
-    intent: str,
-    company_id: int = 1
-):
-
-    tickets = get_open_customer_tickets(
-        customer_id,
-        company_id
-    )
-
-
-    for ticket in tickets:
-
-        if ticket.get("intent") == intent:
-
-            return ticket
-
+    except Exception as exc:
+        print(f"[TICKET] ERROR obteniendo ticket: {exc}")
 
     return None
 
 
-
-# ============================================================
-# Generar código ticket
-# ============================================================
-
-def generate_ticket_code(
-    ticket_id: int
-):
-
-    year = datetime.now().year
+def get_ticket(ticket_id):
+    """Alias en inglés."""
+    return obtener_ticket(ticket_id)
 
 
-    return (
-        f"BF-{year}-{ticket_id:06d}"
-    )
-
-
-
-# ============================================================
-# Crear ticket
-# ============================================================
-
-def create_ticket(
-    customer_id: int,
-    company_id: int,
-    title: str,
-    description: str,
-    intent: str,
-    service_id: int = None,
-    language: str = "pt-BR",
-    ticket_type: str = "technical_support",
-    channel: str = "website"
-):
+def get_tickets(company_id=None):
+    """Obtiene todos los tickets."""
 
     try:
-
-
-        # ----------------------------------------
-        # Buscar ticket existente
-        # ----------------------------------------
-
-        existing = find_open_ticket_by_intent(
-            customer_id,
-            intent,
-            company_id
-        )
-
-
-        if existing:
-
-
-            print(
-                "[TICKET REUSED]",
-                existing.get(
-                    "ticket_code"
-                )
-            )
-
-
-            # Actualizar idioma
-            if (
-                language
-                and
-                existing.get("language")
-                != language
-            ):
-
-                update_ticket_language(
-                    existing["id"],
-                    language
-                )
-
-
-            return existing
-
-
-
-        # ----------------------------------------
-        # Crear nuevo ticket
-        # ----------------------------------------
-
-        now = datetime.utcnow().isoformat()
-
-
-        data = {
-
-            "customer_id":
-                customer_id,
-
-
-            "company_id":
-                company_id,
-
-
-            "title":
-                title,
-
-
-            "description":
-                description,
-
-
-            "intent":
-                intent,
-
-
-            "service_id":
-                service_id,
-
-
-            "status":
-                "open",
-
-
-            "priority":
-                "normal",
-
-
-            "language":
-                language,
-
-
-            "ticket_type":
-                ticket_type,
-
-
-            "channel":
-                channel,
-
-
-            "received_at":
-                now,
-
-
-            "created_at":
-                now
-
-        }
-
-
-
-        result = (
-
-            supabase
-            .table("tickets")
-            .insert(data)
-            .execute()
-
-        )
-
-
-
-        if not result.data:
-
-            return None
-
-
-
-        ticket = result.data[0]
-
-
-
-        # ----------------------------------------
-        # Crear código BF
-        # ----------------------------------------
-
-        code = generate_ticket_code(
-            ticket["id"]
-        )
-
-
-
-        updated = (
-
-            supabase
-            .table("tickets")
-            .update(
-                {
-                    "ticket_code":
-                    code
-                }
-            )
-            .eq(
-                "id",
-                ticket["id"]
-            )
-            .execute()
-
-        )
-
-
-
-        return updated.data[0]
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[CREATE TICKET ERROR]",
-            e
-        )
-
-
-        return None
-
-
-
-
-# ============================================================
-# Actualizar idioma ticket
-# ============================================================
-
-def update_ticket_language(
-    ticket_id: int,
-    language: str
-):
-
-    try:
-
-
-        response = (
-
-            supabase
-            .table("tickets")
-            .update(
-                {
-                    "language":
-                    language
-                }
-            )
-            .eq(
-                "id",
-                ticket_id
-            )
-            .execute()
-
-        )
-
-
-        return response.data
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[UPDATE LANGUAGE ERROR]",
-            e
-        )
-
-
-        return None
-
-
-
-# ============================================================
-# Actualizar ticket
-# ============================================================
-
-def update_ticket(
-    ticket_id: int,
-    data: dict
-):
-
-    try:
-
-
-        response = (
-
-            supabase
-            .table("tickets")
-            .update(data)
-            .eq(
-                "id",
-                ticket_id
-            )
-            .execute()
-
-        )
-
-
-        return response.data
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[UPDATE TICKET ERROR]",
-            e
-        )
-
-
-        return None
-
-
-
-# ============================================================
-# Cerrar ticket
-# ============================================================
-
-def close_ticket(
-    ticket_id: int,
-    solution: str = None
-):
-
-    try:
-
-
-        data = {
-
-
-            "status":
-                "completed",
-
-
-            "completed_at":
-                datetime.utcnow().isoformat()
-
-        }
-
-
-
-        if solution:
-
-
-            data["solution"] = solution
-
-
-
-        response = (
-
-            supabase
-            .table("tickets")
-            .update(data)
-            .eq(
-                "id",
-                ticket_id
-            )
-            .execute()
-
-        )
-
-
-        return response.data
-
-
-
-    except Exception as e:
-
-
-        print(
-            "[CLOSE TICKET ERROR]",
-            e
-        )
-
-
-        return None
-
-
-
-# ============================================================
-# Obtener ticket por ID
-# ============================================================
-
-def get_ticket(
-    ticket_id: int
-):
-
-    try:
-
-
-        response = (
-
+        query = (
             supabase
             .table("tickets")
             .select("*")
-            .eq(
-                "id",
-                ticket_id
-            )
-            .single()
+        )
+
+        if company_id is not None:
+            query = query.eq("company_id", company_id)
+
+        result = (
+            query
+            .order("created_at", desc=True)
             .execute()
-
         )
 
+        return result.data or []
 
-        return response.data
+    except Exception as exc:
+        print(f"[TICKET] ERROR listando tickets: {exc}")
+        return []
 
 
+def listar_tickets(company_id=None):
+    """Alias en español."""
+    return get_tickets(company_id=company_id)
 
-    except Exception as e:
 
+def get_customer_tickets(
+    customer_id,
+    company_id=None,
+):
+    """Obtiene los tickets de un cliente."""
 
+    if customer_id is None:
+        return []
+
+    try:
+        query = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("customer_id", customer_id)
+        )
+
+        if company_id is not None:
+            query = query.eq("company_id", company_id)
+
+        result = (
+            query
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as exc:
         print(
-            "[GET TICKET ERROR]",
-            e
+            "[TICKET] ERROR obteniendo tickets "
+            f"del cliente: {exc}"
+        )
+        return []
+
+
+def get_open_ticket(
+    customer_id,
+    service_id=None,
+    company_id=None,
+    intent=None,
+):
+    """
+    Busca un ticket activo.
+
+    Todos los filtros proporcionados se aplican.
+    """
+
+    if customer_id is None:
+        return None
+
+    try:
+        query = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("customer_id", customer_id)
+            .in_("status", ACTIVE_STATUSES)
         )
 
+        if service_id is not None:
+            query = query.eq("service_id", service_id)
+
+        if company_id is not None:
+            query = query.eq("company_id", company_id)
+
+        if intent is not None:
+            query = query.eq("intent", intent)
+
+        result = (
+            query
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as exc:
+        print(
+            "[TICKET] ERROR buscando ticket abierto:",
+            exc,
+        )
+
+    return None
+
+
+def find_open_ticket(
+    customer_id,
+    intent=None,
+    company_id=None,
+    service_id=None,
+):
+    """
+    Busca un ticket activo compatible.
+
+    La reutilización exige coincidencia de:
+
+        customer_id
+        company_id
+        intent
+        service_id
+    """
+
+    if customer_id is None:
+        return None
+
+    try:
+        query = (
+            supabase
+            .table("tickets")
+            .select("*")
+            .eq("customer_id", customer_id)
+            .in_("status", ACTIVE_STATUSES)
+        )
+
+        if intent is not None:
+            query = query.eq("intent", intent)
+
+        if company_id is not None:
+            query = query.eq("company_id", company_id)
+
+        if service_id is not None:
+            query = query.eq("service_id", service_id)
+
+        result = (
+            query
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            ticket = result.data[0]
+
+            print(
+                "[TICKET] Ticket compatible encontrado:",
+                ticket.get("ticket_code")
+                or ticket.get("codigo_ticket")
+                or f"ID-{ticket.get('id')}",
+            )
+
+            return ticket
+
+    except Exception as exc:
+        print(
+            "[TICKET] ERROR buscando ticket compatible:",
+            exc,
+        )
+
+    print("[TICKET] No existe ticket activo compatible")
+
+    return None
+
+
+def update_ticket_language(
+    ticket_id,
+    language,
+):
+    """Actualiza el idioma del ticket."""
+
+    if ticket_id is None:
+        return None
+
+    if not language:
+        return obtener_ticket(ticket_id)
+
+    try:
+        result = (
+            supabase
+            .table("tickets")
+            .update(
+                {
+                    "language": language,
+                    "updated_at": datetime.now().isoformat(),
+                }
+            )
+            .eq("id", ticket_id)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as exc:
+        print(
+            "[TICKET] ERROR actualizando idioma:",
+            exc,
+        )
+
+    return None
+
+
+def update_ticket(ticket_id, data):
+    """Actualiza campos permitidos del ticket."""
+
+    if ticket_id is None:
+        return None
+
+    if not data:
+        return obtener_ticket(ticket_id)
+
+    allowed_fields = {
+        "title",
+        "description",
+        "intent",
+        "service_id",
+        "language",
+        "status",
+        "priority",
+        "category",
+        "technician_id",
+        "device_id",
+        "notes",
+        "company_id",
+        "ticket_type",
+        "channel",
+        "solution",
+        "warranty_days",
+        "labor_cost",
+        "material_cost",
+        "total_cost",
+        "started_at",
+        "completed_at",
+        "delivered_at",
+    }
+
+    clean_data = {
+        key: value
+        for key, value in data.items()
+        if key in allowed_fields
+    }
+
+    if not clean_data:
+        return obtener_ticket(ticket_id)
+
+    clean_data["updated_at"] = datetime.now().isoformat()
+
+    try:
+        result = (
+            supabase
+            .table("tickets")
+            .update(clean_data)
+            .eq("id", ticket_id)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as exc:
+        print(
+            "[TICKET] ERROR actualizando ticket:",
+            exc,
+        )
+
+    return None
+
+
+def close_ticket(ticket_id, solution=None):
+    """Cierra un ticket."""
+
+    if ticket_id is None:
+        return None
+
+    now = datetime.now().isoformat()
+
+    data = {
+        "status": "closed",
+        "completed_at": now,
+        "updated_at": now,
+    }
+
+    if solution is not None:
+        data["solution"] = solution
+
+    try:
+        result = (
+            supabase
+            .table("tickets")
+            .update(data)
+            .eq("id", ticket_id)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as exc:
+        print(
+            "[TICKET] ERROR cerrando ticket:",
+            exc,
+        )
 
         return None
+
+
+def update_ticket_status(ticket_id, status):
+    """Actualiza el estado de un ticket."""
+
+    if ticket_id is None or not status:
+        return None
+
+    now = datetime.now().isoformat()
+
+    data = {
+        "status": status,
+        "updated_at": now,
+    }
+
+    if status == "closed":
+        data["completed_at"] = now
+
+    elif status == "in_progress":
+        data["started_at"] = now
+
+    try:
+        result = (
+            supabase
+            .table("tickets")
+            .update(data)
+            .eq("id", ticket_id)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as exc:
+        print(
+            "[TICKET] ERROR actualizando estado:",
+            exc,
+        )
+
+        return None
+
+
+def process_ticket(
+    company_id,
+    customer_id,
+    service_id=None,
+    intent=None,
+    description=None,
+    title=None,
+    language="es",
+    channel="website",
+    ticket_type="technical_support",
+):
+    """
+    Punto central para crear o reutilizar tickets.
+
+    Un ticket solamente se reutiliza cuando coincide:
+
+        customer_id
+        company_id
+        intent
+        service_id
+
+    Y además tiene un estado activo.
+    """
+
+    print(
+        "[TICKET] Procesando:",
+        f"customer={customer_id}",
+        f"company={company_id}",
+        f"service={service_id}",
+        f"intent={intent}",
+        f"channel={channel}",
+    )
+
+    if customer_id is None:
+        print(
+            "[TICKET] ERROR: customer_id es obligatorio"
+        )
+        return None
+
+    if company_id is None:
+        print(
+            "[TICKET] WARNING: company_id no proporcionado"
+        )
+
+    existing_ticket = find_open_ticket(
+        customer_id=customer_id,
+        intent=intent,
+        company_id=company_id,
+        service_id=service_id,
+    )
+
+    if existing_ticket:
+
+        ticket_id = existing_ticket.get("id")
+
+        ticket_code = (
+            existing_ticket.get("ticket_code")
+            or existing_ticket.get("codigo_ticket")
+            or f"ID-{ticket_id}"
+        )
+
+        print(
+            "[TICKET] Ticket activo existente reutilizado:",
+            ticket_code,
+        )
+
+        current_language = existing_ticket.get("language")
+
+        if (
+            language
+            and language != current_language
+        ):
+            updated_ticket = update_ticket_language(
+                ticket_id,
+                language,
+            )
+
+            if updated_ticket:
+                existing_ticket = updated_ticket
+
+        current_ticket_code = (
+            existing_ticket.get("ticket_code")
+        )
+
+        current_codigo_ticket = (
+            existing_ticket.get("codigo_ticket")
+        )
+
+        if (
+            ticket_id is not None
+            and (
+                not current_ticket_code
+                or not current_codigo_ticket
+            )
+        ):
+            generated_code = generate_ticket_number(
+                ticket_id
+            )
+
+            code_data = {
+                "ticket_code": generated_code,
+                "codigo_ticket": generated_code,
+                "updated_at": datetime.now().isoformat(),
+            }
+
+            try:
+                code_result = (
+                    supabase
+                    .table("tickets")
+                    .update(code_data)
+                    .eq("id", ticket_id)
+                    .execute()
+                )
+
+                if code_result.data:
+                    existing_ticket = code_result.data[0]
+
+            except Exception as exc:
+                print(
+                    "[TICKET] WARNING: no se pudo sincronizar "
+                    f"el código: {exc}"
+                )
+
+        return existing_ticket
+
+    print(
+        "[TICKET] No existe ticket compatible. "
+        "Creando nuevo ticket..."
+    )
+
+    ticket = create_ticket(
+        customer_id=customer_id,
+        service_id=service_id,
+        title=title,
+        description=description,
+        intent=intent,
+        language=language,
+        company_id=company_id,
+        channel=channel,
+        ticket_type=ticket_type,
+    )
+
+    if not ticket:
+        print(
+            "[TICKET] ERROR: no se pudo crear el ticket"
+        )
+        return None
+
+    print(
+        "[TICKET] Ticket creado:",
+        ticket.get("ticket_code")
+        or ticket.get("codigo_ticket"),
+    )
+
+    return ticket
+
+
+def procesar_ticket(
+    company_id,
+    customer_id,
+    service_id=None,
+    intent=None,
+    description=None,
+    title=None,
+    language="es",
+    channel="website",
+    ticket_type="technical_support",
+):
+    """Alias en español."""
+
+    return process_ticket(
+        company_id=company_id,
+        customer_id=customer_id,
+        service_id=service_id,
+        intent=intent,
+        description=description,
+        title=title,
+        language=language,
+        channel=channel,
+        ticket_type=ticket_type,
+    )
+
+
+def find_ticket(
+    customer_id,
+    intent=None,
+    company_id=None,
+    service_id=None,
+):
+    """Alias compatible."""
+
+    return find_open_ticket(
+        customer_id=customer_id,
+        intent=intent,
+        company_id=company_id,
+        service_id=service_id,
+    )

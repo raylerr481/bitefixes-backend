@@ -1,240 +1,205 @@
 """
-BiteFixes Knowledge Service V2
+BiteFixes Knowledge Service
 
-Responsibilities:
-
-- Search knowledge base
-- Multilingual answers
-- Intent priority
-- Tag matching
-- Keyword ranking
-- AI context support
+Searches Bitey's knowledge base.
 
 Priority:
 
-1. Intent + language
-2. Intent
-3. Keyword score
-4. Return None
+1. Intent match
+2. Language match
+3. Keyword relevance
+4. Fallback
 """
 
 
 from app.database.supabase import database
 
 
-def normalize_text(text):
-
-    if not text:
-        return ""
-
-    return (
-        str(text)
-        .lower()
-        .replace("á","a")
-        .replace("é","e")
-        .replace("í","i")
-        .replace("ó","o")
-        .replace("ú","u")
-        .replace("ã","a")
-        .replace("õ","o")
-        .replace("ç","c")
-        .strip()
-    )
-
-
-
-def calculate_score(message,row):
-
-    message = normalize_text(message)
-
-    score = 0
-
-
-    fields = [
-
-        row.get("title"),
-
-        row.get("question"),
-
-        row.get("answer"),
-
-    ]
-
-
-    tags = row.get("tags")
-
-
-    if isinstance(tags,list):
-
-        fields.extend(tags)
-
-
-    elif tags:
-
-        fields.append(tags)
-
-
-
-    text = normalize_text(
-        " ".join(
-            [
-                str(x)
-                for x in fields
-                if x
-            ]
-        )
-    )
-
-
-
-    words = message.split()
-
-
-
-    for word in words:
-
-        if len(word)<3:
-            continue
-
-
-        if word in text:
-
-            score += 5
-
-
-
-    return score
-
-
-
-
 
 def search_knowledge(
-        message:str,
-        company_id:int=1,
-        intent:str=None,
-        language:str=None
+    message: str,
+    company_id: int = None,
+    intent: str = None,
+    language: str = None
 ):
 
 
     try:
 
 
-        rows = (
+        if not message:
+            return None
 
+
+
+        query = (
             database
-
             .table("knowledge_base")
-
             .select("*")
-
-            .eq(
-                "company_id",
-                company_id
-            )
-
             .eq(
                 "is_active",
                 True
             )
-
-            .execute()
-
-            .data
-
         )
 
 
-        if not rows:
+
+        if company_id:
+
+
+            query = query.eq(
+                "company_id",
+                company_id
+            )
+
+
+
+        result = (
+            query
+            .execute()
+        )
+
+
+
+        items = result.data or []
+
+
+
+        if not items:
 
             return None
 
 
 
-        # ----------------------------
-        # Intent + Language
-        # ----------------------------
+        # ==========================
+        # INTENT MATCH
+        # ==========================
 
 
         if intent:
 
 
-            for row in rows:
+            matches = [
+
+                item
+
+                for item in items
+
+                if item.get("intent")
+                ==
+                intent
+
+            ]
 
 
-                if row.get("intent") != intent:
+            if matches:
 
-                    continue
-
-
-
-                row_language = row.get(
-                    "language"
-                )
-
-
-
-                if language and row_language:
-
-                    if row_language == language:
-
-                        return row
+                items = matches
 
 
 
-        # ----------------------------
-        # Intent only
-        # ----------------------------
+        # ==========================
+        # LANGUAGE MATCH
+        # ==========================
 
 
-        if intent:
+        if language:
 
 
-            for row in rows:
+            lang_matches = [
+
+                item
+
+                for item in items
+
+                if item.get("language")
+                ==
+                language
+
+            ]
 
 
-                if row.get("intent")==intent:
+            if lang_matches:
 
-                    return row
+                items = lang_matches
 
 
 
-        # ----------------------------
-        # Keyword ranking
-        # ----------------------------
+
+        # ==========================
+        # KEYWORD SEARCH
+        # ==========================
+
+
+        words = [
+
+            w.strip(".,!?;:")
+
+            for w in message.lower().split()
+
+            if len(w) >= 3
+
+        ]
+
 
 
         best = None
 
-        best_score = 0
+        score_best = 0
 
 
 
-        for row in rows:
+        for item in items:
 
 
-            score = calculate_score(
-                message,
-                row
-            )
+            content = " ".join([
+
+
+                str(item.get("title","")),
+
+
+                str(item.get("question","")),
+
+
+                str(item.get("answer","")),
+
+
+                str(item.get("keywords",""))
+
+
+            ]).lower()
 
 
 
-            if score > best_score:
-
-                best_score = score
-
-                best = row
+            score = 0
 
 
 
-        if best_score >=5:
+            for word in words:
+
+
+                if word in content:
+
+                    score += 1
+
+
+
+            if score > score_best:
+
+
+                score_best = score
+
+                best = item
+
+
+
+        if best:
 
             return best
 
 
 
-        return None
+        return items[0]
 
 
 
@@ -242,7 +207,7 @@ def search_knowledge(
 
 
         print(
-            "[KNOWLEDGE SERVICE ERROR]",
+            "[KNOWLEDGE ERROR]",
             error
         )
 
@@ -253,30 +218,13 @@ def search_knowledge(
 
 
 
-# Compatibility
-
-def buscar_conocimiento(
-        mensaje,
-        company_id=1,
-        intent=None,
-        language=None
+def find_knowledge(
+    message,
+    company_id=None,
+    intent=None,
+    language=None
 ):
 
-    return search_knowledge(
-        mensaje,
-        company_id,
-        intent,
-        language
-    )
-
-
-
-def get_answer(
-        message,
-        company_id=1,
-        intent=None,
-        language=None
-):
 
     return search_knowledge(
         message,

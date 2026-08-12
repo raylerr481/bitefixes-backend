@@ -20,7 +20,7 @@ leads
 
 from datetime import datetime
 
-from app.supabase_client import supabase
+from app.database.supabase import supabase
 
 
 

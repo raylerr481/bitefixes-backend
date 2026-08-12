@@ -1,4 +1,4 @@
-from app.supabase_client import supabase
+from app.database.supabase import supabase
 
 
 def get_knowledge_by_intent(
