@@ -300,15 +300,36 @@ def find_open_ticket(
     """
     Busca un ticket activo compatible.
 
-    La reutilización exige coincidencia de:
+    Un ticket solamente puede reutilizarse cuando coinciden
+    TODOS los criterios obligatorios:
 
         customer_id
         company_id
         intent
         service_id
+
+    Si alguno falta, NO se reutiliza ning?n ticket existente.
     """
 
-    if customer_id is None:
+    if (
+        customer_id is None
+        or company_id is None
+        or intent is None
+        or service_id is None
+    ):
+        print(
+            "[TICKET] No se puede buscar reutilizaci?n: "
+            "faltan criterios obligatorios"
+        )
+
+        print(
+            "[TICKET] Criterios:",
+            f"customer={customer_id}",
+            f"company={company_id}",
+            f"intent={intent}",
+            f"service={service_id}",
+        )
+
         return None
 
     try:
@@ -317,17 +338,11 @@ def find_open_ticket(
             .table("tickets")
             .select("*")
             .eq("customer_id", customer_id)
+            .eq("company_id", company_id)
+            .eq("intent", intent)
+            .eq("service_id", service_id)
             .in_("status", ACTIVE_STATUSES)
         )
-
-        if intent is not None:
-            query = query.eq("intent", intent)
-
-        if company_id is not None:
-            query = query.eq("company_id", company_id)
-
-        if service_id is not None:
-            query = query.eq("service_id", service_id)
 
         result = (
             query
@@ -357,7 +372,6 @@ def find_open_ticket(
     print("[TICKET] No existe ticket activo compatible")
 
     return None
-
 
 def update_ticket_language(
     ticket_id,

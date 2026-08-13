@@ -122,9 +122,9 @@ def make_decision(
     intent: Dict,
     knowledge=None,
     memory=None,
+    language=None,
     channel="unknown"
 ):
-
 
     intent_name = None
 
@@ -312,11 +312,11 @@ def make_decision(
             customer_id=customer.get(
                 "id"
             ),
-
+            service_id=service_id,
             message=message,
 
             knowledge=knowledge,
-
+            language=language,
             intent_data=intent
 
         )
@@ -441,7 +441,8 @@ def decision_engine(
     message,
     intent,
     knowledge=None,
-    memory=None
+    memory=None,
+    language=None
 ):
 
 
@@ -457,6 +458,17 @@ def decision_engine(
 
         knowledge,
 
-        memory
+        memory,
+
+        language
 
     )
+
+
+
+
+
+
+
+
+

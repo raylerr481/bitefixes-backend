@@ -1,4 +1,4 @@
-"""
+﻿"""
 BiteFixes - Bitey Intent Engine V5
 Multilingual + Context Aware
 """
@@ -92,8 +92,25 @@ INTENT_RULES = {
         "lento",
         "melhorar",
         "mejorar"
-    ]
+    ],
 
+
+    "network_configuration":[
+        "configurar wifi",
+        "configurar minha rede",
+        "configurar rede",
+        "configuracao wifi",
+        "configuracao de rede",
+        "configurar roteador",
+        "configurar router",
+        "configurar internet",
+        "instalar wifi",
+        "instalar rede",
+        "rede wifi",
+        "wifi",
+        "roteador",
+        "router"
+    ]
 }
 
 
@@ -291,3 +308,4 @@ def detect_intent(
             "confidence":0
 
         }
+

@@ -167,43 +167,34 @@ def customer_tickets(
 @router.get("/customer/{customer_id}/open")
 def open_customer_ticket(
 
-    customer_id:int,
+    customer_id: int,
 
-    intent:str = None,
+    intent: str = None,
 
-    company_id:int = 1
+    company_id: int = 1,
+
+    service_id: int = None,
 
 ):
 
-
     try:
 
-
         ticket = find_open_ticket(
-
-            customer_id,
-
-            intent,
-
-            company_id
-
+            customer_id=customer_id,
+            intent=intent,
+            company_id=company_id,
+            service_id=service_id,
         )
-
 
         return {
 
+            "status": "success",
 
-            "status":"success",
-
-            "ticket":ticket
-
+            "ticket": ticket
 
         }
 
-
-
     except Exception as error:
-
 
         raise HTTPException(
 
@@ -212,9 +203,6 @@ def open_customer_ticket(
             detail=str(error)
 
         )
-
-
-
 
 
 # =====================================================

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Bitey Workflow Router V18
 Central workflow executor
 """
@@ -20,7 +20,10 @@ WORKFLOW_MAP = {
         "app.services.workflows.hardware_upgrade",
 
     "computer_repair":
-        "app.services.workflows.computer_repair"
+        "app.services.workflows.computer_repair",
+
+    "network_configuration":
+        "app.services.workflows.network_support"
 
 }
 
@@ -105,3 +108,4 @@ def execute_workflow(
                 str(e)
 
         }
+

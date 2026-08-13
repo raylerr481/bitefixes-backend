@@ -454,9 +454,10 @@ def process_message(
         #
 
         knowledge = search_knowledge(
-            message=message,
-            intent=intent_name,
-        )
+    message=message,
+    company_id=company_id,
+    intent=intent_name,
+)
 
         print(
             "[KNOWLEDGE]",
@@ -474,6 +475,7 @@ def process_message(
             intent,
             knowledge,
             memory,
+            language,
         )
 
         decision = _safe_dict(
@@ -859,6 +861,10 @@ def process_message(
             "response":
                 "Error processing request.",
         }
+
+
+
+
 
 
 

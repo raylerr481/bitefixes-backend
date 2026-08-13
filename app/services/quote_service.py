@@ -1,4 +1,4 @@
-"""
+﻿"""
 BiteFixes Quote Service V1.1
 
 Responsibilities:
@@ -46,7 +46,8 @@ def generate_quote_number(
 
 def find_open_quote(
     customer_id: int,
-    service_id: Optional[int] = None
+    service_id: Optional[int] = None,
+    ticket_id: Optional[int] = None
 ):
     """
     Returns latest active quote.
@@ -75,10 +76,15 @@ def find_open_quote(
 
 
         if service_id is not None:
-
             query = query.eq(
                 "service_id",
                 service_id
+            )
+
+        if ticket_id is not None:
+            query = query.eq(
+                "ticket_id",
+                ticket_id
             )
 
 
@@ -252,7 +258,8 @@ def generate_quote_number(
 
 def find_open_quote(
     customer_id: int,
-    service_id: Optional[int] = None
+    service_id: Optional[int] = None,
+    ticket_id: Optional[int] = None
 ):
     """
     Returns latest active quote.
@@ -281,10 +288,15 @@ def find_open_quote(
 
 
         if service_id is not None:
-
             query = query.eq(
                 "service_id",
                 service_id
+            )
+
+        if ticket_id is not None:
+            query = query.eq(
+                "ticket_id",
+                ticket_id
             )
 
 
@@ -443,7 +455,8 @@ def create_quote(
 
         existing = find_open_quote(
             customer_id=customer_id,
-            service_id=service_id
+            service_id=service_id,
+            ticket_id=ticket_id
         )
 
 
