@@ -4,8 +4,12 @@ Bitey Business Reasoning Layer V2
 Resolves the semantic business chain:
 Intent -> Need -> Requirements -> Solution -> Actions
 
-Company-specific definitions take precedence over global definitions. This
-layer is read-only and deliberately does not enforce commercial plan limits.
+Resolution is tenant-aware:
+- tenant-specific definitions are preferred;
+- global definitions are valid fallback definitions;
+- operational company context remains separate from commercial plan limits.
+
+This layer is read-only. It never executes actions or workflows.
 """
 
 from typing import Any, Dict, List, Optional
@@ -13,17 +17,17 @@ from typing import Any, Dict, List, Optional
 from app.database.supabase import database
 
 
-def _scoped_rows(table: str, company_id: int) -> List[Dict[str, Any]]:
-    """Return global + company rows, preferring company-specific records."""
+def _rows(table: str, company_id: int) -> List[Dict[str, Any]]:
+    """Return active tenant-specific and global rows, preferring tenant data."""
     response = (
         database.table(table)
         .select("*")
         .or_(f"company_id.eq.{company_id},company_id.is.null")
         .execute()
     )
-    rows = response.data or []
+    rows = [row for row in (response.data or []) if row.get("is_active", True)]
 
-    # A tenant override wins over a global definition with the same code.
+    # A tenant definition overrides a global definition with the same code.
     by_code: Dict[str, Dict[str, Any]] = {}
     without_code: List[Dict[str, Any]] = []
     for row in rows:
@@ -33,14 +37,13 @@ def _scoped_rows(table: str, company_id: int) -> List[Dict[str, Any]]:
             continue
         current = by_code.get(code)
         if current is None or (
-            current.get("company_id") is None
-            and row.get("company_id") == company_id
+            current.get("company_id") is None and row.get("company_id") == company_id
         ):
             by_code[code] = row
     return list(by_code.values()) + without_code
 
 
-def _find_intent(company_id: int, intent_code: str) -> Optional[Dict[str, Any]]:
+def _resolve_intent(company_id: int, intent_code: str) -> Optional[Dict[str, Any]]:
     rows = (
         database.table("intents")
         .select("*")
@@ -49,15 +52,24 @@ def _find_intent(company_id: int, intent_code: str) -> Optional[Dict[str, Any]]:
         .or_(f"company_id.eq.{company_id},company_id.is.null")
         .execute()
     ).data or []
-    company_rows = [row for row in rows if row.get("company_id") == company_id]
-    return (company_rows or rows or [None])[0]
+
+    tenant = [row for row in rows if row.get("company_id") == company_id]
+    if tenant:
+        return tenant[0]
+    global_rows = [row for row in rows if row.get("company_id") is None]
+    return global_rows[0] if global_rows else None
+
+
+def _resolve_by_ids(rows: List[Dict[str, Any]], ids: set) -> List[Dict[str, Any]]:
+    """Filter rows by relation IDs while preserving tenant/global precedence."""
+    return [row for row in rows if row.get("id") in ids]
 
 
 def resolve_business_reasoning(
     company_id: int,
     intent_code: Optional[str],
 ) -> Dict[str, Any]:
-    """Resolve the semantic business path for a tenant and intent."""
+    """Resolve the complete semantic business path for a tenant and intent."""
     empty = {
         "intent": None,
         "needs": [],
@@ -71,23 +83,22 @@ def resolve_business_reasoning(
         return empty
 
     try:
-        intent = _find_intent(company_id, intent_code)
+        intent = _resolve_intent(company_id, intent_code)
         if not intent:
             return empty
 
+        intent_id = intent.get("id")
         needs = [
-            row for row in _scoped_rows("needs", company_id)
-            if row.get("intent_id") == intent.get("id")
-            and row.get("is_active", True)
+            row for row in _rows("needs", company_id)
+            if row.get("intent_id") == intent_id
         ]
 
-        need_ids = {need.get("id") for need in needs}
+        need_ids = {row.get("id") for row in needs}
         requirements = [
-            row for row in _scoped_rows("requirements", company_id)
+            row for row in _rows("requirements", company_id)
             if row.get("need_id") in need_ids
         ]
 
-        solutions_all = _scoped_rows("solutions", company_id)
         solution_needs = (
             database.table("solution_needs")
             .select("*")
@@ -97,9 +108,8 @@ def resolve_business_reasoning(
         solution_ids = {row.get("solution_id") for row in solution_needs}
 
         solutions = [
-            solution for solution in solutions_all
-            if solution.get("id") in solution_ids
-            and solution.get("is_active", True)
+            row for row in _rows("solutions", company_id)
+            if row.get("id") in solution_ids
         ]
 
         solution_actions = (
@@ -112,9 +122,8 @@ def resolve_business_reasoning(
         action_ids = {row.get("action_id") for row in solution_actions}
 
         actions = [
-            action for action in _scoped_rows("actions", company_id)
-            if action.get("id") in action_ids
-            and action.get("is_active", True)
+            row for row in _rows("actions", company_id)
+            if row.get("id") in action_ids
         ]
 
         return {
@@ -123,7 +132,7 @@ def resolve_business_reasoning(
             "requirements": requirements,
             "solutions": solutions,
             "actions": actions,
-            "reasoning_found": bool(needs or solutions or actions),
+            "reasoning_found": bool(needs or requirements or solutions or actions),
         }
 
     except Exception as error:
