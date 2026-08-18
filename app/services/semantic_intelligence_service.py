@@ -20,11 +20,12 @@ def _clamp(value: float) -> float:
 
 
 def score_candidate(candidate: Dict[str, Any], evidence: Iterable[Dict[str, Any]], source_quality: float = 0.5) -> Dict[str, Any]:
+    """Score using candidate confidence, independent evidence and source quality."""
     rows = list(evidence)
-    if not rows:
-        return {"score": _clamp(candidate.get("confidence", 0.0) * 0.5), "evidence_count": 0, "ready_for_promotion": False}
-
-    evidence_confidence = sum(_clamp(row.get("confidence", 0.0)) for row in rows) / len(rows)
+    evidence_confidence = (
+        sum(_clamp(row.get("confidence", 0.0)) for row in rows) / len(rows)
+        if rows else 0.0
+    )
     score = _clamp(
         _clamp(candidate.get("confidence", 0.0)) * 0.35
         + evidence_confidence * 0.45
@@ -38,11 +39,7 @@ def score_candidate(candidate: Dict[str, Any], evidence: Iterable[Dict[str, Any]
 
 
 def evaluate_candidate(candidate_id: int) -> Dict[str, Any]:
-    """Evaluate a candidate using evidence linked to its source observation.
-
-    Promotion remains a separate governance operation. This function only
-    records an auditable evaluation result.
-    """
+    """Evaluate a candidate and record an auditable result; never promote it."""
     response = database.table("semantic_candidates").select("*").eq("id", candidate_id).limit(1).execute()
     candidate = (response.data or [None])[0]
     if not candidate:
@@ -50,11 +47,9 @@ def evaluate_candidate(candidate_id: int) -> Dict[str, Any]:
 
     observation_id = candidate.get("source_observation_id")
     evidence = []
-    if observation_id:
-        evidence = database.table("semantic_evidence").select("*").eq("observation_id", observation_id).execute().data or []
-
     source_quality = 0.5
     if observation_id:
+        evidence = database.table("semantic_evidence").select("*").eq("observation_id", observation_id).execute().data or []
         observation = database.table("semantic_observations").select("source_id").eq("id", observation_id).limit(1).execute().data or []
         source_id = observation[0].get("source_id") if observation else None
         if source_id:
@@ -78,10 +73,10 @@ def evaluate_candidate(candidate_id: int) -> Dict[str, Any]:
 
 def observe_and_propose(
     modality: str,
-    extracted_text: Optional[str],
     proposed_code: str,
     proposed_name: str,
-    description: Optional[str],
+    description: Optional[str] = None,
+    extracted_text: Optional[str] = None,
     scope: str = "global",
     company_id: Optional[int] = None,
     source_id: Optional[int] = None,
