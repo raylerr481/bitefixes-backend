@@ -1,15 +1,4 @@
-"""
-Bitey Decision Engine V16
-=========================
-
-Business reasoning layer with governed semantic-context enrichment.
-
-Decision flow:
-    Company Context -> Semantic Context -> Intent -> Domain/Capability -> Service -> Execution
-
-Plan limits remain feature/capability policies; they do not restrict the
-business concepts Bitey can represent or learn.
-"""
+"""Bitey Decision Engine V17."""
 
 from typing import Any, Dict, Optional
 
@@ -25,7 +14,7 @@ SALES_INTENTS = {
 
 SUPPORT_INTENTS = {
     "computer_repair", "hardware_upgrade", "upgrade_hardware", "windows_installation",
-    "mobile_repair", "network_configuration", "software_problem"
+    "mobile_repair", "network_configuration", "software_problem", "remote_support"
 }
 
 
@@ -68,26 +57,18 @@ def make_decision(
         memory = memory or {}
         intent = intent or {}
         context = _load_business_context(company_id, business_context)
-
-        # Semantic matching enriches reasoning but does not override the existing intent resolver.
         semantic_context = match_semantic_context(
-            message,
-            company_id=company_id,
-            language=context.get("language") or None,
+            message, company_id=company_id, language=context.get("language") or None
         )
         intent_name = intent.get("intent")
         confidence = intent.get("confidence", 0)
         scope_allowed = _scope_allows_intent(context, intent_name)
-
         service = resolve_service(company_id, intent_name, context)
         service_id = service.get("id") if service else None
 
         metadata = {
-            "intent": intent_name,
-            "confidence": confidence,
-            "channel": channel,
-            "company_id": company_id,
-            "business_context_loaded": bool(context),
+            "intent": intent_name, "confidence": confidence, "channel": channel,
+            "company_id": company_id, "business_context_loaded": bool(context),
             "scope_allowed": scope_allowed,
             "ai_scope_id": (context.get("ai_scope") or {}).get("id"),
             "plan_id": ((context.get("subscription") or {}).get("plan") or {}).get("id"),
@@ -104,16 +85,16 @@ def make_decision(
                 "requires_quote": False, "ticket_type": None,
                 "response": "Esta solicitud no está habilitada para la configuración actual de Bitey.",
                 "service": service, "service_id": service_id,
-                "semantic_context": semantic_context,
-                "business_context": context, "metadata": metadata,
+                "semantic_context": semantic_context, "business_context": context,
+                "metadata": metadata,
             }
 
         if knowledge and not intent_name:
             return {
                 "action": "knowledge", "create_ticket": False, "ticket_type": None,
                 "response": knowledge, "service": service, "service_id": service_id,
-                "semantic_context": semantic_context,
-                "business_context": context, "metadata": metadata,
+                "semantic_context": semantic_context, "business_context": context,
+                "metadata": metadata,
             }
 
         if intent_name in SALES_INTENTS:
@@ -137,16 +118,17 @@ def make_decision(
                 "ticket_type": "technical_support",
                 "response": workflow.get("response", "Solicitud recibida."),
                 "workflow": intent_name, "service": service, "service_id": service_id,
-                "semantic_context": semantic_context,
-                "business_context": context, "metadata": metadata,
+                "semantic_context": semantic_context, "business_context": context,
+                "metadata": metadata,
             }
 
+        # Conversational or unresolved input never creates a technical ticket.
         return {
-            "action": "support", "create_ticket": True, "ticket_type": "technical_support",
-            "requires_quote": False, "response": "Gracias por contactar BiteFixes.",
+            "action": "conversation", "create_ticket": False,
+            "requires_quote": False, "ticket_type": None, "response": None,
             "service": service, "service_id": service_id,
-            "semantic_context": semantic_context,
-            "business_context": context, "metadata": metadata,
+            "semantic_context": semantic_context, "business_context": context,
+            "metadata": metadata,
         }
 
     except Exception as error:
@@ -160,5 +142,4 @@ def make_decision(
 
 
 def decision_engine(company_id, customer, message, intent, knowledge=None, memory=None, channel="unknown", business_context=None):
-    """Compatibility wrapper for existing callers."""
     return make_decision(company_id, customer, message, intent, knowledge, memory, channel, business_context)
