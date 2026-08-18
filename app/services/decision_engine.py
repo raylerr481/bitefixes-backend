@@ -1,17 +1,20 @@
 """
-BiteFixes Decision Engine V14
+BiteFixes Decision Engine V15
 
 Central business reasoning layer.
 
-The decision engine consumes the normalized company business context so
-service resolution and workflow routing can use the tenant's configured
-domains, capabilities, services and AI scope without confusing commercial
-subscription limits with operational business context.
+Flow:
+Intent -> Business Context -> Business Reasoning -> Service -> Workflow
+
+Business reasoning is read-only and does not replace the legacy workflow
+fallback. Commercial subscription limits are kept separate from operational
+company context.
 """
 
 from typing import Any, Dict, Optional
 
 from app.services.company_service import get_company_context
+from app.services.business_reasoning_service import resolve_business_reasoning
 from app.services.service_resolver import resolve_service
 from app.services.workflows.workflow_service import execute_workflow
 from app.services.sales_engine import generate_sales_response
@@ -56,15 +59,14 @@ def make_decision(
     intent_name = intent.get("intent") if intent else None
     confidence = intent.get("confidence", 0) if intent else 0
 
-    # The core currently calls the compatibility wrapper without a context
-    # argument. Load the canonical tenant context here so the new architecture
-    # is actually used without breaking existing channels.
     if business_context is None:
         try:
             business_context = get_company_context(company_id)
         except Exception as error:
             print("[BUSINESS CONTEXT WARNING]", error)
             business_context = None
+
+    reasoning = resolve_business_reasoning(company_id, intent_name)
 
     service = resolve_service(
         company_id,
@@ -82,6 +84,11 @@ def make_decision(
         "ai_scope_loaded": bool(
             business_context and business_context.get("ai_scope")
         ),
+        "business_reasoning_found": reasoning.get("reasoning_found", False),
+        "needs_count": len(reasoning.get("needs", [])),
+        "requirements_count": len(reasoning.get("requirements", [])),
+        "solutions_count": len(reasoning.get("solutions", [])),
+        "actions_count": len(reasoning.get("actions", [])),
     }
 
     print(
@@ -92,6 +99,7 @@ def make_decision(
             "service_id": service_id,
             "requires_quote": requires_quote,
             "business_context_loaded": bool(business_context),
+            "business_reasoning_found": reasoning.get("reasoning_found", False),
         },
     )
 
@@ -110,6 +118,7 @@ def make_decision(
             "service": service,
             "service_id": service_id,
             "workflow": None,
+            "reasoning": reasoning,
             "metadata": metadata,
         }
 
@@ -135,6 +144,7 @@ def make_decision(
             "ticket": workflow.get("ticket"),
             "service": service,
             "service_id": service_id,
+            "reasoning": reasoning,
             "metadata": metadata,
         }
 
@@ -147,6 +157,7 @@ def make_decision(
         "workflow": None,
         "service": service,
         "service_id": service_id,
+        "reasoning": reasoning,
         "metadata": metadata,
     }
 
