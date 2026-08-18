@@ -1,15 +1,10 @@
 """
-Bitey Business Reasoning Layer V2
+Bitey Business Reasoning Layer V3
 
-Resolves the semantic business chain:
+Resolves:
 Intent -> Need -> Requirements -> Solution -> Actions
 
-Resolution is tenant-aware:
-- tenant-specific definitions are preferred;
-- global definitions are valid fallback definitions;
-- operational company context remains separate from commercial plan limits.
-
-This layer is read-only. It never executes actions or workflows.
+This layer is read-only. It does not execute workflows or actions.
 """
 
 from typing import Any, Dict, List, Optional
@@ -18,7 +13,6 @@ from app.database.supabase import database
 
 
 def _rows(table: str, company_id: int) -> List[Dict[str, Any]]:
-    """Return active tenant-specific and global rows, preferring tenant data."""
     response = (
         database.table(table)
         .select("*")
@@ -27,7 +21,6 @@ def _rows(table: str, company_id: int) -> List[Dict[str, Any]]:
     )
     rows = [row for row in (response.data or []) if row.get("is_active", True)]
 
-    # A tenant definition overrides a global definition with the same code.
     by_code: Dict[str, Dict[str, Any]] = {}
     without_code: List[Dict[str, Any]] = []
     for row in rows:
@@ -52,7 +45,6 @@ def _resolve_intent(company_id: int, intent_code: str) -> Optional[Dict[str, Any
         .or_(f"company_id.eq.{company_id},company_id.is.null")
         .execute()
     ).data or []
-
     tenant = [row for row in rows if row.get("company_id") == company_id]
     if tenant:
         return tenant[0]
@@ -60,25 +52,16 @@ def _resolve_intent(company_id: int, intent_code: str) -> Optional[Dict[str, Any
     return global_rows[0] if global_rows else None
 
 
-def _resolve_by_ids(rows: List[Dict[str, Any]], ids: set) -> List[Dict[str, Any]]:
-    """Filter rows by relation IDs while preserving tenant/global precedence."""
-    return [row for row in rows if row.get("id") in ids]
-
-
-def resolve_business_reasoning(
-    company_id: int,
-    intent_code: Optional[str],
-) -> Dict[str, Any]:
-    """Resolve the complete semantic business path for a tenant and intent."""
+def resolve_business_reasoning(company_id: int, intent_code: Optional[str]) -> Dict[str, Any]:
     empty = {
         "intent": None,
         "needs": [],
         "requirements": [],
         "solutions": [],
         "actions": [],
+        "next_step": None,
         "reasoning_found": False,
     }
-
     if not company_id or not intent_code:
         return empty
 
@@ -87,17 +70,9 @@ def resolve_business_reasoning(
         if not intent:
             return empty
 
-        intent_id = intent.get("id")
-        needs = [
-            row for row in _rows("needs", company_id)
-            if row.get("intent_id") == intent_id
-        ]
-
-        need_ids = {row.get("id") for row in needs}
-        requirements = [
-            row for row in _rows("requirements", company_id)
-            if row.get("need_id") in need_ids
-        ]
+        needs = [r for r in _rows("needs", company_id) if r.get("intent_id") == intent.get("id")]
+        need_ids = {r.get("id") for r in needs}
+        requirements = [r for r in _rows("requirements", company_id) if r.get("need_id") in need_ids]
 
         solution_needs = (
             database.table("solution_needs")
@@ -105,12 +80,8 @@ def resolve_business_reasoning(
             .in_("need_id", list(need_ids) or [0])
             .execute()
         ).data or []
-        solution_ids = {row.get("solution_id") for row in solution_needs}
-
-        solutions = [
-            row for row in _rows("solutions", company_id)
-            if row.get("id") in solution_ids
-        ]
+        solution_ids = {r.get("solution_id") for r in solution_needs}
+        solutions = [r for r in _rows("solutions", company_id) if r.get("id") in solution_ids]
 
         solution_actions = (
             database.table("solution_actions")
@@ -119,12 +90,32 @@ def resolve_business_reasoning(
             .order("sequence_order")
             .execute()
         ).data or []
-        action_ids = {row.get("action_id") for row in solution_actions}
+        action_ids = {r.get("action_id") for r in solution_actions}
+        actions = [r for r in _rows("actions", company_id) if r.get("id") in action_ids]
 
-        actions = [
-            row for row in _rows("actions", company_id)
-            if row.get("id") in action_ids
-        ]
+        # Determine the first incomplete semantic stage. This is guidance only;
+        # execution remains the responsibility of the decision/workflow layer.
+        next_step = None
+        if requirements:
+            next_step = {
+                "type": "collect_requirements",
+                "requirements": requirements,
+            }
+        elif needs:
+            next_step = {
+                "type": "clarify_need",
+                "needs": needs,
+            }
+        elif solutions:
+            next_step = {
+                "type": "present_solution",
+                "solutions": solutions,
+            }
+        elif actions:
+            next_step = {
+                "type": "prepare_action",
+                "actions": actions,
+            }
 
         return {
             "intent": intent,
@@ -132,9 +123,9 @@ def resolve_business_reasoning(
             "requirements": requirements,
             "solutions": solutions,
             "actions": actions,
+            "next_step": next_step,
             "reasoning_found": bool(needs or requirements or solutions or actions),
         }
-
     except Exception as error:
         print("[BUSINESS REASONING ERROR]", error)
         return empty
