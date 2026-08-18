@@ -1,11 +1,11 @@
 """
-Bitey Business Reasoning Layer V1
+Bitey Business Reasoning Layer V2
 
 Resolves the semantic business chain:
 Intent -> Need -> Requirements -> Solution -> Actions
 
-This layer is intentionally read-only. It does not execute actions or
-workflows and does not apply commercial subscription limits.
+Company-specific definitions take precedence over global definitions. This
+layer is read-only and deliberately does not enforce commercial plan limits.
 """
 
 from typing import Any, Dict, List, Optional
@@ -13,14 +13,44 @@ from typing import Any, Dict, List, Optional
 from app.database.supabase import database
 
 
-def _rows(table: str, company_id: int) -> List[Dict[str, Any]]:
+def _scoped_rows(table: str, company_id: int) -> List[Dict[str, Any]]:
+    """Return global + company rows, preferring company-specific records."""
     response = (
         database.table(table)
         .select("*")
-        .eq("company_id", company_id)
+        .or_(f"company_id.eq.{company_id},company_id.is.null")
         .execute()
     )
-    return response.data or []
+    rows = response.data or []
+
+    # A tenant override wins over a global definition with the same code.
+    by_code: Dict[str, Dict[str, Any]] = {}
+    without_code: List[Dict[str, Any]] = []
+    for row in rows:
+        code = row.get("code")
+        if not code:
+            without_code.append(row)
+            continue
+        current = by_code.get(code)
+        if current is None or (
+            current.get("company_id") is None
+            and row.get("company_id") == company_id
+        ):
+            by_code[code] = row
+    return list(by_code.values()) + without_code
+
+
+def _find_intent(company_id: int, intent_code: str) -> Optional[Dict[str, Any]]:
+    rows = (
+        database.table("intents")
+        .select("*")
+        .eq("code", intent_code)
+        .eq("is_active", True)
+        .or_(f"company_id.eq.{company_id},company_id.is.null")
+        .execute()
+    ).data or []
+    company_rows = [row for row in rows if row.get("company_id") == company_id]
+    return (company_rows or rows or [None])[0]
 
 
 def resolve_business_reasoning(
@@ -41,44 +71,35 @@ def resolve_business_reasoning(
         return empty
 
     try:
-        intents = (
-            database.table("intents")
-            .select("*")
-            .eq("company_id", company_id)
-            .eq("code", intent_code)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        ).data or []
-
-        if not intents:
+        intent = _find_intent(company_id, intent_code)
+        if not intent:
             return empty
 
-        intent = intents[0]
         needs = [
-            row for row in _rows("needs", company_id)
-            if row.get("intent_id") == intent.get("id") and row.get("is_active", True)
+            row for row in _scoped_rows("needs", company_id)
+            if row.get("intent_id") == intent.get("id")
+            and row.get("is_active", True)
         ]
 
-        requirements = []
-        for requirement in _rows("requirements", company_id):
-            if any(requirement.get("need_id") == need.get("id") for need in needs):
-                requirements.append(requirement)
+        need_ids = {need.get("id") for need in needs}
+        requirements = [
+            row for row in _scoped_rows("requirements", company_id)
+            if row.get("need_id") in need_ids
+        ]
 
-        solutions = _rows("solutions", company_id)
+        solutions_all = _scoped_rows("solutions", company_id)
         solution_needs = (
             database.table("solution_needs")
             .select("*")
+            .in_("need_id", list(need_ids) or [0])
             .execute()
         ).data or []
-        solution_ids = {
-            row.get("solution_id")
-            for row in solution_needs
-            if row.get("need_id") in {need.get("id") for need in needs}
-        }
+        solution_ids = {row.get("solution_id") for row in solution_needs}
+
         solutions = [
-            solution for solution in solutions
-            if solution.get("id") in solution_ids and solution.get("is_active", True)
+            solution for solution in solutions_all
+            if solution.get("id") in solution_ids
+            and solution.get("is_active", True)
         ]
 
         solution_actions = (
@@ -91,8 +112,9 @@ def resolve_business_reasoning(
         action_ids = {row.get("action_id") for row in solution_actions}
 
         actions = [
-            action for action in _rows("actions", company_id)
-            if action.get("id") in action_ids and action.get("is_active", True)
+            action for action in _scoped_rows("actions", company_id)
+            if action.get("id") in action_ids
+            and action.get("is_active", True)
         ]
 
         return {
