@@ -5,7 +5,7 @@ The initial runtime is intentionally read-only and supports HTTP GET calls.
 """
 
 from typing import Any, Dict, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -14,6 +14,10 @@ from app.services.permission_engine import evaluate_permission
 
 class ConnectorExecutionError(RuntimeError):
     """Raised when a connector operation cannot be safely executed."""
+
+
+# Deliberately small allow-list: AI-generated requests must not inject secrets.
+SAFE_REQUEST_HEADERS = {"accept", "content-type", "user-agent", "x-request-id"}
 
 
 def execute_rest_read(
@@ -51,17 +55,27 @@ def execute_rest_read(
     if not base_url:
         raise ConnectorExecutionError("connection_endpoint_missing")
 
-    url = urljoin(base_url.rstrip("/") + "/", str(path).lstrip("/"))
+    parsed_base = urlparse(str(base_url))
+    if parsed_base.scheme not in {"http", "https"} or not parsed_base.netloc:
+        raise ConnectorExecutionError("connection_endpoint_invalid")
+
+    raw_path = str(path or "")
+    parsed_path = urlparse(raw_path)
+    if parsed_path.scheme or parsed_path.netloc or raw_path.startswith("//"):
+        raise ConnectorExecutionError("connector_path_must_be_relative")
+
+    url = urljoin(str(base_url).rstrip("/") + "/", raw_path.lstrip("/"))
     request_headers = {"Accept": "application/json"}
     if headers:
-        # Only non-sensitive request headers may be supplied by the caller.
-        request_headers.update(headers)
+        for key, value in headers.items():
+            if key.lower() in SAFE_REQUEST_HEADERS:
+                request_headers[key] = value
 
     plan = {
         "method": "GET",
         "url": url,
         "query": query or {},
-        "headers": {k: v for k, v in request_headers.items() if k.lower() != "authorization"},
+        "headers": request_headers,
     }
 
     if dry_run:
