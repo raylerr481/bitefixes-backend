@@ -15,26 +15,52 @@ def get_tool(tool_code: str, company_id: Optional[int] = None) -> Optional[Dict[
     if not tool_code:
         return None
 
-    query = (
+    result = (
         database.table("tools")
         .select("*")
         .eq("code", tool_code)
         .eq("is_active", True)
+        .execute()
     )
-
-    result = query.execute()
     tools = result.data or []
 
     if company_id is not None:
         for tool in tools:
             if tool.get("company_id") == company_id:
-                return tool
+                return _with_connector_id(tool)
 
     for tool in tools:
         if tool.get("company_id") is None:
-            return tool
+            return _with_connector_id(tool)
 
     return None
+
+
+def _with_connector_id(tool: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve connector ownership from configuration or connector catalog."""
+    if tool.get("connector_id"):
+        return tool
+
+    config = tool.get("configuration") or {}
+    connector_code = config.get("connector_code") if isinstance(config, dict) else None
+    if not connector_code:
+        connector_code = "rest_api" if tool.get("code", "").startswith("rest_api_") else None
+
+    if not connector_code:
+        return tool
+
+    catalog = (
+        database.table("connector_catalog")
+        .select("id, code")
+        .eq("code", connector_code)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if catalog.data:
+        tool = dict(tool)
+        tool["connector_id"] = catalog.data[0]["id"]
+    return tool
 
 
 def tool_supports_action(tool: Dict[str, Any], action_code: str) -> bool:
