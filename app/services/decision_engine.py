@@ -1,5 +1,5 @@
 """
-BiteFixes Decision Engine V13
+BiteFixes Decision Engine V14
 
 Central business reasoning layer.
 
@@ -11,6 +11,7 @@ subscription limits with operational business context.
 
 from typing import Any, Dict, Optional
 
+from app.services.company_service import get_company_context
 from app.services.service_resolver import resolve_service
 from app.services.workflows.workflow_service import execute_workflow
 from app.services.sales_engine import generate_sales_response
@@ -55,8 +56,16 @@ def make_decision(
     intent_name = intent.get("intent") if intent else None
     confidence = intent.get("confidence", 0) if intent else 0
 
-    # Operational resolution is driven by company context. Subscription data
-    # remains available in business_context but does not block service access.
+    # The core currently calls the compatibility wrapper without a context
+    # argument. Load the canonical tenant context here so the new architecture
+    # is actually used without breaking existing channels.
+    if business_context is None:
+        try:
+            business_context = get_company_context(company_id)
+        except Exception as error:
+            print("[BUSINESS CONTEXT WARNING]", error)
+            business_context = None
+
     service = resolve_service(
         company_id,
         intent_name,
