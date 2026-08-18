@@ -1,14 +1,14 @@
 """
-Bitey Decision Engine V15
+Bitey Decision Engine V16
 =========================
 
-Business reasoning layer.
+Business reasoning layer with governed semantic-context enrichment.
 
 Decision flow:
-    Company Context -> AI Scope -> Intent -> Domain/Capability -> Service -> Execution
+    Company Context -> Semantic Context -> Intent -> Domain/Capability -> Service -> Execution
 
-Plan limits are interpreted as explicit capability/feature policies, not as a
-limit on what the business is conceptually allowed to represent.
+Plan limits remain feature/capability policies; they do not restrict the
+business concepts Bitey can represent or learn.
 """
 
 from typing import Any, Dict, Optional
@@ -17,7 +17,7 @@ from app.services.company_service import get_company_context
 from app.services.service_resolver import resolve_service
 from app.services.workflows.workflow_service import execute_workflow
 from app.services.sales_engine import generate_sales_response
-
+from app.services.semantic_match_service import match_semantic_context
 
 SALES_INTENTS = {
     "ai_assistant", "quote", "purchase", "sales", "cctv_installation", "camera_installation"
@@ -42,11 +42,9 @@ def _load_business_context(company_id: int, supplied_context: Optional[Dict[str,
 def _scope_allows_intent(context: Dict[str, Any], intent_name: Optional[str]) -> bool:
     if not intent_name:
         return True
-
     policy = (context.get("ai_scope") or {}).get("policy") or {}
     blocked = policy.get("blocked_intents")
     allowed = policy.get("allowed_intents")
-
     if isinstance(blocked, list) and intent_name in blocked:
         return False
     if isinstance(allowed, list) and allowed:
@@ -71,11 +69,16 @@ def make_decision(
         intent = intent or {}
         context = _load_business_context(company_id, business_context)
 
+        # Semantic matching enriches reasoning but does not override the existing intent resolver.
+        semantic_context = match_semantic_context(
+            message,
+            company_id=company_id,
+            language=context.get("language") or None,
+        )
         intent_name = intent.get("intent")
         confidence = intent.get("confidence", 0)
         scope_allowed = _scope_allows_intent(context, intent_name)
 
-        # Context-aware service resolution. Exact intent remains the strongest signal.
         service = resolve_service(company_id, intent_name, context)
         service_id = service.get("id") if service else None
 
@@ -90,6 +93,9 @@ def make_decision(
             "plan_id": ((context.get("subscription") or {}).get("plan") or {}).get("id"),
             "domain_count": len(context.get("domains") or []),
             "capability_count": len(context.get("capabilities") or []),
+            "semantic_confidence": semantic_context.get("confidence", 0.0),
+            "semantic_matches": semantic_context.get("matches", [])[:5],
+            "semantic_relations": semantic_context.get("relations", [])[:20],
         }
 
         if intent_name and not scope_allowed:
@@ -98,6 +104,7 @@ def make_decision(
                 "requires_quote": False, "ticket_type": None,
                 "response": "Esta solicitud no está habilitada para la configuración actual de Bitey.",
                 "service": service, "service_id": service_id,
+                "semantic_context": semantic_context,
                 "business_context": context, "metadata": metadata,
             }
 
@@ -105,6 +112,7 @@ def make_decision(
             return {
                 "action": "knowledge", "create_ticket": False, "ticket_type": None,
                 "response": knowledge, "service": service, "service_id": service_id,
+                "semantic_context": semantic_context,
                 "business_context": context, "metadata": metadata,
             }
 
@@ -113,26 +121,23 @@ def make_decision(
             return {
                 "action": "sales", "create_ticket": True, "requires_quote": True,
                 "ticket_type": "sales", "response": sales, "service": service,
-                "service_id": service_id, "business_context": context, "metadata": metadata,
+                "service_id": service_id, "semantic_context": semantic_context,
+                "business_context": context, "metadata": metadata,
             }
 
         if intent_name in SUPPORT_INTENTS:
             workflow = execute_workflow(
-                intent=intent_name,
-                company_id=company_id,
-                customer_id=customer.get("id"),
-                message=message,
-                knowledge=knowledge,
-                customer=customer,
-                language=channel,
+                intent=intent_name, company_id=company_id,
+                customer_id=customer.get("id"), message=message,
+                knowledge=knowledge, customer=customer, language=channel,
                 business_context=context,
             ) or {}
-
             return {
                 "action": "workflow", "create_ticket": True, "requires_quote": False,
                 "ticket_type": "technical_support",
                 "response": workflow.get("response", "Solicitud recibida."),
                 "workflow": intent_name, "service": service, "service_id": service_id,
+                "semantic_context": semantic_context,
                 "business_context": context, "metadata": metadata,
             }
 
@@ -140,6 +145,7 @@ def make_decision(
             "action": "support", "create_ticket": True, "ticket_type": "technical_support",
             "requires_quote": False, "response": "Gracias por contactar BiteFixes.",
             "service": service, "service_id": service_id,
+            "semantic_context": semantic_context,
             "business_context": context, "metadata": metadata,
         }
 
@@ -153,11 +159,6 @@ def make_decision(
         }
 
 
-def decision_engine(
-    company_id, customer, message, intent, knowledge=None, memory=None,
-    channel="unknown", business_context=None,
-):
+def decision_engine(company_id, customer, message, intent, knowledge=None, memory=None, channel="unknown", business_context=None):
     """Compatibility wrapper for existing callers."""
-    return make_decision(
-        company_id, customer, message, intent, knowledge, memory, channel, business_context
-    )
+    return make_decision(company_id, customer, message, intent, knowledge, memory, channel, business_context)
