@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from app.services.connection_security import ConnectionSecurityError, validate_endpoint_url
 from app.services.permission_engine import evaluate_permission
 
 
@@ -16,7 +17,6 @@ class ConnectorExecutionError(RuntimeError):
     """Raised when a connector operation cannot be safely executed."""
 
 
-# Deliberately small allow-list: AI-generated requests must not inject secrets.
 SAFE_REQUEST_HEADERS = {"accept", "content-type", "user-agent", "x-request-id"}
 
 
@@ -30,12 +30,7 @@ def execute_rest_read(
     timeout: int = 15,
     dry_run: bool = True,
 ) -> Dict[str, Any]:
-    """Execute a REST GET only after policy authorization.
-
-    dry_run=True returns the planned request without making a network call.
-    Credentials must be resolved by the deployment's secret manager; this
-    runtime never accepts raw secrets from an AI-generated request.
-    """
+    """Execute a REST GET only after authorization and endpoint validation."""
     connection_id = connection.get("id")
     decision = evaluate_permission(
         company_id=company_id,
@@ -55,10 +50,12 @@ def execute_rest_read(
     if not base_url:
         raise ConnectorExecutionError("connection_endpoint_missing")
 
-    parsed_base = urlparse(str(base_url))
-    if parsed_base.scheme not in {"http", "https"} or not parsed_base.netloc:
-        raise ConnectorExecutionError("connection_endpoint_invalid")
+    try:
+        validate_endpoint_url(base_url, connection.get("allowed_hosts"))
+    except ConnectionSecurityError as exc:
+        raise ConnectorExecutionError(str(exc)) from exc
 
+    parsed_base = urlparse(str(base_url))
     raw_path = str(path or "")
     parsed_path = urlparse(raw_path)
     if parsed_path.scheme or parsed_path.netloc or raw_path.startswith("//"):
@@ -85,10 +82,7 @@ def execute_rest_read(
     response.raise_for_status()
 
     content_type = response.headers.get("content-type", "")
-    if "application/json" in content_type:
-        data: Any = response.json()
-    else:
-        data = response.text
+    data: Any = response.json() if "application/json" in content_type else response.text
 
     return {
         "executed": True,
