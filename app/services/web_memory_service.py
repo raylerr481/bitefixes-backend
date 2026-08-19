@@ -1,4 +1,4 @@
-"""Bitey Web Memory: persistent, freshness-aware retrieval of researched web evidence."""
+"""Persistent, freshness-aware Bitey web memory with hybrid retrieval."""
 from __future__ import annotations
 
 import hashlib
@@ -18,8 +18,6 @@ def _hash_url(url: str) -> str:
 
 
 def _stale(row: Dict[str, Any]) -> bool:
-    if row.get("is_stale") is not None:
-        return bool(row["is_stale"])
     stamp = row.get("last_verified_at") or row.get("fetched_at")
     if not stamp:
         return True
@@ -31,47 +29,51 @@ def _stale(row: Dict[str, Any]) -> bool:
         return True
 
 
-def search_memory(company_id: int, query: str, limit: int = 5) -> Dict[str, Any]:
+def search_memory(company_id: int, query: str, limit: int = 5, freshness_required: bool = False) -> Dict[str, Any]:
     normalized = _normalize_query(query)
     if not normalized:
         return {"found": False, "fresh": False, "stale": False, "results": []}
     try:
-        result = supabase.rpc(
-            "search_bitey_web_memory",
-            {"p_company_id": company_id, "p_query": normalized, "p_limit": max(1, min(limit, 20))},
-        ).execute()
+        result = supabase.rpc("search_bitey_web_memory_hybrid", {
+            "p_company_id": company_id, "p_query": normalized,
+            "p_limit": max(1, min(limit, 20)), "p_freshness_required": bool(freshness_required),
+        }).execute()
         rows = result.data or []
     except Exception as error:
         return {"found": False, "fresh": False, "stale": False, "results": [], "error": str(error)}
-
     fresh_rows = [row for row in rows if not _stale(row)]
-    stale_count = len(rows) - len(fresh_rows)
-    return {
-        "found": bool(rows),
-        "fresh": bool(fresh_rows),
-        "stale": bool(rows) and not bool(fresh_rows),
-        "stale_count": stale_count,
-        "results": fresh_rows,
-        "all_results_count": len(rows),
-        "normalized_query": normalized,
-    }
+    return {"found": bool(rows), "fresh": bool(fresh_rows), "stale": bool(rows) and not bool(fresh_rows),
+            "stale_count": len(rows) - len(fresh_rows), "results": fresh_rows,
+            "all_results_count": len(rows), "normalized_query": normalized}
+
+
+def record_accesses(company_id: int, customer_id: Optional[int], query: str, rows: List[Dict[str, Any]], method: str = "hybrid", used: bool = True) -> None:
+    for row in rows[:20]:
+        try:
+            relevance = float(row.get("keyword_score") or row.get("relevance_score") or 0)
+            authority = float(row.get("authority_score") or 0)
+            final = float(row.get("final_score") or row.get("score") or 0)
+            supabase.table("web_memory_accesses").insert({
+                "company_id": company_id, "customer_id": customer_id, "document_id": row.get("id"),
+                "query": query, "retrieval_method": method,
+                "relevance_score": max(0, min(1, relevance)),
+                "freshness_score": 1.0 if not _stale(row) else 0.0,
+                "authority_score": max(0, min(1, authority)), "final_score": max(0, min(1, final)),
+                "used_in_answer": bool(used),
+            }).execute()
+        except Exception as error:
+            print("[WEB MEMORY ACCESS WARNING]", error)
 
 
 def record_search(company_id: int, query: str, source: str, *, customer_id: Optional[int] = None,
-                  cache_hit: bool = False, local_hit_count: int = 0,
-                  external_used: bool = False, freshness_required: bool = False,
-                  metadata: Optional[Dict[str, Any]] = None) -> None:
+                  cache_hit: bool = False, local_hit_count: int = 0, external_used: bool = False,
+                  freshness_required: bool = False, metadata: Optional[Dict[str, Any]] = None) -> None:
     try:
         supabase.table("web_searches").insert({
-            "company_id": company_id,
-            "customer_id": customer_id,
-            "query": query,
-            "normalized_query": _normalize_query(query),
-            "source": source,
-            "cache_hit": cache_hit,
-            "local_hit_count": local_hit_count,
-            "external_used": external_used,
-            "freshness_required": freshness_required,
+            "company_id": company_id, "customer_id": customer_id, "query": query,
+            "normalized_query": _normalize_query(query), "source": source,
+            "cache_hit": cache_hit, "local_hit_count": local_hit_count,
+            "external_used": external_used, "freshness_required": freshness_required,
             "metadata": metadata or {},
         }).execute()
     except Exception as error:
@@ -83,23 +85,20 @@ def store_document(company_id: Optional[int], item: Dict[str, Any], *, verificat
     url = str(item.get("url") or item.get("canonical_url") or "").strip()
     if not url:
         return None
+    content = str(item.get("content") or item.get("snippet") or "")
     payload = {
-        "company_id": company_id,
-        "canonical_url": url,
-        "url_hash": _hash_url(url),
-        "title": item.get("title"),
-        "source_domain": item.get("source_domain") or item.get("domain"),
-        "content": item.get("content") or item.get("snippet") or "",
-        "summary": item.get("summary") or item.get("snippet") or "",
-        "language": item.get("language"),
-        "published_at": item.get("published_at"),
+        "company_id": company_id, "canonical_url": url, "url_hash": _hash_url(url),
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "title": item.get("title"), "source_domain": item.get("source_domain") or item.get("domain"),
+        "content": content, "summary": item.get("summary") or item.get("snippet") or "",
+        "language": item.get("language"), "published_at": item.get("published_at"),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "last_verified_at": datetime.now(timezone.utc).isoformat(),
         "freshness_ttl_seconds": freshness_ttl_seconds,
         "authority_score": max(0.0, min(1.0, authority_score)),
         "verification_score": max(0.0, min(1.0, verification_score)),
-        "status": "active",
-        "metadata": item.get("metadata") or {},
+        "confidence_score": max(0.0, min(1.0, authority_score * 0.45 + verification_score * 0.55)),
+        "status": "active", "metadata": item.get("metadata") or {},
     }
     try:
         existing = supabase.table("web_documents").select("id").eq("company_id", company_id).eq("url_hash", payload["url_hash"]).limit(1).execute()
