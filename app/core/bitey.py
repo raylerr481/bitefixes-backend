@@ -35,6 +35,11 @@ try:
 except ImportError:
     compare_answers = None
 
+try:
+    from app.ai.comparison_audit import record_comparison
+except ImportError:
+    record_comparison = None
+
 
 def _safe_dict(value: Any) -> Dict:
     return value if isinstance(value, dict) else {}
@@ -72,7 +77,6 @@ def _prepare_external_integration(decision: Dict[str, Any]) -> Optional[Dict[str
 
 def _consultation_context(*, intent: Dict[str, Any], knowledge: Any,
                           decision: Dict[str, Any], message: str) -> Dict[str, Any]:
-    """Estimate consultation value without making an external call itself."""
     confidence = float(intent.get("confidence", 0) or 0)
     action = str(decision.get("action") or "conversation")
     knowledge_gap = 1.0 if not knowledge else 0.0
@@ -90,15 +94,11 @@ def _consultation_context(*, intent: Dict[str, Any], knowledge: Any,
 
 
 def _apply_comparative_result(decision: Dict[str, Any], comparison: Dict[str, Any]) -> None:
-    """Allow an external answer to improve only low-risk conversational replies."""
     decision["comparative_evaluation"] = comparison
     selected = comparison.get("selected") or {}
     if not selected:
         return
 
-    # Business actions remain authoritative in Bitey Core. External text can only
-    # become the conversational answer when there is no action to execute and the
-    # comparator explicitly found a material improvement.
     if (
         comparison.get("reason") == "external_advisory_wins_materially"
         and selected.get("source") == "external"
@@ -205,7 +205,6 @@ def process_message(
                 "response": "Gracias por contactar BiteFixes.",
             }
 
-        # Decide first whether an external consultation has enough expected value.
         consultation = {"used": False, "reason": "unavailable"}
         if consult_if_valuable:
             try:
@@ -227,8 +226,8 @@ def process_message(
                 consultation = {"used": False, "reason": "consultation_error"}
 
         decision["ai_consultation"] = consultation
+        comparison = {"status": "unavailable"}
 
-        # Compare the Core answer, company knowledge and advisory candidates.
         if compare_answers:
             candidates = []
             core_answer = decision.get("response")
@@ -267,8 +266,22 @@ def process_message(
                 candidates=candidates,
             )
             _apply_comparative_result(decision, comparison)
+
+            if record_comparison:
+                try:
+                    record_comparison(
+                        company_id=company_id,
+                        conversation_id=resolved_conversation_id,
+                        message=message,
+                        intent=intent_name,
+                        core_confidence=float(confidence or 0),
+                        consultation_used=bool(consultation.get("used")) if isinstance(consultation, dict) else False,
+                        comparison=comparison,
+                    )
+                except Exception as error:
+                    print("[AI COMPARISON AUDIT WARNING]", error)
         else:
-            decision["comparative_evaluation"] = {"status": "unavailable"}
+            decision["comparative_evaluation"] = comparison
             decision["response_source"] = "core"
 
         external_integration = _prepare_external_integration(decision)
