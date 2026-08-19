@@ -1,12 +1,11 @@
-"""Channel webhook gateway.
+"""Unified channel webhook gateway for Bitey.
 
-External providers only deliver events here. Bitey remains the single business
-logic endpoint. Provider-specific authentication/signature verification is
-performed when the corresponding provider secret is configured.
+Providers only deliver events here. Bitey remains the single business-logic
+entry point. The same normalized contract can later be used by app/private
+networks without creating a second brain.
 """
 from __future__ import annotations
 
-import hashlib
 import hmac
 import os
 from typing import Any
@@ -16,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.core.bitey import process_message
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+SUPPORTED_CHANNELS = {"whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private"}
 
 
 def _token(channel: str) -> str:
@@ -36,7 +36,6 @@ def _text(value: Any) -> str:
 
 
 def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalize common provider payloads into Bitey's channel-neutral contract."""
     if channel == "telegram":
         msg = payload.get("message") or payload.get("edited_message") or {}
         sender = msg.get("from") or {}
@@ -44,7 +43,7 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
         if not text:
             return None
         return {"message": text, "phone": "", "customer_name": _text(sender.get("first_name")),
-                "conversation_id": _text(msg.get("chat", {}).get("id")), "channel": "telegram"}
+                "conversation_id": _text((msg.get("chat") or {}).get("id")), "channel": channel}
 
     if channel == "messenger":
         entry = (payload.get("entry") or [{}])[0]
@@ -54,11 +53,11 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
         if not text:
             return None
         return {"message": text, "phone": "", "customer_name": "",
-                "conversation_id": _text(messaging.get("sender", {}).get("id")), "channel": "messenger"}
+                "conversation_id": _text((messaging.get("sender") or {}).get("id")), "channel": channel}
 
     if channel == "whatsapp":
         entry = (payload.get("entry") or [{}])[0]
-        change = (entry.get("changes") or [{}])[0].get("value") or {}
+        change = ((entry.get("changes") or [{}])[0]).get("value") or {}
         messages = change.get("messages") or []
         if not messages:
             return None
@@ -70,9 +69,19 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
         profile = contact.get("profile") or {}
         phone = _text(msg.get("from") or contact.get("wa_id"))
         return {"message": text, "phone": phone, "customer_name": _text(profile.get("name")),
-                "conversation_id": phone or _text(msg.get("id")), "channel": "whatsapp"}
+                "conversation_id": phone or _text(msg.get("id")), "channel": channel}
 
-    return None
+    # Generic adapters for channels whose provider integration can be wired later.
+    text = _text(payload.get("message") or payload.get("text") or payload.get("body"))
+    if not text:
+        return None
+    return {
+        "message": text,
+        "phone": _text(payload.get("phone") or payload.get("from_phone")),
+        "customer_name": _text(payload.get("name") or payload.get("customer_name")),
+        "conversation_id": _text(payload.get("conversation_id") or payload.get("id")),
+        "channel": channel,
+    }
 
 
 async def _handle(channel: str, request: Request):
@@ -80,15 +89,23 @@ async def _handle(channel: str, request: Request):
     payload = await request.json()
     event = normalize_event(channel, payload)
     if not event:
-        return {"status": "ignored"}
-    result = process_message(company_id=1, message=event["message"], phone=event["phone"],
-                             customer_name=event["customer_name"] or "Customer", channel=event["channel"],
-                             conversation_id=event["conversation_id"], language_preference="auto")
+        return {"status": "ignored", "channel": channel}
+    result = process_message(
+        company_id=1,
+        message=event["message"],
+        phone=event["phone"],
+        customer_name=event["customer_name"] or "Customer",
+        channel=event["channel"],
+        conversation_id=event["conversation_id"],
+        language_preference="auto",
+    )
     return {"status": "processed", "channel": channel, "conversation_id": event["conversation_id"], "result": result}
 
 
 @router.get("/{channel}")
 async def verify(channel: str, request: Request):
+    if channel not in SUPPORTED_CHANNELS:
+        raise HTTPException(status_code=404, detail="Unsupported channel")
     _verify_token(channel, request)
     challenge = request.query_params.get("hub.challenge") or request.query_params.get("challenge")
     return {"status": "ok", "challenge": challenge} if challenge else {"status": "ok", "channel": channel}
@@ -96,6 +113,6 @@ async def verify(channel: str, request: Request):
 
 @router.post("/{channel}")
 async def receive(channel: str, request: Request):
-    if channel not in {"whatsapp", "messenger", "telegram"}:
+    if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=404, detail="Unsupported channel")
     return await _handle(channel, request)
