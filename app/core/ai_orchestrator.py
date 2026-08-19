@@ -25,6 +25,7 @@ def enrich(message: str, *, language: str, intent: Dict[str, Any] | None = None)
     }
     try:
         text = ai_provider.respond(system, message, context=context)
-        return {"used": bool(text), "text": text, "provider": ai_provider.name()}
+        provider = "openrouter" if getattr(ai_provider, "openrouter_enabled", False) else "openai"
+        return {"used": bool(text), "text": text, "provider": provider if text else None}
     except Exception as exc:
         return {"used": False, "reason": type(exc).__name__}
