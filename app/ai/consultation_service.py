@@ -22,11 +22,11 @@ def consult_if_valuable(
     intent_name = intent.get("intent")
     knowledge_found = not bool(context.get("knowledge_gap", 0))
 
-    # Web retrieval has its own freshness/knowledge decision. It does not
-    # consume an LLM call and is therefore independent from model cost.
+    # Web retrieval is memory-first. A fresh Bitey web-memory hit avoids a new
+    # external search; current-sensitive questions bypass memory and refresh.
     web = {"used": False, "grounding_status": "not_needed", "results": [], "queries": []}
     if needs_web(message, intent=intent_name, knowledge_found=knowledge_found):
-        web = search_web(message, intent=intent_name)
+        web = search_web(message, intent=intent_name, company_id=company_id)
         if web.get("learning_candidate"):
             record_web_candidate(
                 company_id=company_id,
@@ -43,6 +43,18 @@ def consult_if_valuable(
         business_impact=float(context.get("business_impact", 0) or 0),
         estimated_cost=float(context.get("estimated_cost", 0) or 0),
     )
+
+    # A verified/fresh web-memory answer is already a grounded advisory source.
+    # We still let the AI council run when the gate says the reasoning problem is
+    # complex; the council receives the memory context and does not own actions.
+    if not gate.consult and web.get("used"):
+        return {
+            "used": False,
+            "reason": gate.reason,
+            "gate": gate.__dict__,
+            "suggestions": [],
+            "web_grounding": web,
+        }
 
     if not gate.consult:
         return {
