@@ -6,6 +6,7 @@ from app.ai.ai_council import consult
 from app.ai.evaluator_suggestions import evaluate_suggestions
 from app.ai.learning_candidates import record_candidate
 from app.ai.web_intelligence import needs_web, search_web
+from app.ai.web_learning import record_web_candidate
 
 
 def consult_if_valuable(
@@ -21,12 +22,18 @@ def consult_if_valuable(
     intent_name = intent.get("intent")
     knowledge_found = not bool(context.get("knowledge_gap", 0))
 
-    # Web grounding is evaluated independently from model-provider cost.
-    # This prevents a paid LLM from being used merely because fresh web facts
-    # are needed, and keeps retrieval provider-agnostic.
+    # Web retrieval has its own freshness/knowledge decision. It does not
+    # consume an LLM call and is therefore independent from model cost.
     web = {"used": False, "grounding_status": "not_needed", "results": [], "queries": []}
     if needs_web(message, intent=intent_name, knowledge_found=knowledge_found):
         web = search_web(message, intent=intent_name)
+        if web.get("learning_candidate"):
+            record_web_candidate(
+                company_id=company_id,
+                message=message,
+                web=web,
+                conversation_id=conversation_id,
+            )
 
     gate = evaluate(
         confidence=confidence,
