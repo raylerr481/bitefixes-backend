@@ -124,7 +124,7 @@ def process_message(
     conversation_id: Optional[str] = None,
     language_preference: str = "auto",
 ):
-    """Process a Bitey message with governed comparative AI assistance."""
+    """Process a Bitey message with governed AI and per-customer memory."""
     try:
         if not company_id:
             raise ValueError("company_id is required")
@@ -147,20 +147,12 @@ def process_message(
         if not identity_phone or identity_phone.lower() in {"web", "unknown"}:
             identity_phone = f"web:{conversation_id}" if conversation_id else "web"
 
-        customer = _safe_dict(
-            get_or_create_customer(
-                company_id=company_id,
-                phone=identity_phone,
-                name=supplied_name,
-            )
-        )
+        customer = _safe_dict(get_or_create_customer(company_id=company_id, phone=identity_phone, name=supplied_name))
         customer_id = _get_customer_id(customer)
         if not customer_id:
             raise ValueError("Unable to obtain customer_id")
 
-        conversation = _safe_dict(
-            get_or_create_conversation(customer_id=customer_id, channel=channel)
-        )
+        conversation = _safe_dict(get_or_create_conversation(customer_id=customer_id, channel=channel))
         resolved_conversation_id = conversation.get("id")
         if not resolved_conversation_id:
             raise ValueError("Unable to obtain conversation_id")
@@ -177,107 +169,44 @@ def process_message(
             except Exception as error:
                 print("[MEMORY WARNING]", error)
 
-        save_customer_message(
-            company_id=company_id,
-            customer_id=customer_id,
-            conversation_id=resolved_conversation_id,
-            message=message,
-            channel=channel,
-        )
+        save_customer_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, message=message, channel=channel)
 
         intent = _safe_dict(detect_intent(message, company_id))
         intent_name = intent.get("intent")
         confidence = intent.get("confidence", 0)
         knowledge = search_knowledge(message=message, company_id=company_id, intent=intent_name, language=language)
-        decision = _safe_dict(
-            decision_engine(company_id, customer, message, intent, knowledge, memory, language)
-        )
+        decision = _safe_dict(decision_engine(company_id, customer, message, intent, knowledge, memory, language))
 
         if not decision:
-            decision = {
-                "action": "conversation",
-                "create_ticket": False,
-                "ticket_type": None,
-                "requires_quote": False,
-                "service": None,
-                "service_id": None,
-                "workflow": None,
-                "response": "Gracias por contactar BiteFixes.",
-            }
+            decision = {"action": "conversation", "create_ticket": False, "ticket_type": None, "requires_quote": False, "service": None, "service_id": None, "workflow": None, "response": "Gracias por contactar BiteFixes."}
 
         consultation = {"used": False, "reason": "unavailable"}
         if consult_if_valuable:
             try:
-                consultation = consult_if_valuable(
-                    company_id=company_id,
-                    message=message,
-                    language=language,
-                    intent=intent,
-                    context=_consultation_context(
-                        intent=intent,
-                        knowledge=knowledge,
-                        decision=decision,
-                        message=message,
-                    ),
-                    conversation_id=resolved_conversation_id,
-                )
+                consultation = consult_if_valuable(company_id=company_id, message=message, language=language, intent=intent, context=_consultation_context(intent=intent, knowledge=knowledge, decision=decision, message=message), conversation_id=resolved_conversation_id)
             except Exception as error:
                 print("[AI CONSULTATION WARNING]", error)
                 consultation = {"used": False, "reason": "consultation_error"}
 
         decision["ai_consultation"] = consultation
         comparison = {"status": "unavailable"}
-
         if compare_answers:
             candidates = []
             core_answer = decision.get("response")
             if core_answer:
-                candidates.append({
-                    "source": "core",
-                    "answer": core_answer,
-                    "intent": intent_name,
-                    "authority": 1.0,
-                    "safety": 1.0,
-                })
+                candidates.append({"source": "core", "answer": core_answer, "intent": intent_name, "authority": 1.0, "safety": 1.0})
             if isinstance(knowledge, dict):
                 knowledge_answer = knowledge.get("answer")
                 if knowledge_answer:
-                    candidates.append({
-                        "source": "knowledge",
-                        "answer": knowledge_answer,
-                        "intent": knowledge.get("intent") or intent_name,
-                        "authority": 1.0,
-                        "safety": 1.0,
-                    })
+                    candidates.append({"source": "knowledge", "answer": knowledge_answer, "intent": knowledge.get("intent") or intent_name, "authority": 1.0, "safety": 1.0})
             for suggestion in consultation.get("suggestions", []) if isinstance(consultation, dict) else []:
                 if suggestion.get("answer"):
-                    candidates.append({
-                        "source": "external",
-                        "provider": suggestion.get("provider"),
-                        "answer": suggestion.get("answer"),
-                        "intent": suggestion.get("intent") or intent_name,
-                        "authority": 0.45,
-                        "safety": 0.85,
-                    })
-            comparison = compare_answers(
-                message=message,
-                intent=intent_name,
-                core_confidence=float(confidence or 0),
-                candidates=candidates,
-            )
+                    candidates.append({"source": "external", "provider": suggestion.get("provider"), "answer": suggestion.get("answer"), "intent": suggestion.get("intent") or intent_name, "authority": 0.45, "safety": 0.85})
+            comparison = compare_answers(message=message, intent=intent_name, core_confidence=float(confidence or 0), candidates=candidates)
             _apply_comparative_result(decision, comparison)
-
             if record_comparison:
                 try:
-                    record_comparison(
-                        company_id=company_id,
-                        conversation_id=resolved_conversation_id,
-                        message=message,
-                        intent=intent_name,
-                        core_confidence=float(confidence or 0),
-                        consultation_used=bool(consultation.get("used")) if isinstance(consultation, dict) else False,
-                        comparison=comparison,
-                    )
+                    record_comparison(company_id=company_id, conversation_id=resolved_conversation_id, message=message, intent=intent_name, core_confidence=float(confidence or 0), consultation_used=bool(consultation.get("used")) if isinstance(consultation, dict) else False, comparison=comparison)
                 except Exception as error:
                     print("[AI COMPARISON AUDIT WARNING]", error)
         else:
@@ -308,81 +237,29 @@ def process_message(
         if create_ticket_flag:
             title = service.get("name") if isinstance(service, dict) else None
             title = title or intent_name or "Support"
-            ticket = process_ticket(
-                company_id=company_id,
-                customer_id=customer_id,
-                service_id=service_id,
-                intent=intent_name,
-                description=message,
-                title=title,
-                language=language,
-                channel=channel,
-                ticket_type=ticket_type,
-            )
+            ticket = process_ticket(company_id=company_id, customer_id=customer_id, service_id=service_id, intent=intent_name, description=message, title=title, language=language, channel=channel, ticket_type=ticket_type)
             if ticket:
                 ticket_id = ticket.get("id")
 
         quote = None
         if requires_quote and ticket:
-            quote = create_quote(
-                company_id=company_id,
-                customer_id=customer_id,
-                service_id=service_id,
-                title=ticket.get("title") or "Quote",
-                description=message,
-                ticket_id=ticket_id,
-            )
+            quote = create_quote(company_id=company_id, customer_id=customer_id, service_id=service_id, title=ticket.get("title") or "Quote", description=message, ticket_id=ticket_id)
 
-        response = build_response(
-            decision=decision,
-            ticket=ticket,
-            knowledge=knowledge,
-            language=language,
-            customer_name=customer.get("full_name"),
-        )
-        response_text = (
-            response.get("response") or response.get("message") or str(response)
-            if isinstance(response, dict)
-            else str(response)
-        )
+        response = build_response(decision=decision, ticket=ticket, knowledge=knowledge, language=language, customer_name=customer.get("full_name"))
+        response_text = (response.get("response") or response.get("message") or str(response) if isinstance(response, dict) else str(response))
 
         if ticket:
-            notify_event(
-                company_id=company_id,
-                event="ticket_created",
-                ticket_id=ticket_id,
-                customer_id=customer_id,
-                service_id=service_id,
-                intent=intent_name,
-                message=message,
-                channel=channel,
-                metadata={
-                    "confidence": confidence,
-                    "language": language,
-                    "language_source": language_source,
-                    "quote_id": quote.get("id") if quote else None,
-                    "ticket_type": ticket_type,
-                    "requires_quote": requires_quote,
-                },
-            )
+            notify_event(company_id=company_id, event="ticket_created", ticket_id=ticket_id, customer_id=customer_id, service_id=service_id, intent=intent_name, message=message, channel=channel, metadata={"confidence": confidence, "language": language, "language_source": language_source, "quote_id": quote.get("id") if quote else None, "ticket_type": ticket_type, "requires_quote": requires_quote})
 
-        save_bitey_message(
-            company_id=company_id,
-            customer_id=customer_id,
-            conversation_id=resolved_conversation_id,
-            response=response_text,
-            intent=intent_name,
-            confidence=confidence,
-            service_id=service_id,
-            ticket_id=ticket_id,
-            channel=channel,
-        )
-        update_conversation_context(
-            resolved_conversation_id,
-            intent=intent_name,
-            response=response_text,
-            ticket_id=ticket_id,
-        )
+        save_bitey_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, response=response_text, intent=intent_name, confidence=confidence, service_id=service_id, ticket_id=ticket_id, channel=channel)
+        update_conversation_context(resolved_conversation_id, intent=intent_name, response=response_text, ticket_id=ticket_id)
+
+        memory_count = 0
+        if isinstance(memory, dict):
+            try:
+                memory_count = int(memory.get("total_messages") or len(memory.get("history") or []))
+            except (TypeError, ValueError):
+                memory_count = 0
 
         return {
             "success": True,
@@ -396,6 +273,7 @@ def process_message(
             "confidence": confidence,
             "knowledge": knowledge,
             "knowledge_found": bool(knowledge),
+            "memory": {"used": bool(memory_count), "messages": memory_count, "scope": "customer"},
             "ai_consultation": consultation,
             "comparative_evaluation": decision.get("comparative_evaluation"),
             "response_source": decision.get("response_source", "core"),
