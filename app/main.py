@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai
+from app.routers import business_context, chat, customers, tickets, ai, webhooks
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ app.include_router(customers.router)
 app.include_router(tickets.router)
 app.include_router(business_context.router)
 app.include_router(ai.router)
+app.include_router(webhooks.router)
 
 
 @app.get("/")
@@ -52,7 +53,7 @@ def health():
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "channels": ["website", "whatsapp", "mobile_app"], "status": "running"}
+    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone"], "webhook_gateway": "/webhooks/{channel}", "status": "running"}
 
 
 @app.get("/test-supabase")
