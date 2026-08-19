@@ -5,12 +5,14 @@ on:
     paths:
       - 'app/ai/**'
       - 'tests/test_ai_runtime.py'
+      - 'tests/test_comparative_engine.py'
       - 'requirements.txt'
       - '.github/workflows/ai-tests.yml'
   pull_request:
     paths:
       - 'app/ai/**'
       - 'tests/test_ai_runtime.py'
+      - 'tests/test_comparative_engine.py'
       - 'requirements.txt'
 
 jobs:
@@ -23,4 +25,4 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt pytest
-      - run: pytest -q tests/test_ai_runtime.py
+      - run: PYTHONPATH=. python -m pytest -q tests/test_ai_runtime.py tests/test_comparative_engine.py
