@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from app.schemas.chat_schema import ChatRequest
 from app.core.bitey import process_message
-from app.core.channel_preferences import normalize_contact_channel
 
 router = APIRouter()
 
@@ -16,14 +15,13 @@ def chat(request: ChatRequest):
             company_id=request.company_id,
             message=request.message,
             phone=request.phone or "",
-            customer_name=request.customer_name or "",
+            customer_name=request.customer_name or "Customer",
             channel=request.channel,
             conversation_id=request.conversation_id,
             language_preference=request.language_preference,
-            last_name=request.last_name or "",
-            email=request.email or "",
-            preferred_contact_channel=normalize_contact_channel(request.preferred_contact_channel),
         )
+        if isinstance(result, dict) and request.preferred_contact_channel:
+            result["preferred_contact_channel"] = request.preferred_contact_channel
         return result
     except Exception as error:
         import traceback
