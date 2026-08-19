@@ -1,4 +1,4 @@
-"""Bitey Decision Engine V18."""
+"""Bitey Decision Engine V19."""
 
 from typing import Any, Dict, Optional
 
@@ -7,6 +7,7 @@ from app.services.service_resolver import resolve_service
 from app.services.workflows.workflow_service import execute_workflow
 from app.services.sales_engine import generate_sales_response
 from app.services.semantic_match_service import match_semantic_context
+from app.services.ai_provider import ai_provider
 
 SALES_INTENTS = {
     "ai_assistant", "quote", "purchase", "sales", "cctv_installation", "camera_installation"
@@ -41,6 +42,25 @@ def _scope_allows_intent(context: Dict[str, Any], intent_name: Optional[str]) ->
     return True
 
 
+def _ai_fallback(message: str, customer: Dict, context: Dict[str, Any], language: Optional[str]) -> Optional[str]:
+    """Use OpenAI only for conversational wording; never authorize actions."""
+    return ai_provider.respond(
+        system=(
+            "You are Bitey, the conversational AI for a business. "
+            "Answer helpfully and briefly in the requested language. "
+            "Do not invent prices, services, policies, customer data, or actions. "
+            "Do not claim that a ticket, quote, payment, or external action was completed. "
+            "Bitey Core controls all business actions."
+        ),
+        user=message,
+        context={
+            "customer_name": customer.get("name"),
+            "language": language,
+            "company_context": context,
+        },
+    )
+
+
 def make_decision(
     company_id: int,
     customer: Dict,
@@ -50,6 +70,7 @@ def make_decision(
     memory=None,
     channel="unknown",
     business_context: Optional[Dict[str, Any]] = None,
+    language: Optional[str] = None,
 ):
     """Produce the next business action without performing persistence."""
     try:
@@ -58,7 +79,7 @@ def make_decision(
         intent = intent or {}
         context = _load_business_context(company_id, business_context)
         semantic_context = match_semantic_context(
-            message, company_id=company_id, language=context.get("language") or None
+            message, company_id=company_id, language=context.get("language") or language
         )
         intent_name = intent.get("intent")
         confidence = intent.get("confidence", 0)
@@ -80,37 +101,28 @@ def make_decision(
         }
 
         if intent_name and not scope_allowed:
-            return {
-                "action": "scope_restricted", "create_ticket": False,
-                "requires_quote": False, "ticket_type": None,
-                "response": "Esta solicitud no está habilitada para la configuración actual de Bitey.",
-                "service": service, "service_id": service_id,
-                "semantic_context": semantic_context, "business_context": context,
-                "metadata": metadata,
-            }
+            return {"action": "scope_restricted", "create_ticket": False, "requires_quote": False,
+                    "ticket_type": None, "response": "Esta solicitud no está habilitada para la configuración actual de Bitey.",
+                    "service": service, "service_id": service_id, "semantic_context": semantic_context,
+                    "business_context": context, "metadata": metadata}
 
         if knowledge and not intent_name:
-            return {
-                "action": "knowledge", "create_ticket": False, "ticket_type": None,
-                "response": knowledge, "service": service, "service_id": service_id,
-                "semantic_context": semantic_context, "business_context": context,
-                "metadata": metadata,
-            }
+            return {"action": "knowledge", "create_ticket": False, "ticket_type": None,
+                    "response": knowledge, "service": service, "service_id": service_id,
+                    "semantic_context": semantic_context, "business_context": context, "metadata": metadata}
 
         if intent_name in SALES_INTENTS:
             sales = generate_sales_response(intent_name, message, memory, knowledge)
-            return {
-                "action": "sales", "create_ticket": False, "requires_quote": True,
-                "ticket_type": "sales", "response": sales, "service": service,
-                "service_id": service_id, "semantic_context": semantic_context,
-                "business_context": context, "metadata": metadata,
-            }
+            return {"action": "sales", "create_ticket": False, "requires_quote": True,
+                    "ticket_type": "sales", "response": sales, "service": service,
+                    "service_id": service_id, "semantic_context": semantic_context,
+                    "business_context": context, "metadata": metadata}
 
         if intent_name in SUPPORT_INTENTS:
             workflow = execute_workflow(
-                intent=intent_name, company_id=company_id,
-                customer_id=customer.get("id"), message=message,
-                knowledge=knowledge, customer=customer, language=channel,
+                intent=intent_name, company_id=company_id, customer_id=customer.get("id"),
+                message=message, knowledge=knowledge, customer=customer,
+                language=language or context.get("language") or channel,
                 business_context=context,
             ) or {}
             workflow_success = bool(workflow.get("success"))
@@ -120,32 +132,24 @@ def make_decision(
                 "create_ticket": create_ticket,
                 "requires_quote": bool(workflow.get("requires_quote", False)),
                 "ticket_type": "technical_support" if create_ticket else None,
-                "response": workflow.get("response") or "Puedo ayudarte a diagnosticarlo. Necesito algunos datos para continuar.",
+                "response": workflow.get("response") or _ai_fallback(message, customer, context, language) or
+                    "Puedo ayudarte a diagnosticarlo. Necesito algunos datos para continuar.",
                 "workflow": intent_name, "workflow_success": workflow_success,
-                "workflow_reason": workflow.get("reason"),
-                "service": service, "service_id": service_id,
-                "semantic_context": semantic_context, "business_context": context,
-                "metadata": metadata,
+                "workflow_reason": workflow.get("reason"), "service": service, "service_id": service_id,
+                "semantic_context": semantic_context, "business_context": context, "metadata": metadata,
             }
 
-        # Conversational or unresolved input never creates a technical ticket.
-        return {
-            "action": "conversation", "create_ticket": False,
-            "requires_quote": False, "ticket_type": None, "response": None,
-            "service": service, "service_id": service_id,
-            "semantic_context": semantic_context, "business_context": context,
-            "metadata": metadata,
-        }
+        response = _ai_fallback(message, customer, context, language)
+        return {"action": "conversation", "create_ticket": False, "requires_quote": False,
+                "ticket_type": None, "response": response, "service": service, "service_id": service_id,
+                "semantic_context": semantic_context, "business_context": context, "metadata": metadata}
 
     except Exception as error:
         import traceback
         traceback.print_exc()
-        return {
-            "action": "error", "create_ticket": False,
-            "response": "Error procesando solicitud.", "service": None,
-            "service_id": None, "business_context": {},
-        }
+        return {"action": "error", "create_ticket": False, "response": "Error procesando solicitud.",
+                "service": None, "service_id": None, "business_context": {}}
 
 
-def decision_engine(company_id, customer, message, intent, knowledge=None, memory=None, channel="unknown", business_context=None):
-    return make_decision(company_id, customer, message, intent, knowledge, memory, channel, business_context)
+def decision_engine(company_id, customer, message, intent, knowledge=None, memory=None, channel="unknown", business_context=None, language=None):
+    return make_decision(company_id, customer, message, intent, knowledge, memory, channel, business_context, language)
