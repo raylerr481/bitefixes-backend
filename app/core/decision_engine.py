@@ -1,4 +1,4 @@
-"""Bitey Decision Engine V17."""
+"""Bitey Decision Engine V18."""
 
 from typing import Any, Dict, Optional
 
@@ -100,7 +100,7 @@ def make_decision(
         if intent_name in SALES_INTENTS:
             sales = generate_sales_response(intent_name, message, memory, knowledge)
             return {
-                "action": "sales", "create_ticket": True, "requires_quote": True,
+                "action": "sales", "create_ticket": False, "requires_quote": True,
                 "ticket_type": "sales", "response": sales, "service": service,
                 "service_id": service_id, "semantic_context": semantic_context,
                 "business_context": context, "metadata": metadata,
@@ -113,11 +113,17 @@ def make_decision(
                 knowledge=knowledge, customer=customer, language=channel,
                 business_context=context,
             ) or {}
+            workflow_success = bool(workflow.get("success"))
+            create_ticket = bool(workflow.get("create_ticket", False)) and workflow_success
             return {
-                "action": "workflow", "create_ticket": True, "requires_quote": False,
-                "ticket_type": "technical_support",
-                "response": workflow.get("response", "Solicitud recibida."),
-                "workflow": intent_name, "service": service, "service_id": service_id,
+                "action": "workflow" if workflow_success else "conversation",
+                "create_ticket": create_ticket,
+                "requires_quote": bool(workflow.get("requires_quote", False)),
+                "ticket_type": "technical_support" if create_ticket else None,
+                "response": workflow.get("response") or "Puedo ayudarte a diagnosticarlo. Necesito algunos datos para continuar.",
+                "workflow": intent_name, "workflow_success": workflow_success,
+                "workflow_reason": workflow.get("reason"),
+                "service": service, "service_id": service_id,
                 "semantic_context": semantic_context, "business_context": context,
                 "metadata": metadata,
             }
