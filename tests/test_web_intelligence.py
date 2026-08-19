@@ -1,4 +1,4 @@
-from app.ai.web_intelligence import build_queries, needs_web, _domain_score
+from app.ai.web_intelligence import _normalise_result, _verify, build_queries, needs_web, _domain_score
 
 
 def test_current_question_requires_web():
@@ -17,3 +17,23 @@ def test_query_rewriting_is_bounded():
 
 def test_official_domains_rank_higher():
     assert _domain_score("https://support.microsoft.com/example") > _domain_score("https://example-blog.test/article")
+
+
+def test_source_scoring_prefers_authoritative_domain():
+    result = _normalise_result(
+        {"url": "https://learn.microsoft.com/test", "title": "Windows documentation", "snippet": "Windows update guidance"},
+        "Windows update guidance",
+    )
+    assert result is not None
+    assert result["authority_score"] >= 0.98
+    assert result["score"] > 0.7
+
+
+def test_verification_requires_independent_corroboration():
+    results = [
+        {"domain": "learn.microsoft.com", "score": 0.95, "title": "Windows update", "snippet": "Windows update requires restart and version support"},
+        {"domain": "support.example.org", "score": 0.90, "title": "Windows update", "snippet": "Windows update requires restart and version support"},
+    ]
+    verification = _verify(results, "Windows update")
+    assert verification["verified"] is True
+    assert verification["independent_domains"] == 2
