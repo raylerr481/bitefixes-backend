@@ -29,24 +29,6 @@ def _stale(row: Dict[str, Any]) -> bool:
         return True
 
 
-def search_memory(company_id: int, query: str, limit: int = 5, freshness_required: bool = False) -> Dict[str, Any]:
-    normalized = _normalize_query(query)
-    if not normalized:
-        return {"found": False, "fresh": False, "stale": False, "results": []}
-    try:
-        result = supabase.rpc("search_bitey_web_memory_hybrid", {
-            "p_company_id": company_id, "p_query": normalized,
-            "p_limit": max(1, min(limit, 20)), "p_freshness_required": bool(freshness_required),
-        }).execute()
-        rows = result.data or []
-    except Exception as error:
-        return {"found": False, "fresh": False, "stale": False, "results": [], "error": str(error)}
-    fresh_rows = [row for row in rows if not _stale(row)]
-    return {"found": bool(rows), "fresh": bool(fresh_rows), "stale": bool(rows) and not bool(fresh_rows),
-            "stale_count": len(rows) - len(fresh_rows), "results": fresh_rows,
-            "all_results_count": len(rows), "normalized_query": normalized}
-
-
 def record_accesses(company_id: int, customer_id: Optional[int], query: str, rows: List[Dict[str, Any]], method: str = "hybrid", used: bool = True) -> None:
     for row in rows[:20]:
         try:
@@ -63,6 +45,26 @@ def record_accesses(company_id: int, customer_id: Optional[int], query: str, row
             }).execute()
         except Exception as error:
             print("[WEB MEMORY ACCESS WARNING]", error)
+
+
+def search_memory(company_id: int, query: str, limit: int = 5, freshness_required: bool = False) -> Dict[str, Any]:
+    normalized = _normalize_query(query)
+    if not normalized:
+        return {"found": False, "fresh": False, "stale": False, "results": []}
+    try:
+        result = supabase.rpc("search_bitey_web_memory_hybrid", {
+            "p_company_id": company_id, "p_query": normalized,
+            "p_limit": max(1, min(limit, 20)), "p_freshness_required": bool(freshness_required),
+        }).execute()
+        rows = result.data or []
+    except Exception as error:
+        return {"found": False, "fresh": False, "stale": False, "results": [], "error": str(error)}
+    fresh_rows = [row for row in rows if not _stale(row)]
+    if fresh_rows:
+        record_accesses(company_id, None, normalized, fresh_rows, method="hybrid_memory", used=True)
+    return {"found": bool(rows), "fresh": bool(fresh_rows), "stale": bool(rows) and not bool(fresh_rows),
+            "stale_count": len(rows) - len(fresh_rows), "results": fresh_rows,
+            "all_results_count": len(rows), "normalized_query": normalized}
 
 
 def record_search(company_id: int, query: str, source: str, *, customer_id: Optional[int] = None,
@@ -92,8 +94,7 @@ def store_document(company_id: Optional[int], item: Dict[str, Any], *, verificat
         "title": item.get("title"), "source_domain": item.get("source_domain") or item.get("domain"),
         "content": content, "summary": item.get("summary") or item.get("snippet") or "",
         "language": item.get("language"), "published_at": item.get("published_at"),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "last_verified_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).isoformat(), "last_verified_at": datetime.now(timezone.utc).isoformat(),
         "freshness_ttl_seconds": freshness_ttl_seconds,
         "authority_score": max(0.0, min(1.0, authority_score)),
         "verification_score": max(0.0, min(1.0, verification_score)),
