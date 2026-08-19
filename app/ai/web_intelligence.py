@@ -1,8 +1,8 @@
-"""Governed web intelligence for Bitey.
+"""Governed web intelligence with persistent Bitey web memory.
 
-Bitey owns the orchestration layer. Discovery uses the Bitey Search Gateway,
-backed by a self-hosted SearXNG service. Tavily is secondary only. Brave and
-other explicitly blocked providers are never selected by this module.
+Bitey first searches its own researched web index. Live discovery happens only
+when memory is missing or stale. Discovery uses Bitey Search Core/SearXNG;
+Tavily is secondary only. Brave and similar providers are blocked.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
 from app.ai.bitey_search import search as bitey_search
+from app.services.web_memory_service import build_context, record_search, search_memory, store_document
 
 CURRENT_MARKERS = {
     "today", "latest", "current", "now", "recent", "price", "prices",
@@ -32,6 +33,8 @@ class WebPolicy:
     max_queries: int = int(os.getenv("BITEY_WEB_MAX_QUERIES", "3"))
     max_results: int = int(os.getenv("BITEY_WEB_MAX_RESULTS", "8"))
     verification_min_score: float = float(os.getenv("BITEY_WEB_VERIFY_SCORE", "0.72"))
+    memory_ttl_seconds: int = int(os.getenv("BITEY_WEB_MEMORY_TTL", "2592000"))
+    memory_max_results: int = int(os.getenv("BITEY_WEB_MEMORY_MAX_RESULTS", "5"))
 
 
 POLICY = WebPolicy()
@@ -93,7 +96,7 @@ def _normalise_result(item: Dict[str, Any], query: str) -> Optional[Dict[str, An
     relevance_tokens = len(_tokenise(query) & _tokenise(f"{title} {snippet}"))
     relevance = min(1.0, relevance_tokens / max(3, len(_tokenise(query)) * 0.35))
     authority = _domain_score(url)
-    return {"url": url, "title": title, "snippet": snippet[:2500], "domain": _domain(url), "authority_score": round(authority, 3), "relevance_score": round(relevance, 3), "score": round((0.55 * relevance) + (0.45 * authority), 3), "retrieved_at": item.get("retrieved_at") or datetime.now(timezone.utc).isoformat()}
+    return {"url": url, "title": title, "snippet": snippet[:2500], "content": snippet[:12000], "domain": _domain(url), "authority_score": round(authority, 3), "relevance_score": round(relevance, 3), "score": round((0.55 * relevance) + (0.45 * authority), 3), "retrieved_at": item.get("retrieved_at") or datetime.now(timezone.utc).isoformat()}
 
 
 def _deduplicate(results: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -139,13 +142,57 @@ def _verify(results: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
     return {"verified": bool(corroborated and len(domains) >= 2 and len(strong) >= 2), "corroborated": corroborated, "independent_domains": len(domains), "strong_sources": len(strong), "verification_score": round(min(1.0, (len(strong) / 3) * 0.4 + (len(domains) / 3) * 0.3 + (0.3 if corroborated else 0.0)), 3), "note": "corroboration is evidence, not a guarantee of factual correctness", "query": query}
 
 
-def search_web(message: str, *, intent: Optional[str] = None, limit: int | None = None) -> Dict[str, Any]:
+def _memory_response(memory: Dict[str, Any], message: str, company_id: int) -> Dict[str, Any]:
+    context = build_context(memory)
+    results = []
+    for row in memory.get("results", []):
+        results.append({
+            "url": row.get("canonical_url"),
+            "title": row.get("title"),
+            "snippet": row.get("summary") or row.get("content") or "",
+            "domain": row.get("source_domain"),
+            "authority_score": row.get("authority_score", 0),
+            "verification_score": row.get("verification_score", 0),
+            "score": round((float(row.get("authority_score", 0)) * 0.45) + (float(row.get("verification_score", 0)) * 0.55), 3),
+            "from_memory": True,
+            "fetched_at": row.get("fetched_at"),
+        })
+    return {
+        "used": True,
+        "memory_hit": True,
+        "memory_fresh": True,
+        "external_used": False,
+        "queries": [message],
+        "results": results,
+        "providers": ["bitey_web_memory"],
+        "grounding_status": "memory_grounded",
+        "verification": {"verified": True, "verification_score": max((r.get("verification_score", 0) for r in results), default=0), "note": "reused previously verified web evidence"},
+        "context": context,
+        "cache_hit": False,
+        "learning_candidate": False,
+        "company_id": company_id,
+    }
+
+
+def search_web(message: str, *, intent: Optional[str] = None, limit: int | None = None, company_id: Optional[int] = None) -> Dict[str, Any]:
     queries = build_queries(message, intent=intent)
+    max_results = limit or POLICY.max_results
+
+    # 1) Persistent memory first. Current-sensitive questions deliberately bypass
+    # otherwise valid memory so the answer can be refreshed from the live web.
+    if company_id and not (set(re.findall(r"[a-z0-9À-ÿ-]+", message.lower())) & CURRENT_MARKERS):
+        memory = search_memory(company_id, message, POLICY.memory_max_results)
+        if memory.get("fresh"):
+            record_search(company_id, message, "bitey_web_memory", local_hit_count=len(memory.get("results", [])), freshness_required=False)
+            return _memory_response(memory, message, company_id)
+
     key = _cache_key(message, queries, intent)
     cached = _cache_get(key)
     if cached:
+        if company_id:
+            record_search(company_id, message, cached.get("providers", ["cache"])[0], cache_hit=True, local_hit_count=0, external_used=True, freshness_required=True)
         return cached
-    max_results = limit or POLICY.max_results
+
     raw: List[Dict[str, Any]] = []
     errors: List[str] = []
     providers: List[str] = []
@@ -160,6 +207,14 @@ def search_web(message: str, *, intent: Optional[str] = None, limit: int | None 
     results = [normalised for item in raw if (normalised := _normalise_result(item, message))]
     results = sorted(_deduplicate(results), key=lambda item: item["score"], reverse=True)[:max_results]
     verification = _verify(results, message)
-    response = {"used": bool(results), "queries": queries, "results": results, "errors": errors, "providers": providers, "provider_configured": bool(providers), "grounding_status": "verified" if verification["verified"] else ("grounded" if results else "unavailable"), "verification": verification, "cache_hit": False, "learning_candidate": bool(verification["verified"] and results)}
+
+    # Persist researched evidence for future customer/company retrieval.
+    if company_id and results:
+        for item in results:
+            store_document(company_id, item, verification_score=verification["verification_score"], authority_score=item["authority_score"], freshness_ttl_seconds=POLICY.memory_ttl_seconds)
+
+    response = {"used": bool(results), "memory_hit": False, "memory_fresh": False, "external_used": bool(results), "queries": queries, "results": results, "errors": errors, "providers": providers, "provider_configured": bool(providers), "grounding_status": "verified" if verification["verified"] else ("grounded" if results else "unavailable"), "verification": verification, "cache_hit": False, "learning_candidate": bool(verification["verified"] and results), "context": "\n\n".join(f"SOURCE: {r['title']}\nURL: {r['url']}\nCONTENT: {r['snippet']}" for r in results)}
     _cache_put(key, response)
+    if company_id:
+        record_search(company_id, message, providers[0] if providers else "unavailable", local_hit_count=0, external_used=bool(results), freshness_required=True)
     return response
