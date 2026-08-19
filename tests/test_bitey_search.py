@@ -10,5 +10,6 @@ def test_tavily_is_not_blocked():
     _assert_allowed("tavily")
 
 
-def test_bitey_search_service_is_the_primary_name():
-    assert "brave" not in BLOCKED_PROVIDERS
+def test_blocklist_is_explicitly_brave_safe():
+    assert "brave" in BLOCKED_PROVIDERS
+    assert "braveapi" in BLOCKED_PROVIDERS
