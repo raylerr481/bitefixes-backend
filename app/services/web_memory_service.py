@@ -44,14 +44,15 @@ def search_memory(company_id: int, query: str, limit: int = 5) -> Dict[str, Any]
     except Exception as error:
         return {"found": False, "fresh": False, "stale": False, "results": [], "error": str(error)}
 
-    stale_count = sum(1 for row in rows if _stale(row))
     fresh_rows = [row for row in rows if not _stale(row)]
+    stale_count = len(rows) - len(fresh_rows)
     return {
         "found": bool(rows),
         "fresh": bool(fresh_rows),
         "stale": bool(rows) and not bool(fresh_rows),
         "stale_count": stale_count,
-        "results": rows,
+        "results": fresh_rows,
+        "all_results_count": len(rows),
         "normalized_query": normalized,
     }
 
