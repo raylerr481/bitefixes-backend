@@ -13,7 +13,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 class Settings:
     PROJECT_NAME = "BiteFixes Backend"
-    VERSION = "2.2.0"
+    VERSION = "2.3.0"
     ENGINE = "Bitey"
 
     SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -32,16 +32,17 @@ class Settings:
     DEFAULT_LANGUAGE = "pt-BR"
     CONFIDENCE_MIN = 0.70
 
-    # Web Intelligence: no key is committed. Brave is the preferred direct
-    # adapter; BITEY_WEB_SEARCH_URL remains available for another provider.
-    BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY")
-    BITEY_WEB_SEARCH_URL = os.getenv("BITEY_WEB_SEARCH_URL")
-    BITEY_WEB_SEARCH_API_KEY = os.getenv("BITEY_WEB_SEARCH_API_KEY")
+    # Bitey Web Intelligence. Primary is Bitey-owned Search Core/SearXNG.
+    # Tavily is an optional secondary fallback. Brave and similar providers are not supported.
+    BITEY_SEARCH_PRIMARY_URL = os.getenv("BITEY_SEARCH_PRIMARY_URL")
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     BITEY_WEB_SEARCH_TIMEOUT = float(os.getenv("BITEY_WEB_SEARCH_TIMEOUT", "8"))
     BITEY_WEB_CACHE_TTL = int(os.getenv("BITEY_WEB_CACHE_TTL", "900"))
     BITEY_WEB_MAX_QUERIES = int(os.getenv("BITEY_WEB_MAX_QUERIES", "3"))
     BITEY_WEB_MAX_RESULTS = int(os.getenv("BITEY_WEB_MAX_RESULTS", "8"))
     BITEY_WEB_VERIFY_SCORE = float(os.getenv("BITEY_WEB_VERIFY_SCORE", "0.72"))
+    BITEY_WEB_MEMORY_TTL = int(os.getenv("BITEY_WEB_MEMORY_TTL", "2592000"))
+    BITEY_WEB_MEMORY_MAX_RESULTS = int(os.getenv("BITEY_WEB_MEMORY_MAX_RESULTS", "5"))
 
 
 settings = Settings()
