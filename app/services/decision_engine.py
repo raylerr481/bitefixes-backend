@@ -1,5 +1,4 @@
-"""BiteFixes Decision Engine V20."""
-
+"""BiteFixes Decision Engine V21 — governed reasoning and AI consultation."""
 from typing import Any, Dict, Optional
 
 from app.services.company_service import get_company_context
@@ -9,9 +8,15 @@ from app.services.workflows.workflow_service import execute_workflow
 from app.services.sales_engine import generate_sales_response
 
 try:
-    from app.ai.chat_bridge import enrich_intent
+    from app.services.ai_provider import ai_provider
 except Exception:
-    enrich_intent = None
+    ai_provider = None
+try:
+    from app.ai.consultation_gate import evaluate as evaluate_ai_consultation
+    from app.ai.ai_council import consult as consult_ai
+    from app.ai.evaluator import evaluate_candidates
+except Exception:
+    evaluate_ai_consultation = consult_ai = evaluate_candidates = None
 
 SALES_INTENTS = {"ai_assistant", "sales", "quote", "purchase"}
 SUPPORT_INTENTS = {
@@ -23,15 +28,8 @@ SUPPORT_INTENTS = {
     "performance_problem", "screen_repair", "battery_replacement", "charging_port",
     "camera_repair", "software_mobile", "data_transfer",
 }
-QUOTE_INTENTS = {
-    "ai_assistant", "sales", "quote", "purchase", "cctv_installation",
-    "camera_installation", "network_configuration", "hardware_upgrade",
-}
-
-GREETING_WORDS = {
-    "hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias",
-    "buenas tardes", "buenas noches", "bom dia", "boa tarde", "boa noite",
-}
+QUOTE_INTENTS = {"ai_assistant", "sales", "quote", "purchase", "cctv_installation", "camera_installation", "network_configuration", "hardware_upgrade"}
+GREETING_WORDS = {"hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "bom dia", "boa tarde", "boa noite"}
 
 
 def _reasoning_response(reasoning: Dict[str, Any], language: Optional[str]) -> Optional[str]:
@@ -39,14 +37,11 @@ def _reasoning_response(reasoning: Dict[str, Any], language: Optional[str]) -> O
     if not step:
         return None
     if step.get("type") == "collect_requirements":
-        requirements = step.get("requirements", [])
-        names = [r.get("name") for r in requirements if r.get("name")]
+        names = [r.get("name") for r in step.get("requirements", []) if r.get("name")]
         if not names:
             return None
-        if language == "pt-BR":
-            return "Para orientá-lo melhor, preciso de: " + ", ".join(names) + "."
-        if language == "en":
-            return "To guide you better, I need: " + ", ".join(names) + "."
+        if language == "pt-BR": return "Para orientá-lo melhor, preciso de: " + ", ".join(names) + "."
+        if language == "en": return "To guide you better, I need: " + ", ".join(names) + "."
         return "Para orientarte mejor, necesito: " + ", ".join(names) + "."
     if step.get("type") == "clarify_need":
         need = (step.get("needs") or [{}])[0]
@@ -58,68 +53,44 @@ def _reasoning_response(reasoning: Dict[str, Any], language: Optional[str]) -> O
 
 
 def _is_greeting(message: str) -> bool:
-    normalized = " ".join(str(message or "").lower().strip().split())
-    return normalized in GREETING_WORDS
+    return " ".join(str(message or "").lower().strip().split()) in GREETING_WORDS
 
 
-def _ai_enrich(intent: Dict[str, Any], message: str, language: Optional[str]) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Use external AI only as an advisory semantic enrichment layer."""
-    if not enrich_intent:
-        return intent, {"ai_used": False, "reason": "bridge_unavailable"}
-    current = intent or {}
-    try:
-        result = enrich_intent(
-            message,
-            language=language,
-            current_intent=current.get("intent"),
-            current_confidence=current.get("confidence", 0),
-        )
-    except Exception as error:
-        return current, {"ai_used": False, "reason": type(error).__name__}
-    if not result.get("used") or not result.get("valid") and not result.get("intent"):
-        return current, {"ai_used": bool(result.get("used")), "reason": result.get("reason", "invalid")}
+def _external_consultation(message: str, language: Optional[str], intent: Dict[str, Any], business_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Consult external AI only when the gate predicts useful value.
 
-    ai_intent = result.get("intent")
-    try:
-        ai_confidence = float(result.get("confidence", 0))
-    except (TypeError, ValueError):
-        ai_confidence = 0.0
-
-    # AI can improve a weak/missing interpretation, but cannot override a strong Core result.
-    current_confidence = float(current.get("confidence", 0) or 0)
-    if ai_intent and ai_intent in SALES_INTENTS | SUPPORT_INTENTS and ai_confidence >= max(0.75, current_confidence + 0.05):
-        enriched = dict(current)
-        enriched["intent"] = ai_intent
-        enriched["confidence"] = ai_confidence
-        enriched["source"] = "core+ai"
-        enriched["ai_need"] = result.get("need")
-        enriched["ai_entities"] = result.get("entities") or {}
-        return enriched, {"ai_used": True, "ai_intent": ai_intent, "ai_confidence": ai_confidence}
-
-    return current, {"ai_used": True, "ai_intent": ai_intent, "ai_confidence": ai_confidence, "accepted": False}
+    This is advisory telemetry. It never authorizes a business action.
+    """
+    if not evaluate_ai_consultation or not consult_ai or not ai_provider or not ai_provider.available():
+        return {"ai_used": False, "reason": "provider_unavailable"}
+    confidence = float(intent.get("confidence", 0) or 0)
+    complexity = 0.8 if len(message) > 240 else 0.3
+    novelty = 0.8 if not intent.get("intent") else 0.3
+    gap = 0.8 if not intent.get("intent") else 0.2
+    impact = 0.7 if intent.get("intent") in {"ai_assistant", "sales", "quote"} else 0.2
+    gate = evaluate_ai_consultation(confidence=confidence, complexity=complexity, novelty=novelty, knowledge_gap=gap, business_impact=impact)
+    if not gate.consult:
+        return {"ai_used": False, "reason": gate.reason, "gate_value": gate.estimated_value}
+    candidates = consult_ai(message, language=language or "es", context={"intent": intent, "business_context": business_context or {}}, max_providers=gate.max_providers)
+    evaluation = evaluate_candidates(candidates) if evaluate_candidates else {"status": "not_evaluated"}
+    return {"ai_used": bool(candidates), "gate_reason": gate.reason, "gate_value": gate.estimated_value, "candidates": candidates, "evaluation": evaluation, "learning_candidate": bool(evaluation.get("consensus"))}
 
 
 def make_decision(company_id: int, customer: Dict, message: str, intent: Dict, knowledge=None, memory=None, language=None, channel="unknown", business_context: Optional[Dict[str, Any]] = None):
     intent = intent or {}
-    ai_metadata = {"ai_used": False}
-
-    # Only invoke external AI for ambiguous/low-confidence cases.
-    if not intent.get("intent") or float(intent.get("confidence", 0) or 0) < 0.80:
-        intent, ai_metadata = _ai_enrich(intent, message, language)
-
-    intent_name = intent.get("intent") if intent else None
-    confidence = intent.get("confidence", 0) if intent else 0
-
     if business_context is None:
-        try:
-            business_context = get_company_context(company_id)
+        try: business_context = get_company_context(company_id)
         except Exception as error:
-            print("[BUSINESS CONTEXT WARNING]", error)
-            business_context = None
+            print("[BUSINESS CONTEXT WARNING]", error); business_context = None
 
+    # External AI is now behind a value/cost gate. Core reasoning remains first.
+    ai_metadata = _external_consultation(message, language, intent, business_context)
+
+    intent_name = intent.get("intent")
+    confidence = float(intent.get("confidence", 0) or 0)
     if not intent_name:
         if _is_greeting(message):
-            greeting = {"pt-BR": "Olá! Sou Bitey. Como posso ajudá-lo?", "en": "Hello! I'm Bitey. How can I help you?"}.get(language, "Hola, soy Bitey. ¿Cómo puedo ayudarte?")
+            greeting = {"pt-BR": "Olá! Sou Bitey. Como posso ajudá-lo?", "en": "Hello! I'm Bitey. How can I help?"}.get(language, "Hola, soy Bitey. ¿Cómo puedo ayudarte?")
             return {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "response": greeting, "workflow": None, "service": None, "service_id": None, "reasoning": {}, "metadata": {"reason": "greeting", **ai_metadata}}
         clarification = {"pt-BR": "Claro. Posso ajudá-lo com suporte técnico, celulares, computadores, redes, câmeras ou IA para empresas. O que você precisa?", "en": "Sure. I can help with technical support, phones, computers, networks, cameras, or business AI. What do you need?"}.get(language, "Claro. Puedo ayudarte con soporte técnico, celulares, computadoras, redes, cámaras o IA para empresas. ¿Qué necesitas?")
         return {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "response": clarification, "workflow": None, "service": None, "service_id": None, "reasoning": {}, "metadata": {"reason": "intent_not_detected", **ai_metadata}}
