@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -40,20 +40,16 @@ POLICY = WebPolicy()
 
 
 def needs_web(message: str, *, intent: Optional[str] = None, knowledge_found: bool = False) -> bool:
-    """Decide whether freshness, breadth or a knowledge gap justifies web retrieval."""
     text = (message or "").lower()
     words = set(re.findall(r"[a-z0-9À-ÿ-]+", text))
     if words & CURRENT_MARKERS:
         return True
     if not knowledge_found and len(words) >= 10:
         return True
-    if intent in {"research", "comparison", "troubleshooting", "software_update", "product_research"}:
-        return True
-    return False
+    return intent in {"research", "comparison", "troubleshooting", "software_update", "product_research"}
 
 
 def build_queries(message: str, *, intent: Optional[str] = None, max_queries: int | None = None) -> List[str]:
-    """Generate a small, diverse query set instead of blindly repeating the prompt."""
     text = re.sub(r"\s+", " ", (message or "").strip())
     if not text:
         return []
@@ -106,7 +102,6 @@ def _normalise_result(item: Dict[str, Any], query: str) -> Optional[Dict[str, An
     relevance_tokens = len(_tokenise(query) & _tokenise(f"{title} {snippet}"))
     relevance = min(1.0, relevance_tokens / max(3, len(_tokenise(query)) * 0.35))
     authority = _domain_score(url)
-    score = round((0.55 * relevance) + (0.45 * authority), 3)
     return {
         "url": url,
         "title": title,
@@ -114,7 +109,7 @@ def _normalise_result(item: Dict[str, Any], query: str) -> Optional[Dict[str, An
         "domain": _domain(url),
         "authority_score": round(authority, 3),
         "relevance_score": round(relevance, 3),
-        "score": score,
+        "score": round((0.55 * relevance) + (0.45 * authority), 3),
         "retrieved_at": item.get("retrieved_at") or datetime.now(timezone.utc).isoformat(),
     }
 
@@ -150,19 +145,17 @@ def _cache_get(key: str) -> Optional[Dict[str, Any]]:
 
 def _cache_put(key: str, value: Dict[str, Any]) -> None:
     _CACHE[key] = (time.time() + POLICY.ttl_seconds, dict(value))
-    # Keep process-local cache bounded on long-lived Render instances.
     if len(_CACHE) > 256:
-        oldest = sorted(_CACHE.items(), key=lambda pair: pair[1][0])[:64]
-        for old_key, _ in oldest:
+        for old_key, _ in sorted(_CACHE.items(), key=lambda pair: pair[1][0])[:64]:
             _CACHE.pop(old_key, None)
 
 
 def _provider_request(query: str, limit: int) -> List[Dict[str, Any]]:
-    """Use Brave directly when configured, otherwise support the generic adapter."""
+    """Use Brave directly when configured, otherwise use the generic adapter."""
     brave_key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
     if brave_key:
         url = "https://api.search.brave.com/res/v1/web/search"
-        params = f"?q={__import__('urllib.parse').parse.quote(query)}&count={max(1, min(20, limit))}"
+        params = f"?q={quote(query)}&count={max(1, min(20, limit))}"
         request = Request(url + params, headers={
             "Accept": "application/json",
             "X-Subscription-Token": brave_key,
@@ -189,7 +182,6 @@ def _provider_request(query: str, limit: int) -> List[Dict[str, Any]]:
 
 
 def _verify(results: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
-    """Measure corroboration without pretending that search alone proves a fact."""
     domains = {item["domain"] for item in results if item.get("domain")}
     strong = [item for item in results if item.get("score", 0) >= POLICY.verification_min_score]
     token_sets = [_tokenise(f"{item['title']} {item['snippet']}") for item in strong]
@@ -211,7 +203,6 @@ def _verify(results: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
 
 
 def search_web(message: str, *, intent: Optional[str] = None, limit: int | None = None) -> Dict[str, Any]:
-    """Retrieve, cache, score and verify evidence; never writes to knowledge."""
     queries = build_queries(message, intent=intent)
     key = _cache_key(message, queries, intent)
     cached = _cache_get(key)
