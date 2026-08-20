@@ -1,4 +1,8 @@
-"""BiteFixes - Bitey Core V22."""
+"""BiteFixes - Bitey Core V23.
+
+Conversation-aware orchestration: preserves customer memory and active
+conversation context when interpreting follow-up messages.
+"""
 
 from typing import Any, Dict, Optional
 
@@ -19,6 +23,10 @@ try:
     from app.services.memory_service import get_memory_context
 except ImportError:
     get_memory_context = None
+try:
+    from app.services.memory_service import get_customer_memory
+except ImportError:
+    get_customer_memory = None
 try:
     from app.services.integration_orchestrator import prepare_openapi_tools
 except ImportError:
@@ -100,18 +108,45 @@ def _apply_comparative_result(decision: Dict[str, Any], comparison: Dict[str, An
     decision["response_source"] = "core"
 
 
-def process_message(
-    company_id: int,
-    message: str,
-    phone: str,
-    email: str = "",
-    customer_name: str = "Customer",
-    last_name: str = "",
-    channel: str = "website",
-    conversation_id: Optional[str] = None,
-    language_preference: str = "auto",
-):
-    """Process one message with one Bitey brain and persistent web-session identity."""
+def _load_memory(customer_id: int, company_id: int, conversation_id: str) -> Dict[str, Any]:
+    """Load the best available memory API without breaking older deployments."""
+    if get_memory_context:
+        try:
+            result = get_memory_context(customer_id=customer_id, conversation_id=conversation_id)
+            if isinstance(result, dict):
+                return result
+        except TypeError:
+            try:
+                result = get_memory_context(customer_id)
+                if isinstance(result, dict):
+                    return result
+            except Exception as error:
+                print("[MEMORY WARNING]", error)
+        except Exception as error:
+            print("[MEMORY WARNING]", error)
+    if get_customer_memory:
+        try:
+            result = get_customer_memory(company_id=company_id, customer_id=customer_id, limit=20)
+            return result if isinstance(result, dict) else {}
+        except Exception as error:
+            print("[MEMORY WARNING]", error)
+    return {}
+
+
+def _build_context(conversation_context: Dict[str, Any], memory: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge durable conversation state with customer message history."""
+    context = dict(conversation_context or {})
+    context["memory"] = memory
+    context["history"] = memory.get("history") or []
+    context["last_intent"] = memory.get("last_intent") or context.get("intent")
+    context["last_service"] = memory.get("last_service") or context.get("service_id")
+    context["last_ticket"] = memory.get("last_ticket") or context.get("ticket_id")
+    context["conversation_id"] = context.get("id")
+    return context
+
+
+def process_message(company_id: int, message: str, phone: str, email: str = "", customer_name: str = "Customer", last_name: str = "", channel: str = "website", conversation_id: Optional[str] = None, language_preference: str = "auto"):
+    """Process one message while preserving conversational context."""
     try:
         if not company_id:
             raise ValueError("company_id is required")
@@ -129,8 +164,6 @@ def process_message(
         language = explicit_language or detected_language
         language_source = "explicit" if explicit_language else "detected"
 
-        # The browser supplies a stable conversation/session token. Never switch
-        # the customer identity from "web" to "web:<db-id>" between messages.
         identity_phone = supplied_phone
         if not identity_phone or identity_phone.lower() in {"web", "unknown"}:
             identity_phone = f"web:{conversation_id}" if conversation_id else "web"
@@ -146,26 +179,26 @@ def process_message(
             raise ValueError("Unable to obtain conversation_id")
 
         conversation_context = _safe_dict(get_conversation(resolved_conversation_id))
-        memory = None
-        if get_memory_context:
-            try:
-                memory = get_memory_context(customer_id=customer_id, conversation_id=resolved_conversation_id)
-            except TypeError:
-                try:
-                    memory = get_memory_context(customer_id)
-                except Exception as error:
-                    print("[MEMORY WARNING]", error)
-            except Exception as error:
-                print("[MEMORY WARNING]", error)
+        memory = _load_memory(customer_id, company_id, str(resolved_conversation_id))
+        context = _build_context(conversation_context, memory)
 
         save_customer_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, message=message, channel=channel)
-        intent = _safe_dict(detect_intent(message, company_id, context=conversation_context))
-        intent_name = intent.get("intent")
+
+        # Intent detection receives the durable context, so short follow-ups such
+        # as "where?", "how much?" and "how long?" inherit the active service.
+        intent = _safe_dict(detect_intent(message, company_id, context=context))
+        intent_name = intent.get("intent") or context.get("last_intent")
         confidence = float(intent.get("confidence", 0) or 0)
         knowledge = search_knowledge(message=message, company_id=company_id, intent=intent_name, language=language)
-        decision = _safe_dict(decision_engine(company_id, customer, message, intent, knowledge, memory, language, business_context=None))
+        decision = _safe_dict(decision_engine(company_id, customer, message, intent, knowledge, memory, language, business_context=context))
         if not decision:
-            decision = {"action": "conversation", "create_ticket": False, "ticket_type": None, "requires_quote": False, "service": None, "service_id": None, "workflow": None, "response": "Gracias por contactar BiteFixes."}
+            decision = {"action": "conversation", "create_ticket": False, "ticket_type": None, "requires_quote": False, "service": None, "service_id": context.get("last_service"), "workflow": None, "response": "Gracias por contactar BiteFixes."}
+
+        # Preserve active service/ticket when the current message is a follow-up.
+        if intent_name and not decision.get("service_id") and context.get("last_service"):
+            decision["service_id"] = context["last_service"]
+        if not decision.get("ticket_id") and context.get("last_ticket"):
+            decision["ticket_id"] = context["last_ticket"]
 
         consultation = {"used": False, "reason": "unavailable"}
         if consult_if_valuable:
@@ -176,10 +209,7 @@ def process_message(
                 consultation = {"used": False, "reason": "consultation_error"}
         decision["ai_consultation"] = consultation
 
-        # If the core cannot classify a novel message, an approved external
-        # candidate can provide the first useful answer instead of the old
-        # generic "what do you need?" loop.
-        if not intent_name and isinstance(consultation, dict):
+        if not intent.get("intent") and isinstance(consultation, dict):
             selected = ((consultation.get("evaluation") or {}).get("selected") or {})
             advisory = str(selected.get("answer") or "").strip()
             if advisory:
@@ -248,6 +278,7 @@ def process_message(
 
         save_bitey_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, response=response_text, intent=intent_name, confidence=confidence, service_id=service_id, ticket_id=ticket_id, channel=channel)
         update_conversation_context(resolved_conversation_id, intent=intent_name, response=response_text, ticket_id=ticket_id)
+
         memory_count = 0
         if isinstance(memory, dict):
             try:
