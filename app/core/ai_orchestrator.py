@@ -1,31 +1,51 @@
-"""Governed AI orchestration for Bitey.
+"""Governed AI orchestration facade for Bitey Core.
 
-External models are advisory. Bitey Core remains the authority for tenant
+External models are advisory. Bitey Core remains authoritative for tenant
 context, semantics, services, workflows, tools, tickets and persistence.
 """
 from typing import Any, Dict
 
-from app.services.ai_provider import ai_provider
+from app.ai.runtime import build_ai_orchestrator
 
 
 def enrich(message: str, *, language: str, intent: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Ask one configured advisory model for semantic enrichment.
+
+    The provider is selected by the same free/local-first registry used by the
+    AI council, so Bitey no longer has a hidden OpenRouter/OpenAI-only path.
+    """
     intent = intent or {}
-    if not ai_provider.available():
-        return {"used": False, "reason": "no_provider"}
-    system = (
-        "You are Bitey's advisory semantic layer. Return JSON only with keys "
-        "intent, need, entities, confidence, language. Never create tickets, "
-        "change customers, execute tools, invent prices or business facts. "
-        "Use canonical intents from the business context."
-    )
-    context = {
+    orchestrator = build_ai_orchestrator()
+    spec = orchestrator.choose("semantic_analysis")
+    if not spec:
+        return {"used": False, "reason": "no_provider", "provider": None}
+
+    system_context = {
         "language": language,
         "current_intent": intent.get("intent"),
         "current_confidence": intent.get("confidence", 0),
     }
     try:
-        text = ai_provider.respond(system, message, context=context)
-        provider = "openrouter" if getattr(ai_provider, "openrouter_enabled", False) else "openai"
-        return {"used": bool(text), "text": text, "provider": provider if text else None}
+        import asyncio
+
+        async def run() -> Dict[str, Any]:
+            result = await orchestrator.ask(
+                message,
+                capability="semantic_analysis",
+                context=system_context,
+            )
+            return {
+                "used": result.get("status") == "ok",
+                "text": result.get("answer"),
+                "provider": result.get("provider"),
+                "status": result.get("status"),
+            }
+
+        try:
+            return asyncio.run(run())
+        except RuntimeError:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(run())).result()
     except Exception as exc:
-        return {"used": False, "reason": type(exc).__name__}
+        return {"used": False, "reason": type(exc).__name__, "provider": spec.name}
