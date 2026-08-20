@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bitefixes-backend"
+version = "2.3.0"
+description = "BiteFixes SaaS Backend powered by Bitey AI Engine"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "python-dotenv",
+  "supabase",
+  "httpx",
+  "pydantic",
+  "python-multipart",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
