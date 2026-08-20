@@ -1,4 +1,5 @@
-"""BiteFixes Decision Engine V22 — governed reasoning and AI consultation."""
+"""BiteFixes Decision Engine V23 — governed reasoning and guided diagnosis."""
+from difflib import SequenceMatcher
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
 from app.services.business_reasoning_service import resolve_business_reasoning
@@ -18,6 +19,8 @@ SALES_INTENTS={"ai_assistant","sales","quote","purchase"}
 SUPPORT_INTENTS={"computer_repair","hardware_upgrade","windows_installation","mobile_repair","cctv_installation","camera_installation","network_configuration","software_problem","remote_support","cctv_repair","cctv_configuration","camera_replacement","wifi_configuration","router_configuration","vpn_configuration","network_diagnosis","server_support","microsoft365_support","cloud_support","data_recovery","virus_malware","performance_problem","screen_repair","battery_replacement","charging_port","camera_repair","software_mobile","data_transfer"}
 QUOTE_INTENTS={"ai_assistant","sales","quote","purchase","cctv_installation","camera_installation","network_configuration","hardware_upgrade"}
 GREETING_WORDS={"hola","hello","hi","hey","oi","ola","buenas","buenos dias","buenas tardes","buenas noches","bom dia","boa tarde","boa noite"}
+MOBILE_CATEGORY_WORDS={"celular","celulares","movil","moviles","telefono","telefonos","telefone","telefones","phone","mobile","mobiles"}
+
 
 def _reasoning_response(reasoning:Dict[str,Any], language:Optional[str])->Optional[str]:
     step=reasoning.get("next_step")
@@ -32,7 +35,18 @@ def _reasoning_response(reasoning:Dict[str,Any], language:Optional[str])->Option
         solution=(step.get("solutions") or [{}])[0]; return solution.get("description") or solution.get("name")
     return None
 
-def _is_greeting(message:str)->bool:return " ".join(str(message or "").lower().strip().split()) in GREETING_WORDS
+
+def _is_greeting(message:str)->bool:
+    value=" ".join(str(message or "").lower().strip().split())
+    if value in GREETING_WORDS:return True
+    if len(value) >= 4 and any(SequenceMatcher(None,value,g).ratio() >= 0.82 for g in {"hola","hello","ola"}):return True
+    return False
+
+
+def _is_mobile_category(message:str)->bool:
+    words=set(str(message or "").lower().strip().split())
+    return bool(words) and words.issubset(MOBILE_CATEGORY_WORDS)
+
 
 def _external_consultation(message:str,language:Optional[str],intent:Dict[str,Any],business_context:Optional[Dict[str,Any]])->Dict[str,Any]:
     if not all((evaluate_ai_consultation,consult_ai,ai_provider)) or not ai_provider.available():
@@ -47,6 +61,7 @@ def _external_consultation(message:str,language:Optional[str],intent:Dict[str,An
     candidates=consult_ai(message,language=language or "es",context={"intent":intent,"business_context":business_context or {}},max_providers=gate.max_providers)
     evaluation=evaluate_candidates(candidates,core_confidence=confidence) if evaluate_candidates else {"status":"not_evaluated"}
     return {"ai_used":bool(candidates),"gate_reason":gate.reason,"gate_value":gate.estimated_value,"candidates":candidates,"evaluation":evaluation,"learning_candidate":bool(evaluation.get("learning_candidate"))}
+
 
 def make_decision(company_id:int,customer:Dict,message:str,intent:Dict,knowledge=None,memory=None,language=None,channel="unknown",business_context:Optional[Dict[str,Any]]=None):
     intent=intent or {}
@@ -69,10 +84,19 @@ def make_decision(company_id:int,customer:Dict,message:str,intent:Dict,knowledge
     if intent_name in SALES_INTENTS:
         return {"action":"sales","create_ticket":True,"requires_quote":requires_quote,"ticket_type":"sales","response":semantic_response or generate_sales_response(intent_name,customer.get("full_name","Cliente"),memory),"service":service,"service_id":service_id,"workflow":None,"reasoning":reasoning,"metadata":metadata}
     if intent_name in SUPPORT_INTENTS:
+        if intent_name == "mobile_repair" and _is_mobile_category(message):
+            if str(language or "es").lower().startswith("pt"):
+                response="Claro. Posso ajudar com celulares. Para começar, me diga o que está acontecendo com o aparelho. Se puder, informe também a marca e o modelo e desde quando ocorre o problema."
+            elif str(language or "es").lower().startswith("en"):
+                response="Sure. I can help with mobile phones. To start, tell me what is happening with the device. If possible, include the brand, model and when the problem started."
+            else:
+                response="Claro. Puedo ayudarte con celulares. Para comenzar, dime qué le está pasando al equipo. Si puedes, indícame también la marca, el modelo y desde cuándo ocurre el problema."
+            return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":response,"workflow":intent_name,"workflow_result":{"success":False,"reason":"diagnostic_details_required"},"ticket":None,"service":service,"service_id":service_id,"reasoning":reasoning,"metadata":metadata}
         workflow_result=execute_workflow(intent=intent_name,company_id=company_id,customer_id=customer.get("id"),service_id=service_id,message=message,knowledge=knowledge,language=language,business_context=business_context,intent_data=intent)
         ok=bool(workflow_result.get("success")); response=semantic_response or workflow_result.get("response") or "Voy a ayudarte con el diagnóstico."
         return {"action":"workflow","create_ticket":ok,"requires_quote":requires_quote if ok else False,"ticket_type":"technical_support" if ok else None,"response":response,"workflow":intent_name,"workflow_result":workflow_result,"ticket":workflow_result.get("ticket"),"service":service,"service_id":service_id,"reasoning":reasoning,"metadata":metadata}
     return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":semantic_response or "Puedo ayudarte a identificar lo que necesitas. ¿Qué problema o servicio buscas?","workflow":None,"service":service,"service_id":service_id,"reasoning":reasoning,"metadata":metadata}
+
 
 def decision_engine(company_id,customer,message,intent,knowledge=None,memory=None,language=None,business_context=None):
     return make_decision(company_id,customer,message,intent,knowledge,memory,language,business_context=business_context)
