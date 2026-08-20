@@ -27,7 +27,7 @@ def build_ai_orchestrator() -> AIOrchestrator:
         ProviderSpec(
             name="openrouter-free",
             enabled=openrouter.enabled,
-            priority=int(os.getenv("OPENROUTER_PRIORITY", "10")),
+            priority=int(os.getenv("OPENROUTER_PRIORITY", "20")),
             cost_class="free",
             capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
             provider=openrouter,
