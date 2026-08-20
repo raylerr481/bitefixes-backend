@@ -23,14 +23,25 @@ async def lifespan(app: FastAPI):
     print("Supabase : CONNECTED" if connected else "Supabase : CONNECTION FAILED")
     orchestrator = build_ai_orchestrator()
     available = [spec.name for spec in orchestrator.registry.available("general_reasoning")]
-    print("AI Providers : " + (", ".join(available) if available else "NONE"))
+    print("AI Providers : " + (", ".join(available) if available else "CORE ONLY"))
     print("Web Intelligence : ENABLED")
     yield
     print("BiteFixes Backend shutting down...")
 
 
-app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, description="BiteFixes SaaS Backend powered by Bitey AI Engine", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "Accept", "Origin"])
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    description="BiteFixes SaaS Backend powered by Bitey AI Engine",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
+)
 
 
 @app.exception_handler(Exception)
@@ -49,7 +60,13 @@ app.include_router(webhooks.router)
 
 @app.get("/")
 def root():
-    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "FastAPI + Bitey AI + Supabase + governed AI providers"}
+    return {
+        "project": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "engine": settings.ENGINE,
+        "status": "online",
+        "architecture": "FastAPI + Bitey AI + Supabase + RAG + governed AI providers",
+    }
 
 
 @app.get("/health")
@@ -59,7 +76,14 @@ def health():
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone"], "webhook_gateway": "/webhooks/{channel}", "status": "running"}
+    return {
+        "company": "BiteFixes",
+        "ai_engine": "Bitey",
+        "database": "Supabase",
+        "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone"],
+        "webhook_gateway": "/webhooks/{channel}",
+        "status": "running",
+    }
 
 
 @app.get("/ai/status")
@@ -78,9 +102,17 @@ def ai_status():
         "status": "ready",
         "supabase": bool(supabase_manager.check_connection()),
         "web_intelligence": {"enabled": True, "service": "bitey-search-core"},
+        "rag": {
+            "enabled": True,
+            "vector_backends": ["faiss", "qdrant", "chroma"],
+            "selection": "configuration-driven",
+        },
         "external_ai": {
             "providers": providers,
-            "available_general_reasoning": [p["name"] for p in providers if p["enabled"] and "general_reasoning" in p["capabilities"]],
+            "available_general_reasoning": [
+                p["name"] for p in providers
+                if p["enabled"] and "general_reasoning" in p["capabilities"]
+            ],
         },
         "policy": {
             "consult_min_confidence": float(os.getenv("AI_CONSULT_MIN_CONFIDENCE", "0.78")),
@@ -88,6 +120,23 @@ def ai_status():
             "max_providers": int(os.getenv("AI_COUNCIL_MAX_PROVIDERS", "2")),
         },
     }
+
+
+@app.get("/ai/providers/health")
+async def ai_providers_health():
+    """Non-invasive provider diagnostics; no prompt is sent and no secret is returned."""
+    orchestrator = build_ai_orchestrator()
+    result = []
+    for spec in orchestrator.registry._providers.values():
+        result.append({
+            "name": spec.name,
+            "configured": bool(spec.enabled),
+            "capabilities": list(spec.capabilities),
+            "priority": spec.priority,
+            "cost_class": spec.cost_class,
+            "health": "configured" if spec.enabled else "not_configured",
+        })
+    return {"status": "ok", "providers": result}
 
 
 @app.get("/test-supabase")
