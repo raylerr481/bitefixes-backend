@@ -5,3 +5,5 @@ supabase
 httpx
 pydantic
 python-multipart
+letta-client
+hyperon
