@@ -66,6 +66,39 @@ def _normalize_language_preference(value: Optional[str]) -> Optional[str]:
     return None
 
 
+def _is_greeting(message: str) -> bool:
+    value = " ".join(str(message or "").lower().strip().split())
+    return value in {"hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}
+
+
+def _inherit_active_intent(intent: Dict[str, Any], context: Dict[str, Any], message: str) -> Dict[str, Any]:
+    """Resolve follow-ups against the active conversation instead of restarting.
+
+    A message such as "dime cómo puedo repararlo" intentionally may not contain
+    a service keyword. In that case the active service/intent is the semantic
+    subject of the message. Greetings remain greetings and do not inherit a
+    service merely because one was discussed previously.
+    """
+    current = dict(intent or {})
+    if current.get("intent") or _is_greeting(message):
+        return current
+
+    active_intent = context.get("last_intent")
+    if not active_intent:
+        return current
+
+    active_confidence = float(context.get("last_confidence") or 0.0)
+    inherited_confidence = max(0.70, active_confidence)
+    current.update({
+        "intent": active_intent,
+        "confidence": inherited_confidence,
+        "raw_score": current.get("raw_score", 0),
+        "context_inherited": True,
+        "context_source": "active_conversation",
+    })
+    return current
+
+
 def _prepare_external_integration(decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     request = decision.get("external_integration")
     if not isinstance(request, dict) or not prepare_openapi_tools:
@@ -138,9 +171,10 @@ def _build_context(conversation_context: Dict[str, Any], memory: Dict[str, Any])
     context = dict(conversation_context or {})
     context["memory"] = memory
     context["history"] = memory.get("history") or []
-    context["last_intent"] = memory.get("last_intent") or context.get("intent")
-    context["last_service"] = memory.get("last_service") or context.get("service_id")
-    context["last_ticket"] = memory.get("last_ticket") or context.get("ticket_id")
+    context["last_intent"] = memory.get("last_intent") or context.get("last_intent") or context.get("intent")
+    context["last_service"] = memory.get("last_service") or context.get("last_service") or context.get("service_id")
+    context["last_ticket"] = memory.get("last_ticket") or context.get("last_ticket") or context.get("ticket_id")
+    context["last_confidence"] = memory.get("last_confidence") or context.get("last_confidence") or 0.0
     context["conversation_id"] = context.get("id")
     return context
 
@@ -181,20 +215,28 @@ def process_message(company_id: int, message: str, phone: str, email: str = "", 
         conversation_context = _safe_dict(get_conversation(resolved_conversation_id))
         memory = _load_memory(customer_id, company_id, str(resolved_conversation_id))
         context = _build_context(conversation_context, memory)
+        context["company_id"] = company_id
+        context["language"] = language
 
         save_customer_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, message=message, channel=channel)
 
-        # Intent detection receives the durable context, so short follow-ups such
-        # as "where?", "how much?" and "how long?" inherit the active service.
+        # First classify the current text. If it has no standalone intent,
+        # inherit the active conversation intent before downstream decisioning.
         intent = _safe_dict(detect_intent(message, company_id, context=context))
+        intent = _inherit_active_intent(intent, context, message)
         intent_name = intent.get("intent") or context.get("last_intent")
         confidence = float(intent.get("confidence", 0) or 0)
+
         knowledge = search_knowledge(message=message, company_id=company_id, intent=intent_name, language=language)
         decision = _safe_dict(decision_engine(company_id, customer, message, intent, knowledge, memory, language, business_context=context))
         if not decision:
             decision = {"action": "conversation", "create_ticket": False, "ticket_type": None, "requires_quote": False, "service": None, "service_id": context.get("last_service"), "workflow": None, "response": "Gracias por contactar BiteFixes."}
 
-        # Preserve active service/ticket when the current message is a follow-up.
+        if intent.get("context_inherited"):
+            decision.setdefault("metadata", {})
+            decision["metadata"]["context_inherited"] = True
+            decision["metadata"]["context_source"] = "active_conversation"
+
         if intent_name and not decision.get("service_id") and context.get("last_service"):
             decision["service_id"] = context["last_service"]
         if not decision.get("ticket_id") and context.get("last_ticket"):
