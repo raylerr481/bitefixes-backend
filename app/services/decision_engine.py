@@ -1,4 +1,4 @@
-"""BiteFixes Decision Engine V23 — governed reasoning and guided diagnosis."""
+"""BiteFixes Decision Engine V24 — governed reasoning and guided diagnosis."""
 from difflib import SequenceMatcher
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
@@ -20,6 +20,11 @@ SUPPORT_INTENTS={"computer_repair","hardware_upgrade","windows_installation","mo
 QUOTE_INTENTS={"ai_assistant","sales","quote","purchase","cctv_installation","camera_installation","network_configuration","hardware_upgrade"}
 GREETING_WORDS={"hola","hello","hi","hey","oi","ola","buenas","buenos dias","buenas tardes","buenas noches","bom dia","boa tarde","boa noite"}
 MOBILE_CATEGORY_WORDS={"celular","celulares","movil","moviles","telefono","telefonos","telefone","telefones","phone","mobile","mobiles"}
+FOLLOWUP_WORDS={
+    "como","cómo","donde","dónde","ubicacion","ubicación","direccion","dirección",
+    "cuanto","cuánto","precio","costo","coste","horario","horarios","cuando","cuándo",
+    "reparar","repararlo","arreglar","arreglarlo","ayuda","pueden","puedo"
+}
 
 
 def _reasoning_response(reasoning:Dict[str,Any], language:Optional[str])->Optional[str]:
@@ -48,6 +53,36 @@ def _is_mobile_category(message:str)->bool:
     return bool(words) and words.issubset(MOBILE_CATEGORY_WORDS)
 
 
+def _is_contextual_followup(message:str, inherited:bool)->bool:
+    if not inherited:
+        return False
+    words=set(str(message or "").lower().strip().split())
+    normalized={w.strip(".,!?;:") for w in words}
+    return bool(normalized & FOLLOWUP_WORDS) or "?" in str(message)
+
+
+def _knowledge_answer(knowledge:Any)->Optional[str]:
+    if isinstance(knowledge,dict):
+        answer=knowledge.get("answer") or knowledge.get("response") or knowledge.get("text")
+        if answer:
+            return str(answer).strip()
+    return None
+
+
+def _business_location(business_context:Optional[Dict[str,Any]])->Optional[str]:
+    """Read common address/location fields without inventing a location."""
+    if not isinstance(business_context,dict):
+        return None
+    candidates=[]
+    for source in (business_context.get("business_profile"), business_context.get("company")):
+        if isinstance(source,dict):
+            for key in ("address","full_address","location","address_line","street_address","city_address"):
+                value=source.get(key)
+                if value:
+                    candidates.append(str(value).strip())
+    return candidates[0] if candidates else None
+
+
 def _external_consultation(message:str,language:Optional[str],intent:Dict[str,Any],business_context:Optional[Dict[str,Any]])->Dict[str,Any]:
     if not all((evaluate_ai_consultation,consult_ai,ai_provider)) or not ai_provider.available():
         return {"ai_used":False,"reason":"provider_unavailable"}
@@ -71,11 +106,32 @@ def make_decision(company_id:int,customer:Dict,message:str,intent:Dict,knowledge
     ai_metadata=_external_consultation(message,language,intent,business_context)
     intent_name=intent.get("intent")
     confidence=float(intent.get("confidence",0) or 0)
+    inherited=bool(intent.get("context_inherited"))
+
+    # A follow-up such as "dime cómo puedo repararlo, dónde residen ustedes"
+    # is not a new ticket. It stays on the active service and first answers from
+    # Bitey's knowledge/business context.
+    if intent_name and _is_contextual_followup(message, inherited):
+        answer=_knowledge_answer(knowledge)
+        location=_business_location(business_context)
+        lowered=str(message or "").lower()
+        asks_location=any(term in lowered for term in ("donde","dónde","ubicacion","ubicación","direccion","dirección","residen"))
+        if asks_location and location and location not in (answer or ""):
+            location_text={"pt-BR":f"Nossa localização: {location}.","en":f"Our location: {location}.","es":f"Nuestra ubicación: {location}."}.get(language,f"Nuestra ubicación: {location}.")
+            answer=(answer + "\n\n" + location_text) if answer else location_text
+        if answer:
+            return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":answer,"workflow":None,"service":resolve_service(company_id,intent_name,business_context=business_context),"service_id":None,"reasoning":{},"metadata":{"reason":"contextual_followup","context_inherited":True,"intent":intent_name,"confidence":confidence,**ai_metadata}}
+        # No KB answer: keep the service context but ask only for the missing
+        # detail instead of resetting the whole conversation.
+        if intent_name == "mobile_repair":
+            response={"pt-BR":"Posso orientar sobre o reparo do celular e a localização. Diga se o problema é tela, bateria, carregamento ou outro e, se precisa da localização, posso informar a unidade cadastrada.","en":"I can guide you about the phone repair and location. Tell me whether the problem is the screen, battery, charging or something else; I can also provide the registered location.","es":"Puedo orientarte sobre la reparación del celular y la ubicación. Dime si el problema es la pantalla, batería, carga u otro y, si necesitas la ubicación, puedo informarte la unidad registrada."}.get(language,"Puedo orientarte sobre la reparación del celular y la ubicación.")
+            return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":response,"workflow":None,"service":resolve_service(company_id,intent_name,business_context=business_context),"service_id":None,"reasoning":{},"metadata":{"reason":"contextual_followup_no_knowledge","context_inherited":True,"intent":intent_name,"confidence":confidence,**ai_metadata}}
+
     if not intent_name:
         if _is_greeting(message):
             greeting={"pt-BR":"Olá! Sou Bitey. Como posso ajudá-lo?","en":"Hello! I'm Bitey. How can I help?"}.get(language,"Hola, soy Bitey. ¿Cómo puedo ayudarte?")
             return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":greeting,"workflow":None,"service":None,"service_id":None,"reasoning":{},"metadata":{"reason":"greeting",**ai_metadata}}
-        clarification={"pt-BR":"Claro. Posso ajudá-lo com suporte técnico, celulares, computadores, redes, câmeras ou IA para empresas. O que você precisa?","en":"Sure. I can help with technical support, phones, computers, networks, cameras, or business AI. What do you need?"}.get(language,"Claro. Puedo ayudarte con soporte técnico, celulares, computadoras, redes, cámaras o IA para empresas. ¿Qué necesitas?")
+        clarification={"pt-BR":"Claro. Posso ajudá-lo com suporte técnico, celulares, computadores, redes, câmeras ou IA para empresas. O que você precisa?","en":"Sure. I can help you with technical support, phones, computers, networks, cameras, or business AI. What do you need?"}.get(language,"Claro. Puedo ayudarte con soporte técnico, celulares, computadoras, redes, cámaras o IA para empresas. ¿Qué necesitas?")
         return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":clarification,"workflow":None,"service":None,"service_id":None,"reasoning":{},"metadata":{"reason":"intent_not_detected",**ai_metadata}}
     reasoning=resolve_business_reasoning(company_id,intent_name); service=resolve_service(company_id,intent_name,business_context=business_context); service_id=service.get("id") if service else None
     requires_quote=intent_name in QUOTE_INTENTS
