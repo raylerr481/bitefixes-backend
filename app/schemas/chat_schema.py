@@ -1,4 +1,4 @@
-"""Bitey Chat Schemas V21 - channel-neutral conversational identity."""
+"""Bitey Chat Schemas - unified cloud gateway contract."""
 
 from pydantic import BaseModel, Field
 
@@ -6,10 +6,10 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     phone: str | None = None
+    email: str | None = None
     company_id: int = 1
     customer_name: str | None = None
     last_name: str | None = None
-    email: str | None = None
     channel: str = "website"
     conversation_id: str | None = None
     language_preference: str = "auto"
