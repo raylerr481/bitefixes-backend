@@ -1,4 +1,4 @@
-"""BiteFixes Decision Engine V26 — governed orchestration and conversational guardrails."""
+"""BiteFixes Decision Engine V27 — governed orchestration and conversational guardrails."""
 from difflib import SequenceMatcher
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
@@ -71,15 +71,17 @@ def _external_consultation(message:str,language:Optional[str],intent:Dict[str,An
     if not trigger_plan.names:
         return {"ai_used":False,"reason":"no_trigger","triggers":[],"providers_requested":0}
     confidence=float(intent.get("confidence",0) or 0)
-    complexity=0.8 if len(message)>240 else 0.3
-    novelty=0.8 if not intent.get("intent") else 0.3
-    gap=0.8 if trigger_plan.reason.find("knowledge_gap") >= 0 else 0.2
+    complexity=min(1.0,max(0.0,len(message)/300))
+    novelty=0.8 if "FRESH_INFORMATION" in trigger_plan.names else (0.8 if not intent.get("intent") else 0.3)
+    gap=0.8 if "KNOWLEDGE_GAP" in trigger_plan.names else 0.2
     impact=0.7 if intent.get("intent") in {"ai_assistant","sales","quote"} else 0.2
     gate=evaluate_ai_consultation(confidence=confidence,complexity=complexity,novelty=novelty,knowledge_gap=gap,business_impact=impact,estimated_cost=0.0,trigger_names=trigger_plan.names)
-    if not gate.consult:return {"ai_used":False,"reason":gate.reason,"triggers":list(trigger_plan.names),"gate_value":gate.estimated_value}
-    candidates=consult_ai(message,language=language or "es",context={"intent":intent,"business_context":business_context or {},"triggers":list(trigger_plan.names)},max_providers=min(gate.max_providers,trigger_plan.max_providers))
+    if not gate.consult:return {"ai_used":False,"reason":gate.reason,"triggers":list(trigger_plan.names),"capabilities":list(trigger_plan.capabilities),"gate_value":gate.estimated_value}
+    max_providers=min(gate.max_providers,trigger_plan.max_providers)
+    context={"intent":intent,"business_context":business_context or {},"triggers":list(trigger_plan.names),"capabilities":list(trigger_plan.capabilities),"memory":memory or {}}
+    candidates=consult_ai(message,language=language or "es",context=context,max_providers=max_providers,capabilities=trigger_plan.capabilities)
     evaluation=evaluate_candidates(candidates,core_confidence=confidence) if evaluate_candidates else {"status":"not_evaluated"}
-    return {"ai_used":bool(candidates),"gate_reason":gate.reason,"gate_value":gate.estimated_value,"triggers":list(trigger_plan.names),"capabilities":list(trigger_plan.capabilities),"providers_requested":min(gate.max_providers,trigger_plan.max_providers),"candidates":candidates,"evaluation":evaluation,"learning_candidate":bool(evaluation.get("learning_candidate"))}
+    return {"ai_used":bool(candidates),"gate_reason":gate.reason,"gate_value":gate.estimated_value,"triggers":list(trigger_plan.names),"capabilities":list(trigger_plan.capabilities),"providers_requested":max_providers,"providers_used":[c.get("provider") for c in candidates],"candidates":candidates,"evaluation":evaluation,"learning_candidate":bool(evaluation.get("learning_candidate"))}
 
 def make_decision(company_id:int,customer:Dict,message:str,intent:Dict,knowledge=None,memory=None,language=None,channel="unknown",business_context:Optional[Dict[str,Any]]=None):
     intent=intent or {}
