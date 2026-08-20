@@ -1,5 +1,5 @@
 """
-BiteFixes - Bitey Intent Engine V8
+BiteFixes - Bitey Intent Engine V9
 Multilingual + Context Aware + Company Service Aware.
 
 Confidence is normalized to 0..1 because the AI consultation gate and
@@ -20,7 +20,7 @@ def normalize(text):
     text = str(text).lower().strip()
     text = unicodedata.normalize("NFD", text)
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    text = re.sub(r"[^a-z0-9\\s]", " ", text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
     return " ".join(text.split())
 
 
@@ -30,7 +30,7 @@ INTENT_RULES = {
         "automatizar empresa", "automatizar whatsapp", "inteligencia artificial",
     ],
     "cctv_installation": [
-        "camera", "cameras", "camera seguranca", "cameras seguranca",
+        "camera", "cameras", "camara", "camaras", "camera seguranca", "cameras seguranca",
         "cctv", "monitoramento", "instalar camera", "instalar cameras",
         "security camera", "camara seguridad", "camara de seguridad",
     ],
@@ -38,6 +38,7 @@ INTENT_RULES = {
         "no prende", "no enciende", "nao liga", "nao funciona",
         "pantalla negra", "tela preta", "reparar computador", "reparar computadora",
         "arreglar pc", "reparar pc", "arreglar computadora", "virus",
+        "computadora", "computadoras", "ordenador", "ordenadores", "pc", "notebook", "portatil", "laptop",
     ],
     "hardware_upgrade": [
         "ssd", "ram", "memoria", "upgrade", "lento", "melhorar", "mejorar",
@@ -54,6 +55,7 @@ INTENT_RULES = {
         "atendimento remoto", "ayuda remota",
     ],
     "mobile_repair": [
+        "celular", "celulares", "movil", "moviles", "telefono", "telefonos", "telefone", "telefones", "phone", "mobile", "mobiles",
         "reparar celular", "arreglar celular", "consertar celular",
         "reparar telefone", "consertar telefone", "mobile repair",
         "celular quebrado", "celular roto", "celular roro", "movil roto", "movil roro",
@@ -119,7 +121,7 @@ def fuzzy_token(token, candidates, threshold=0.82):
 
 def mobile_typo_signal(text):
     words = normalize(text).split()
-    phone_words = {"telefono", "celular", "movil", "telefone", "phone", "mobile"}
+    phone_words = {"telefono", "telefonos", "celular", "celulares", "movil", "moviles", "telefone", "telefones", "phone", "mobile"}
     screen_words = {"pantalla", "tela", "display", "screen", "apantalla"}
     broken_words = {"rota", "roto", "roro", "quebrada", "quebrado", "rompida", "rompido", "broken"}
 
@@ -149,7 +151,6 @@ def _normalize_confidence(raw_score, scores):
     total = float(sum(max(0, value) for value in scores.values()))
     if total <= 0:
         return 0.0
-    # Combine absolute evidence with separation from competing intents.
     dominance = top / total
     absolute = min(1.0, top / 80.0)
     return round(min(0.99, 0.55 * dominance + 0.45 * absolute), 4)
@@ -181,10 +182,8 @@ def detect_intent(message, company_id=None, context=None):
         if context:
             last = context.get("last_intent")
             if last:
-                # A short follow-up such as "un celular" or "tiene rota la pantalla"
-                # should inherit the active intent instead of resetting the conversation.
                 if last == "mobile_repair" and any(
-                    token in text.split() for token in {"celular", "movil", "telefono", "telefone", "pantalla", "apantalla", "tela", "display", "rota", "roto", "roro", "quebrada", "quebrado"}
+                    token in text.split() for token in {"celular", "celulares", "movil", "moviles", "telefono", "telefonos", "telefone", "telefones", "pantalla", "apantalla", "tela", "display", "rota", "roto", "roro", "quebrada", "quebrado"}
                 ):
                     scores[last] = scores.get(last, 0) + 45
                 elif last in scores:
