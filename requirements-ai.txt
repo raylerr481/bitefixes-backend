@@ -1,0 +1,8 @@
+# Optional AI/RAG stack. Install only when the corresponding feature is enabled.
+langchain
+langchain-community
+llama-index
+qdrant-client
+faiss-cpu
+chromadb
+huggingface_hub
