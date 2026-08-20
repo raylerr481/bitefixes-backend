@@ -1,36 +1,17 @@
-"""Runtime wiring for Bitey's governed AI providers."""
-import os
+"""Single runtime entrypoint for Bitey's governed AI stack.
 
-from .groq_provider import GroqProvider
-from .openrouter_provider import OpenRouterProvider
+The default runtime uses the unified provider registry from ``providers.py``.
+Bitey Core remains authoritative; external models are advisory specialists.
+"""
 from .orchestrator import AIOrchestrator
-from .registry import AIProviderRegistry, ProviderSpec
 
 
 def build_ai_orchestrator() -> AIOrchestrator:
-    registry = AIProviderRegistry()
+    """Build the canonical Bitey provider router.
 
-    groq = GroqProvider()
-    registry.register(
-        ProviderSpec(
-            name="groq",
-            enabled=groq.enabled and os.getenv("GROQ_ENABLED", "true").lower() != "false",
-            priority=int(os.getenv("GROQ_PRIORITY", "5")),
-            cost_class="free",
-            capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-            provider=groq,
-        )
-    )
+    Providers are enabled only when configured. The registry itself remains
+    usable without cloud credentials, so local/core functionality is preserved.
+    """
+    from .providers import build_provider_registry
 
-    openrouter = OpenRouterProvider()
-    registry.register(
-        ProviderSpec(
-            name="openrouter-free",
-            enabled=openrouter.enabled,
-            priority=int(os.getenv("OPENROUTER_PRIORITY", "10")),
-            cost_class="free",
-            capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-            provider=openrouter,
-        )
-    )
-    return AIOrchestrator(registry)
+    return AIOrchestrator(build_provider_registry())
