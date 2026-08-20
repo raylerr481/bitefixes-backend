@@ -8,6 +8,11 @@ from app.ai.learning_candidates import record_candidate
 from app.ai.web_intelligence import needs_web, search_web
 from app.ai.web_learning import record_web_candidate
 
+try:
+    from app.cognitive.cognitive_engine import cognitive_observe
+except ImportError:
+    cognitive_observe = None
+
 
 PROCEDURAL_MARKERS = {
     "como", "cómo", "how", "trocar", "troca", "cambiar", "cambiarla", "cambiarlo",
@@ -42,6 +47,21 @@ def consult_if_valuable(
     knowledge_found = not bool(context.get("knowledge_gap", 0))
     procedural = _is_procedural_request(message)
 
+    cognitive = {"status": "unavailable"}
+    if cognitive_observe:
+        try:
+            cognitive = cognitive_observe(
+                customer_id=int(context.get("customer_id") or 0),
+                conversation_id=str(conversation_id or "unknown"),
+                message=message,
+                intent=intent_name,
+                service_id=context.get("last_service") or context.get("service_id"),
+                confidence=confidence,
+            )
+        except Exception as error:
+            print("[COGNITIVE WARNING]", error)
+            cognitive = {"status": "error", "error": str(error)}
+
     web = {"used": False, "grounding_status": "not_needed", "results": [], "queries": []}
     if needs_web(message, intent=intent_name, knowledge_found=knowledge_found):
         web = search_web(message, intent=intent_name, company_id=company_id)
@@ -60,11 +80,11 @@ def consult_if_valuable(
     )
 
     if not gate.consult and web.get("used"):
-        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "process": ["core_analysis", "web_grounding"]}
+        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation", "web_grounding"]}
     if not gate.consult:
-        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "web_grounding": web, "process": ["core_analysis"]}
+        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation"]}
 
-    enriched_context = {**context, "web_grounding": web}
+    enriched_context = {**context, "web_grounding": web, "cognitive_state": cognitive}
     suggestions = consult(message, language=language, context=enriched_context, max_providers=gate.max_providers)
     evaluation = evaluate_suggestions(suggestions, core_confidence=confidence)
 
@@ -79,5 +99,6 @@ def consult_if_valuable(
         "suggestions": suggestions,
         "evaluation": evaluation,
         "web_grounding": web,
-        "process": ["core_analysis"] + (["web_grounding"] if web.get("used") else []) + ["external_ai_consultation", "comparative_evaluation", "learning_candidate"],
+        "cognitive": cognitive,
+        "process": ["core_analysis", "cognitive_observation"] + (["web_grounding"] if web.get("used") else []) + ["external_ai_consultation", "comparative_evaluation", "learning_candidate"],
     }
