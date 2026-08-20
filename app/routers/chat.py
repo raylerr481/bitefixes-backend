@@ -1,9 +1,9 @@
-"""Bitey Chat Router V21 - one conversational contract for every channel."""
+"""Bitey Chat Router - channel-neutral API contract."""
 
 from fastapi import APIRouter
 
 from app.schemas.chat_schema import ChatRequest
-from app.core.bitey import process_message
+from app.services.bitey_gateway import handle_message
 
 router = APIRouter()
 
@@ -11,18 +11,18 @@ router = APIRouter()
 @router.post("/chat")
 def chat(request: ChatRequest):
     try:
-        result = process_message(
+        return handle_message(
             company_id=request.company_id,
             message=request.message,
             phone=request.phone or "",
+            email=request.email or "",
             customer_name=request.customer_name or "Customer",
+            last_name=request.last_name or "",
             channel=request.channel,
             conversation_id=request.conversation_id,
             language_preference=request.language_preference,
+            preferred_contact_channel=request.preferred_contact_channel,
         )
-        if isinstance(result, dict) and request.preferred_contact_channel:
-            result["preferred_contact_channel"] = request.preferred_contact_channel
-        return result
     except Exception as error:
         import traceback
         print("[CHAT ERROR]", error)
