@@ -1,7 +1,7 @@
 """Groq provider for Bitey.
 
-Groq is optional. When GROQ_API_KEY is absent the provider stays disabled and
-Bitey's deterministic core continues to work normally.
+Supports the canonical Bitey LLM environment variables as well as the legacy
+GROQ_* names. This keeps provider discovery and the LLM gateway aligned.
 """
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ class GroqProvider:
     name = "groq"
 
     def __init__(self, *, model: str | None = None, timeout: float = 20.0) -> None:
-        self.api_key = os.getenv("GROQ_API_KEY")
-        self.model = model or os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+        self.api_key = os.getenv("BITEY_LLM_API_KEY") or os.getenv("GROQ_API_KEY")
+        self.model = model or os.getenv("BITEY_LLM_MODEL") or os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
         self.timeout = timeout
-        self.base_url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+        self.base_url = os.getenv("BITEY_LLM_BASE_URL") or os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
     @property
     def enabled(self) -> bool:
@@ -26,14 +26,16 @@ class GroqProvider:
 
     async def generate(self, prompt: str, *, context: dict[str, Any] | None = None) -> str:
         if not self.api_key:
-            raise RuntimeError("GROQ_API_KEY is not configured")
+            raise RuntimeError("BITEY_LLM_API_KEY/GROQ_API_KEY is not configured")
 
         system = (
             "You are Bitey, an assistant for business service conversations. "
-            "Answer in the user's detected language. Be concise. Ask only for "
-            "information that is necessary to understand the need, register the "
-            "customer, or complete the current workflow. Never invent customer "
-            "data, prices, tickets, permissions, or business actions."
+            "Understand meaning rather than exact spelling, including typos, "
+            "colloquial language and short follow-up questions. Answer in the "
+            "user's detected language. Preserve the supplied conversation context. "
+            "Be concise but useful. Ask only for information necessary to complete "
+            "the current workflow. Never invent customer data, prices, tickets, "
+            "permissions, locations, services, or completed business actions."
         )
         if context:
             system += "\nContext supplied by Bitey Core:\n" + str(context)
