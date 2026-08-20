@@ -1,6 +1,10 @@
 """
-BiteFixes - Bitey Intent Engine V7
-Multilingual + Context Aware + Company Service Aware
+BiteFixes - Bitey Intent Engine V8
+Multilingual + Context Aware + Company Service Aware.
+
+Confidence is normalized to 0..1 because the AI consultation gate and
+configuration use that scale. The raw matcher score remains available as
+raw_score for diagnostics.
 """
 
 import re
@@ -16,26 +20,28 @@ def normalize(text):
     text = str(text).lower().strip()
     text = unicodedata.normalize("NFD", text)
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"[^a-z0-9\\s]", " ", text)
     return " ".join(text.split())
 
 
 INTENT_RULES = {
     "ai_assistant": [
         "asistente ia", "assistente ia", "chatbot", "bot whatsapp",
-        "automatizar empresa", "automatizar whatsapp",
+        "automatizar empresa", "automatizar whatsapp", "inteligencia artificial",
     ],
     "cctv_installation": [
         "camera", "cameras", "camera seguranca", "cameras seguranca",
         "cctv", "monitoramento", "instalar camera", "instalar cameras",
-        "security camera",
+        "security camera", "camara seguridad", "camara de seguridad",
     ],
     "computer_repair": [
         "no prende", "no enciende", "nao liga", "nao funciona",
-        "pantalla negra", "tela preta", "reparar", "arreglar", "virus",
+        "pantalla negra", "tela preta", "reparar computador", "reparar computadora",
+        "arreglar pc", "reparar pc", "arreglar computadora", "virus",
     ],
     "hardware_upgrade": [
         "ssd", "ram", "memoria", "upgrade", "lento", "melhorar", "mejorar",
+        "actualizar memoria", "aumentar memoria", "mas ram",
     ],
     "network_configuration": [
         "configurar wifi", "configurar minha rede", "configurar rede",
@@ -50,10 +56,11 @@ INTENT_RULES = {
     "mobile_repair": [
         "reparar celular", "arreglar celular", "consertar celular",
         "reparar telefone", "consertar telefone", "mobile repair",
-        "celular quebrado", "telefono roto", "pantalla rota",
-        "pantalla del telefono", "pantalla de telefono", "pantalla de celular",
-        "tela quebrada", "tela do celular", "tela do telefone",
-        "display quebrado", "display roto", "display do celular",
+        "celular quebrado", "celular roto", "celular roro", "movil roto", "movil roro",
+        "telefono roto", "telefono roro", "pantalla rota", "pantalla del telefono",
+        "pantalla de telefono", "pantalla de celular", "pantalla rota celular",
+        "tela quebrada", "tela do celular", "tela do telefone", "display quebrado",
+        "display roto", "display do celular", "vidro quebrado", "vidrio roto",
     ],
     "windows_installation": [
         "instalar windows", "instalacion windows", "instalacao windows",
@@ -104,7 +111,6 @@ def phrase_score(phrase, text):
 
 
 def fuzzy_token(token, candidates, threshold=0.82):
-    """Match common typing errors without making intent detection fully fuzzy."""
     token = normalize(token)
     if len(token) < 4:
         return False
@@ -113,15 +119,14 @@ def fuzzy_token(token, candidates, threshold=0.82):
 
 def mobile_typo_signal(text):
     words = normalize(text).split()
-    phone_words = {"telefono", "celular", "telefone", "phone", "mobile"}
-    screen_words = {"pantalla", "tela", "display", "screen"}
-    broken_words = {"rota", "roto", "quebrada", "quebrado", "broken", "quebrada", "quebrado"}
+    phone_words = {"telefono", "celular", "movil", "telefone", "phone", "mobile"}
+    screen_words = {"pantalla", "tela", "display", "screen", "apantalla"}
+    broken_words = {"rota", "roto", "roro", "quebrada", "quebrado", "rompida", "rompido", "broken"}
 
     has_phone = any(word in phone_words or fuzzy_token(word, phone_words) for word in words)
     has_screen = any(word in screen_words or fuzzy_token(word, screen_words) for word in words)
     has_broken = any(word in broken_words or fuzzy_token(word, broken_words) for word in words)
-
-    return has_phone and has_screen and has_broken
+    return (has_phone and has_broken) or (has_phone and has_screen)
 
 
 def score_company_services(text, company_id, scores):
@@ -135,6 +140,19 @@ def score_company_services(text, company_id, scores):
         score += phrase_score(service_intent.replace("_", " "), text)
         if score:
             scores[service_intent] = scores.get(service_intent, 0) + score
+
+
+def _normalize_confidence(raw_score, scores):
+    if not scores:
+        return 0.0
+    top = float(raw_score or 0)
+    total = float(sum(max(0, value) for value in scores.values()))
+    if total <= 0:
+        return 0.0
+    # Combine absolute evidence with separation from competing intents.
+    dominance = top / total
+    absolute = min(1.0, top / 80.0)
+    return round(min(0.99, 0.55 * dominance + 0.45 * absolute), 4)
 
 
 def detect_intent(message, company_id=None, context=None):
@@ -162,16 +180,24 @@ def detect_intent(message, company_id=None, context=None):
 
         if context:
             last = context.get("last_intent")
-            if last in scores:
-                scores[last] += 5
+            if last:
+                # A short follow-up such as "un celular" or "tiene rota la pantalla"
+                # should inherit the active intent instead of resetting the conversation.
+                if last == "mobile_repair" and any(
+                    token in text.split() for token in {"celular", "movil", "telefono", "telefone", "pantalla", "apantalla", "tela", "display", "rota", "roto", "roro", "quebrada", "quebrado"}
+                ):
+                    scores[last] = scores.get(last, 0) + 45
+                elif last in scores:
+                    scores[last] += 8
 
         if not scores:
-            return {"intent": None, "confidence": 0}
+            return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}}
 
         intent = max(scores, key=scores.get)
-        confidence = scores[intent]
-        print("[INTENT SCORES]", scores)
-        return {"intent": intent, "confidence": confidence, "scores": scores}
+        raw_score = scores[intent]
+        confidence = _normalize_confidence(raw_score, scores)
+        print("[INTENT SCORES]", scores, "confidence=", confidence)
+        return {"intent": intent, "confidence": confidence, "raw_score": raw_score, "scores": scores}
     except Exception as error:
         print("[INTENT ERROR]", error)
-        return {"intent": None, "confidence": 0}
+        return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}}
