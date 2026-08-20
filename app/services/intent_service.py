@@ -1,10 +1,8 @@
-"""
-BiteFixes - Bitey Intent Engine V9
-Multilingual + Context Aware + Company Service Aware.
+"""BiteFixes - Bitey Intent Engine V10.
+Multilingual + Context Aware + Company Service Aware + Concept Aware.
 
-Confidence is normalized to 0..1 because the AI consultation gate and
-configuration use that scale. The raw matcher score remains available as
-raw_score for diagnostics.
+The intent matcher remains deterministic, while the Concept Engine adds a
+semantic layer that can recognize variants and propose safe learning events.
 """
 
 import re
@@ -12,6 +10,7 @@ import unicodedata
 from difflib import SequenceMatcher
 
 from app.database.supabase import database
+from app.services.concept_engine import understand as understand_concept, propose_learning, record_learning
 
 
 def normalize(text):
@@ -124,7 +123,6 @@ def mobile_typo_signal(text):
     phone_words = {"telefono", "telefonos", "celular", "celulares", "movil", "moviles", "telefone", "telefones", "phone", "mobile"}
     screen_words = {"pantalla", "tela", "display", "screen", "apantalla"}
     broken_words = {"rota", "roto", "roro", "quebrada", "quebrado", "rompida", "rompido", "broken"}
-
     has_phone = any(word in phone_words or fuzzy_token(word, phone_words) for word in words)
     has_screen = any(word in screen_words or fuzzy_token(word, screen_words) for word in words)
     has_broken = any(word in broken_words or fuzzy_token(word, broken_words) for word in words)
@@ -160,6 +158,7 @@ def detect_intent(message, company_id=None, context=None):
     try:
         text = normalize(message)
         scores = {}
+        concept = understand_concept(message, context=context)
 
         for item in get_synonyms():
             keyword = item.get("keyword", "")
@@ -174,6 +173,11 @@ def detect_intent(message, company_id=None, context=None):
                 if match_score:
                     scores[intent] = scores.get(intent, 0) + match_score
 
+        # Conceptual signals supplement, rather than replace, existing rules.
+        primary_concept = concept.get("concept") or {}
+        for signal in primary_concept.get("diagnostic_signals", []):
+            scores[signal] = scores.get(signal, 0) + max(12, int(float(primary_concept.get("confidence", 0.7)) * 25))
+
         if mobile_typo_signal(text):
             scores["mobile_repair"] = scores.get("mobile_repair", 0) + 30
 
@@ -182,21 +186,25 @@ def detect_intent(message, company_id=None, context=None):
         if context:
             last = context.get("last_intent")
             if last:
-                if last == "mobile_repair" and any(
-                    token in text.split() for token in {"celular", "celulares", "movil", "moviles", "telefono", "telefonos", "telefone", "telefones", "pantalla", "apantalla", "tela", "display", "rota", "roto", "roro", "quebrada", "quebrado"}
-                ):
+                if last == "mobile_repair" and any(token in text.split() for token in {"celular", "celulares", "movil", "moviles", "telefono", "telefonos", "telefone", "telefones", "pantalla", "apantalla", "tela", "display", "rota", "roto", "roro", "quebrada", "quebrado"}):
                     scores[last] = scores.get(last, 0) + 45
                 elif last in scores:
                     scores[last] += 8
 
         if not scores:
-            return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}}
+            # Preserve a validated concept even when it does not map cleanly to
+            # a service yet; this is the learning/diagnostic path, not a fake intent.
+            learning = propose_learning(message, intent=None, language=(context or {}).get("language", "auto"))
+            record_learning(learning, company_id=(context or {}).get("company_id"), conversation_id=(context or {}).get("conversation_id"))
+            return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}, "concept": concept, "learning": learning}
 
         intent = max(scores, key=scores.get)
         raw_score = scores[intent]
         confidence = _normalize_confidence(raw_score, scores)
-        print("[INTENT SCORES]", scores, "confidence=", confidence)
-        return {"intent": intent, "confidence": confidence, "raw_score": raw_score, "scores": scores}
+        learning = propose_learning(message, intent=intent, language=(context or {}).get("language", "auto"))
+        record_learning(learning, company_id=(context or {}).get("company_id"), conversation_id=(context or {}).get("conversation_id"))
+        print("[INTENT SCORES]", scores, "confidence=", confidence, "concept=", primary_concept.get("concept"))
+        return {"intent": intent, "confidence": confidence, "raw_score": raw_score, "scores": scores, "concept": concept, "learning": learning}
     except Exception as error:
         print("[INTENT ERROR]", error)
-        return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}}
+        return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}, "concept": {"known": False, "knowledge_gap": True}, "learning": {"status": "error", "validated": False}}
