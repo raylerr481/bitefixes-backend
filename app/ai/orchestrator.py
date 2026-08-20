@@ -33,11 +33,33 @@ class AIOrchestrator:
                 result = await spec.provider.generate(prompt, context=context or {})
                 if result:
                     return {"status": "ok", "provider": spec.name, "answer": result}
-                errors.append(f"{spec.name}:empty_response")
+                error_code = "empty_response"
+                errors.append(f"{spec.name}:{error_code}")
+                self._record_provider_incident(spec, error_code, capability)
             except Exception as exc:
-                errors.append(f"{spec.name}:{type(exc).__name__}")
+                error_code = type(exc).__name__
+                errors.append(f"{spec.name}:{error_code}")
+                self._record_provider_incident(spec, error_code, capability)
 
         return {"status": "provider_error", "provider": None, "answer": None, "errors": errors}
+
+    @staticmethod
+    def _record_provider_incident(spec: ProviderSpec, error_code: str, capability: str) -> None:
+        """Best-effort incident capture; observability must never break fallback."""
+        try:
+            from app.services.incident_service import record_incident
+            record_incident(
+                message=f"AI provider failure: {error_code}",
+                severity="warning",
+                component="ai_orchestrator",
+                error_code=error_code,
+                error_type="provider_failure",
+                provider=spec.name,
+                operation="generate",
+                context={"capability": capability},
+            )
+        except Exception:
+            pass
 
 
 def build_default_orchestrator() -> AIOrchestrator:
