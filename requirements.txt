@@ -5,10 +5,3 @@ supabase
 httpx
 pydantic
 python-multipart
-# Optional/open AI integrations used by Bitey AI providers.
-langchain
-langchain-community
-llama-index
-qdrant-client
-faiss-cpu
-chromadb
