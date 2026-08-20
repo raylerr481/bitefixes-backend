@@ -1,7 +1,7 @@
 """Bounded multi-provider consultation.
 
-Bitey asks multiple enabled advisory providers in parallel when the gate
-justifies consultation. Bitey Core remains the final evaluator and authority.
+Bitey asks enabled advisory providers in parallel when the consultation gate
+justifies it. Bitey Core remains the final evaluator and business authority.
 """
 from __future__ import annotations
 
@@ -13,37 +13,28 @@ from app.ai.runtime import build_ai_orchestrator
 
 async def _ask_provider(spec: Any, message: str, language: str, context: Dict[str, Any]) -> Dict[str, Any] | None:
     try:
-        answer = await spec.provider.generate(
-            message,
-            context={**context, "language": language},
-        )
+        print(f"[AI COUNCIL] provider={spec.name} status=requested")
+        answer = await spec.provider.generate(message, context={**context, "language": language})
         if not answer:
+            print(f"[AI COUNCIL] provider={spec.name} status=empty")
             return None
-        return {
-            "provider": spec.name,
-            "answer": str(answer).strip(),
-            "cost_class": spec.cost_class,
-        }
+        print(f"[AI COUNCIL] provider={spec.name} status=success")
+        return {"provider": spec.name, "answer": str(answer).strip(), "cost_class": spec.cost_class}
     except Exception as exc:
-        print("[AI COUNCIL WARNING]", spec.name, type(exc).__name__)
+        print(f"[AI COUNCIL] provider={spec.name} status=error error={type(exc).__name__}")
         return None
 
 
-def consult(
-    message: str,
-    *,
-    language: str,
-    context: Dict[str, Any],
-    max_providers: int = 2,
-) -> List[Dict[str, Any]]:
+def consult(message: str, *, language: str, context: Dict[str, Any], max_providers: int = 2) -> List[Dict[str, Any]]:
     """Collect bounded independent advisory answers without blocking Core."""
     if max_providers <= 0:
         return []
-
     registry = build_ai_orchestrator().registry
     providers = registry.available("general_reasoning")[:max_providers]
     if not providers:
+        print("[AI COUNCIL] status=no_enabled_providers")
         return []
+    print("[AI COUNCIL] providers=" + ",".join(spec.name for spec in providers))
 
     async def run() -> List[Dict[str, Any]]:
         results = await asyncio.gather(
@@ -55,12 +46,9 @@ def consult(
     try:
         return asyncio.run(run())
     except RuntimeError:
-        # If called from an already-running event loop, execute the provider
-        # coroutines in a short-lived worker thread rather than failing Core.
         import concurrent.futures
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(lambda: asyncio.run(run())).result()
     except Exception as exc:
-        print("[AI COUNCIL WARNING]", type(exc).__name__)
+        print("[AI COUNCIL] status=error error=" + type(exc).__name__)
         return []
