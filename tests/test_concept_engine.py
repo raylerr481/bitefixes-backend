@@ -19,7 +19,7 @@ def test_understands_typo_and_colloquial_bootloop():
 
 
 def test_unknown_is_candidate_not_fake_knowledge():
-    result = propose_learning("mi celular hace una cosa totalmente nueva", intent=None, language="es")
+    result = propose_learning("o aparelho apresenta zentraflexa inesperada", intent=None, language="es")
     assert result["status"] == "candidate"
     assert result["requires_validation"] is True
     assert result["validated"] is False
