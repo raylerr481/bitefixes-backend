@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai, webhooks
+from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile
 from app.ai.runtime import build_ai_orchestrator
 
 
@@ -46,6 +46,7 @@ app.include_router(tickets.router)
 app.include_router(business_context.router)
 app.include_router(ai.router)
 app.include_router(webhooks.router)
+app.include_router(company_profile.router)
 
 
 @app.get("/")

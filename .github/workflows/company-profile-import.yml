@@ -1,0 +1,23 @@
+name: company-profile-import
+
+on:
+  pull_request:
+    paths:
+      - "app/services/company_profile_import.py"
+      - "app/routers/company_profile.py"
+      - "app/ai/company_intelligence.py"
+      - "tests/test_company_profile_import.py"
+      - "requirements.txt"
+      - ".github/workflows/company-profile-import.yml"
+
+jobs:
+  test-company-profile-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt pytest pytest-asyncio
+      - run: python -m pytest -q tests/test_company_profile_import.py
