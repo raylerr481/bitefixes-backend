@@ -32,14 +32,16 @@ Answer naturally in the user's language and remain inside the company's domain.
 
 def _search_context(message: str, language: str, context: Dict[str, Any]) -> Dict[str, Any]:
     capabilities = set(context.get("capabilities") or ())
-    if "web_search" not in capabilities: return {}
+    if "web_search" not in capabilities:
+        return {}
     try:
         from app.services.web_search_service import search_web
         query = str(context.get("search_query") or "").strip()
         if not query:
             postal = re.search(r"\b\d{5}-?\d{3}\b", message)
             query = f"CEP {postal.group(0)} Brasil" if postal else message.strip()
-        if not query: return {}
+        if not query:
+            return {}
         result = search_web(query=query, language=language or "en", limit=5)
         return {"web_search": {"requested": True, "query": query, "provider": result.get("provider"), "fallback_used": bool(result.get("fallback_used")), "verified": bool(result.get("verified")), "results": result.get("results") or []}}
     except Exception as exc:
@@ -55,8 +57,10 @@ def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
             value = item
             if isinstance(item, dict):
                 value = item.get("name") or item.get("title") or item.get("slug") or item.get("service") or item.get("capability") or item.get("domain")
-                if isinstance(value, dict): value = value.get("name") or value.get("title") or value.get("slug")
-            if value: result.append(str(value))
+                if isinstance(value, dict):
+                    value = value.get("name") or value.get("title") or value.get("slug")
+            if value:
+                result.append(str(value))
         return result
     return {
         "company": context.get("company") or {},
@@ -79,7 +83,8 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
         prompt = f"{RECTOR_DIRECTIVES}\n\nBUSINESS ENVIRONMENT INDEX:\n{business_index}\n\nCONTEXTUAL STATE:\n{state}\n\nGOVERNED TOOL RESULT:\n{tool_context}\n\nUSER MESSAGE:\n{message.strip()}"
         print(f"[AI COUNCIL] provider={spec.name} status=requested capabilities={','.join(spec.capabilities)}")
         answer = await spec.provider.generate(prompt, context=enriched_context)
-        if not answer: return None
+        if not answer:
+            return None
         return {"provider": spec.name, "answer": str(answer).strip(), "cost_class": spec.cost_class, "capabilities": list(spec.capabilities), "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))}, "evidence": tool_context.get("web_search", {}).get("results", []), "search_query": tool_context.get("web_search", {}).get("query"), "search_verified": bool(tool_context.get("web_search", {}).get("verified")), "contextual_state": state, "business_context_index": business_index}
     except Exception as exc:
         print(f"[AI COUNCIL] provider={spec.name} status=error error={type(exc).__name__}")
@@ -87,23 +92,40 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
 
 
 def consult(message: str, *, language: str, context: Dict[str, Any], max_providers: int = 2, capabilities: Sequence[str] | None = None) -> List[Dict[str, Any]]:
-    if max_providers <= 0: return []
+    """Consult external rector AIs with resilient priority failover.
+
+    max_providers limits successful responses, not attempted providers. If a
+    high-priority provider is unavailable (HTTP 4xx/5xx, quota, transient
+    outage, etc.), the council continues to the next eligible provider. Bitey
+    never takes over reasoning merely because one provider failed.
+    """
+    if max_providers <= 0:
+        return []
     registry = build_ai_orchestrator().registry
     requested = tuple(dict.fromkeys(capabilities or ("general_reasoning",)))
     providers, seen = [], set()
     for capability in requested:
         for spec in registry.available(capability):
-            if spec.name not in seen: providers.append(spec); seen.add(spec.name)
-    if not providers: providers = registry.available("general_reasoning")
-    providers = providers[:max_providers]
-    if not providers: return []
+            if spec.name not in seen:
+                providers.append(spec)
+                seen.add(spec.name)
+    if not providers:
+        providers = registry.available("general_reasoning")
+    if not providers:
+        return []
     print("[AI COUNCIL] providers=" + ",".join(spec.name for spec in providers))
 
     async def run() -> List[Dict[str, Any]]:
-        return [result for result in await asyncio.gather(*[_ask_provider(spec, message, language, context) for spec in providers]) if result]
-    try: return asyncio.run(run())
+        results = await asyncio.gather(*[_ask_provider(spec, message, language, context) for spec in providers])
+        successful = [result for result in results if result]
+        return successful[:max_providers]
+
+    try:
+        return asyncio.run(run())
     except RuntimeError:
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool: return pool.submit(lambda: asyncio.run(run())).result()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: asyncio.run(run())).result()
     except Exception as exc:
-        print("[AI COUNCIL] status=error error=" + type(exc).__name__); return []
+        print("[AI COUNCIL] status=error error=" + type(exc).__name__)
+        return []
