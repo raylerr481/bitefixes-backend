@@ -1,4 +1,4 @@
-"""Bitey Workflow Router V23.
+"""Bitey Workflow Router V24.
 
 Supabase-first workflow resolution with a broad legacy fallback catalog.
 """
@@ -73,6 +73,9 @@ def execute_workflow(intent, message, company_id=None, customer_id=None, service
             intent=intent,
             customer=customer,
             language=language,
+            knowledge=knowledge,
+            business_context=business_context,
+            **kwargs,
         )
         if isinstance(result, dict):
             result.setdefault("workflow_configured", bool(configured))
