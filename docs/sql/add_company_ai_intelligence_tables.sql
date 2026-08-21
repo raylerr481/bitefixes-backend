@@ -47,3 +47,7 @@ create index if not exists idx_ai_learning_events_company on public.ai_learning_
 alter table public.company_ai_profiles enable row level security;
 alter table public.company_ai_knowledge enable row level security;
 alter table public.ai_learning_events enable row level security;
+
+create policy company_ai_profiles_no_direct_client_access on public.company_ai_profiles for all to anon, authenticated using (false) with check (false);
+create policy company_ai_knowledge_no_direct_client_access on public.company_ai_knowledge for all to anon, authenticated using (false) with check (false);
+create policy ai_learning_events_no_direct_client_access on public.ai_learning_events for all to anon, authenticated using (false) with check (false);
