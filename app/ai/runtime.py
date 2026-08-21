@@ -1,6 +1,7 @@
 """Runtime wiring for Bitey's governed cognitive council."""
 import os
 
+from .cloudflare_provider import CloudflareAIProvider
 from .groq_provider import GroqProvider
 from .openrouter_provider import OpenRouterProvider, QWEN_FREE_MODEL, DEEPSEEK_FREE_MODEL
 from .orchestrator import AIOrchestrator
@@ -38,6 +39,16 @@ def build_ai_orchestrator() -> AIOrchestrator:
         cost_class="free",
         capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
         provider=deepseek,
+    ))
+
+    cloudflare = CloudflareAIProvider()
+    registry.register(ProviderSpec(
+        name="cloudflare-free",
+        enabled=cloudflare.enabled,
+        priority=int(os.getenv("CLOUDFLARE_PRIORITY", "20")),
+        cost_class="free",
+        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
+        provider=cloudflare,
     ))
 
     return AIOrchestrator(registry)
