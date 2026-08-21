@@ -11,6 +11,7 @@ from app.config import settings
 from app.database.supabase import supabase_manager
 from app.routers import business_context, chat, customers, tickets, ai, webhooks
 from app.ai.runtime import build_ai_orchestrator
+from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 
 
 @asynccontextmanager
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     orchestrator = build_ai_orchestrator()
     available = [spec.name for spec in orchestrator.registry.available("general_reasoning")]
     print("AI Providers : " + (", ".join(available) if available else "NONE"))
+    print(f"AI Free-Only : {'ENABLED' if FREE_ONLY else 'DISABLED'}")
     print("Web Intelligence : ENABLED")
     print("Bitey Gateway : ENABLED")
     yield
@@ -50,7 +52,7 @@ app.include_router(webhooks.router)
 
 @app.get("/")
 def root():
-    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed AI providers"}
+    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers"}
 
 
 @app.get("/health")
@@ -86,15 +88,16 @@ def ai_status():
     orchestrator = build_ai_orchestrator()
     providers = []
     for spec in orchestrator.registry._providers.values():
-        providers.append({"name": spec.name, "enabled": bool(spec.enabled), "cost_class": spec.cost_class, "capabilities": list(spec.capabilities)})
+        providers.append({"name": spec.name, "enabled": bool(spec.enabled and spec.provider), "cost_class": spec.cost_class, "eligible": bool(spec.enabled and spec.provider and spec.cost_class == "free"), "capabilities": list(spec.capabilities)})
     return {
         "engine": "Bitey", "status": "ready", "gateway": "ready",
         "supabase": bool(supabase_manager.check_connection()),
         "web_intelligence": {"enabled": True, "service": "bitey-search-core"},
-        "external_ai": {"providers": providers, "available_general_reasoning": [p["name"] for p in providers if p["enabled"] and "general_reasoning" in p["capabilities"]]},
+        "external_ai": {"providers": providers, "available_general_reasoning": [p["name"] for p in providers if p["eligible"] and "general_reasoning" in p["capabilities"]]},
         "policy": {
+            "free_only": FREE_ONLY,
             "consult_min_confidence": float(os.getenv("AI_CONSULT_MIN_CONFIDENCE", "0.78")),
-            "max_estimated_cost": float(os.getenv("AI_CONSULT_MAX_ESTIMATED_COST", "0.01")),
+            "max_estimated_cost": max_estimated_cost(),
             "max_providers": int(os.getenv("AI_COUNCIL_MAX_PROVIDERS", "2")),
         },
     }
