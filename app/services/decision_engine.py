@@ -1,4 +1,4 @@
-"""BiteFixes Decision Engine V27 — governed orchestration and conversational guardrails."""
+"""BiteFixes Decision Engine V28 — governed orchestration and diagnostic guardrails."""
 from difflib import SequenceMatcher
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
@@ -120,11 +120,12 @@ def make_decision(company_id:int,customer:Dict,message:str,intent:Dict,knowledge
         return {"action":"sales","create_ticket":True,"requires_quote":requires_quote,"ticket_type":"sales","response":semantic_response or generate_sales_response(intent_name,customer.get("full_name","Cliente"),memory),"service":service,"service_id":service_id,"workflow":None,"reasoning":reasoning,"metadata":metadata}
     if intent_name in SUPPORT_INTENTS:
         if intent_name=="mobile_repair" and _is_mobile_category(message):
-            response={"pt-BR":"Claro. Posso ajudar com celulares. Diga o que está acontecendo com o aparelho e, se puder, informe marca, modelo e desde quando ocorre o problema.","en":"Sure. I can help with mobile phones. Tell me what is happening and, if possible, include the brand, model and when it started.","es":"Claro. Puedo ayudarte con celulares. Dime qué le está pasando al equipo y, si puedes, indícame la marca, el modelo y desde cuándo ocurre."}.get(language,"Claro. Puedo ayudarte con celulares. Dime qué le está pasando al equipo.")
+            response={"pt-BR":"Claro. Posso ajudar com celulares. Diga o que está acontecendo com o aparelho e, se puder, informe marca, modelo e desde quando ocorre o problema.","en":"Sure. I can help with mobile phones. Tell me what is happening and, if possible, include the brand, model and when it started.","es":"Claro. Puedo ayudarte con celulares. Dime qué le está pasando al equipo y, si puedes, indícame la marca, modelo y desde cuándo ocurre."}.get(language,"Claro. Puedo ayudarte con celulares. Dime qué le está pasando al equipo.")
             return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":response,"workflow":intent_name,"workflow_result":{"success":False,"reason":"diagnostic_details_required"},"ticket":None,"service":service,"service_id":service_id,"reasoning":reasoning,"metadata":metadata}
         workflow_result=execute_workflow(intent=intent_name,company_id=company_id,customer_id=customer.get("id"),service_id=service_id,message=message,knowledge=knowledge,language=language,business_context=business_context,intent_data=intent)
-        ok=bool(workflow_result.get("success")); response=semantic_response or workflow_result.get("response") or "Voy a ayudarte con el diagnóstico."
-        return {"action":"workflow","create_ticket":ok,"requires_quote":requires_quote if ok else False,"ticket_type":"technical_support" if ok else None,"response":response,"workflow":intent_name,"workflow_result":workflow_result,"ticket":workflow_result.get("ticket"),"service":service,"service_id":service_id,"reasoning":reasoning,"metadata":metadata}
+        ok=bool(workflow_result.get("success")); diagnostic_pending=bool(workflow_result.get("diagnostic_pending", False)); create_ticket=ok and not diagnostic_pending
+        response=semantic_response or workflow_result.get("response") or "Voy a ayudarte con el diagnóstico."
+        return {"action":"workflow","create_ticket":create_ticket,"requires_quote":requires_quote if create_ticket else False,"ticket_type":"technical_support" if create_ticket else None,"response":response,"workflow":intent_name,"workflow_result":workflow_result,"ticket":workflow_result.get("ticket"),"service":service,"service_id":service_id,"reasoning":reasoning,"metadata":metadata}
     if not intent_name:
         clarification={"pt-BR":"Posso ajudá-lo com suporte técnico, celulares, computadores, redes, câmeras ou IA para empresas. O que você precisa?","en":"I can help with technical support, phones, computers, networks, cameras, or business AI. What do you need?"}.get(language,"Puedo ayudarte con soporte técnico, celulares, computadoras, redes, cámaras o IA para empresas. ¿Qué necesitas?")
         return {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"response":clarification,"workflow":None,"service":None,"service_id":None,"reasoning":{},"metadata":{"reason":"intent_not_detected",**ai_metadata}}
