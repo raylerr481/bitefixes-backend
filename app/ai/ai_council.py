@@ -1,7 +1,7 @@
-"""Bounded, capability-aware multi-provider consultation.
+"""Bounded external-AI council for Bitey V29.
 
-External AIs are the reasoning authorities. Bitey supplies governed tools and
-context; it does not claim cognitive authority over the external advisors.
+External AIs are the reasoning authorities. Bitey supplies governed company
+context, memory and tools; it does not claim cognitive authority.
 """
 from __future__ import annotations
 import asyncio
@@ -9,9 +9,21 @@ import re
 from typing import Any, Dict, List, Sequence
 from app.ai.runtime import build_ai_orchestrator
 
+RECTOR_DIRECTIVES = """
+You are the external rector AI working inside a specific company context.
+Reason about the user's actual need before proposing an action.
+Use the supplied business context, services, memory and evidence.
+Do not invent services, prices, addresses, technicians or availability.
+If an external fact is necessary, request/use the governed web_search tool.
+Do not create or imply a ticket merely because a service intent was detected.
+Distinguish exploration, diagnosis, proposal and explicit commitment.
+For exploration or diagnosis, ask the smallest useful next question.
+Only recommend an operational action when the conversation has enough evidence.
+Answer naturally in the user's language and remain inside the company's domain.
+""".strip()
+
 
 def _search_context(message: str, language: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    """Run the shared web tool only when the rector was granted web_search."""
     capabilities = set(context.get("capabilities") or ())
     if "web_search" not in capabilities:
         return {}
@@ -27,14 +39,13 @@ def _search_context(message: str, language: str, context: Dict[str, Any]) -> Dic
         if not query:
             return {}
         result = search_web(query=query, language=language or "en", limit=5)
-        results = result.get("results") or []
         return {"web_search": {
             "requested": True,
             "query": query,
             "provider": result.get("provider"),
             "fallback_used": bool(result.get("fallback_used")),
-            "verified": False,
-            "results": results,
+            "verified": bool(result.get("verified")),
+            "results": result.get("results") or [],
         }}
     except Exception as exc:
         print(f"[AI COUNCIL SEARCH WARNING] error={type(exc).__name__}")
@@ -45,7 +56,9 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
     try:
         print(f"[AI COUNCIL] provider={spec.name} status=requested capabilities={','.join(spec.capabilities)}")
         tool_context = _search_context(message, language, context) if "web_search" in context.get("capabilities", ()) else {}
-        answer = await spec.provider.generate(message, context={**context, **tool_context, "language": language})
+        enriched_context = {**context, **tool_context, "language": language, "rector_directives": RECTOR_DIRECTIVES}
+        prompt = f"{RECTOR_DIRECTIVES}\n\nUSER MESSAGE:\n{message.strip()}"
+        answer = await spec.provider.generate(prompt, context=enriched_context)
         if not answer:
             print(f"[AI COUNCIL] provider={spec.name} status=empty")
             return None
@@ -57,6 +70,7 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
             "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))},
             "evidence": tool_context.get("web_search", {}).get("results", []),
             "search_query": tool_context.get("web_search", {}).get("query"),
+            "search_verified": bool(tool_context.get("web_search", {}).get("verified")),
         }
     except Exception as exc:
         print(f"[AI COUNCIL] provider={spec.name} status=error error={type(exc).__name__}")
