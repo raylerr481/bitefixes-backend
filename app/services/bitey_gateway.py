@@ -2,7 +2,7 @@
 
 Bitey is the product identity and transport facade at this stage. It is not
 claimed to be the primary cognitive model yet. Conversation reasoning may be
-performed directly by configured external AI providers (Groq/open-source
+performed by configured external AI providers (including Groq and open-source
 providers through the governed AI council), while Bitey infrastructure stores
 context, memory, telemetry and protected business state underneath.
 
@@ -87,8 +87,6 @@ def handle_message(
     public["gateway"] = {
         "channel": normalized_channel,
         "architecture": "bitey-public-facade",
-        "cognitive_responder": "external-ai",
-        "business_infrastructure": "bitey",
     }
     if preferred_contact_channel:
         public["preferred_contact_channel"] = preferred_contact_channel
