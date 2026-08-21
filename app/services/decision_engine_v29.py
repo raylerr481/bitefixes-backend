@@ -1,8 +1,9 @@
-"""Bitey AI-first decision gateway with a cognitive scaffolding layer.
+"""Bitey AI-first decision gateway.
 
-External AI remains the cognitive authority. Bitey's archetypes prepare
-context, resolve references, identify needs, choose missing information and
-gate actions; they do not replace model reasoning.
+External AI is the cognitive and conversational authority. Bitey is a second
+plane: it supplies company context, memory, governed tools, persistence,
+evaluation and action safety. It must not replace a valid external-AI answer
+with a deterministic catalog/template response.
 """
 from __future__ import annotations
 
@@ -18,11 +19,17 @@ def _selected_answer(consultation: Dict[str, Any]) -> Optional[str]:
     evaluation = consultation.get("evaluation") or {}
     selected = evaluation.get("selected") or {}
     answer = selected.get("answer")
-    return str(answer).strip() if answer else None
+    if answer:
+        return str(answer).strip()
+    suggestions = consultation.get("suggestions") or []
+    if suggestions:
+        answer = suggestions[0].get("answer")
+        if answer:
+            return str(answer).strip()
+    return None
 
 
-def _external_stage(consultation: Dict[str, Any], message: str, cognitive: Dict[str, Any]) -> str:
-    """Infer action-safety stage without claiming cognitive authority."""
+def _external_stage(consultation: Dict[str, Any], cognitive: Dict[str, Any]) -> str:
     readiness = cognitive.get("action_readiness") or {}
     if readiness.get("eligible"):
         return "commitment_candidate"
@@ -41,10 +48,12 @@ def decision_engine(
     language: Optional[str] = None,
     business_context: Optional[Dict[str, Any]] = None,
 ):
-    """Run cognitive scaffolding, then give the prepared context to external AI.
+    """Prepare the environment, let the external rector reason, then evaluate.
 
-    The external AI is the reasoning authority. The deterministic layer only
-    supplies context/memory/tool policy and prevents premature actions.
+    Critical rule: evaluation is second-plane feedback. A deterministic
+    evaluator may score/flag the answer, but it does not replace a valid
+    external-AI answer with a generic catalog or canned response. The legacy
+    action engine is reserved for mature, explicit commitments.
     """
     context = business_context
     if context is None:
@@ -65,8 +74,6 @@ def decision_engine(
         history=history,
     )
 
-    # Keep the external rector first. Cognitive state is scaffolding, not a
-    # substitute for model reasoning.
     consultation = {"used": False, "reason": "not_attempted"}
     try:
         consultation = consult_if_valuable(
@@ -97,58 +104,62 @@ def decision_engine(
         consultation = {"used": False, "reason": "consultation_error"}
 
     answer = _selected_answer(consultation)
-    stage = _external_stage(consultation, message, cognitive)
+    stage = _external_stage(consultation, cognitive)
 
-    if answer and stage != "commitment_candidate":
+    # SECOND PLANE: evaluate and persist quality, but never replace the
+    # external rector's conversational answer with a canned Bitey response.
+    if answer:
         response_check = evaluate_response(answer, cognitive)
-        if response_check.get("accepted"):
-            return {
-                "action": "conversation",
-                "create_ticket": False,
-                "requires_quote": False,
-                "ticket_type": None,
-                "response": answer,
-                "workflow": None,
-                "service": None,
-                "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
-                "reasoning": {},
-                "metadata": {
-                    "architecture": "ai_first_v31_cognitive_archetypes",
-                    "cognitive_authority": "external_ai",
-                    "bitey_role": "context_memory_tools_evaluation_learning",
-                    "conversation_stage": stage,
-                    "action_engine": "deferred",
-                    "cognitive_state": cognitive,
-                    "response_evaluation": response_check,
-                    "ai_consultation": consultation,
-                },
-            }
-        # A generic/catalog answer is not accepted when a concrete need exists.
-        # Do not fall through to the legacy ticket engine.
         return {
             "action": "conversation",
             "create_ticket": False,
             "requires_quote": False,
             "ticket_type": None,
-            "response": "Entiendo lo que necesitas. Para orientarte correctamente dentro de los servicios de esta empresa, dime qué resultado quieres conseguir y te hago la pregunta más útil para avanzar.",
+            "response": answer,
+            "workflow": None,
+            "service": None,
+            "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
+            "reasoning": {},
+            "metadata": {
+                "architecture": "external-rector-primary-v32",
+                "cognitive_authority": "external_ai",
+                "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
+                "conversation_stage": stage,
+                "action_engine": "deferred" if stage != "commitment_candidate" else "commitment_guarded",
+                "cognitive_state": cognitive,
+                "response_evaluation": response_check,
+                "ai_consultation": consultation,
+            },
+        }
+
+    # If no external AI is available, do not silently pretend Bitey reasoned.
+    # Return a transparent, contextual fallback without creating a ticket.
+    if not (consultation.get("used") and answer):
+        return {
+            "action": "conversation",
+            "create_ticket": False,
+            "requires_quote": False,
+            "ticket_type": None,
+            "response": "Estoy preparando una respuesta dentro del contexto de esta empresa. Cuéntame qué resultado necesitas conseguir y continuaré desde ahí.",
             "workflow": None,
             "service": None,
             "service_id": None,
             "reasoning": {},
             "metadata": {
-                "architecture": "ai_first_v31_cognitive_archetypes",
-                "cognitive_authority": "external_ai",
-                "bitey_role": "context_memory_tools_evaluation_learning",
+                "architecture": "external-rector-primary-v32",
+                "cognitive_authority": "external_ai_unavailable",
+                "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
                 "conversation_stage": stage,
                 "action_engine": "deferred",
                 "cognitive_state": cognitive,
-                "response_evaluation": response_check,
-                "fallback": "contextual_safe_conversation",
+                "ai_consultation": consultation,
             },
         }
 
-    # Explicitly mature commitment can proceed to the action engine. The
-    # action engine executes; it is not the cognitive authority.
+    # Explicit mature commitment: the legacy engine may execute the action,
+    # but only after the external rector has reasoned and the action gate says
+    # the conversation is mature. The engine is an execution plane, not a
+    # cognitive authority.
     result = legacy_make_decision(
         company_id,
         customer,
@@ -162,9 +173,9 @@ def decision_engine(
     if isinstance(result, dict):
         metadata = result.setdefault("metadata", {})
         metadata.update({
-            "architecture": "ai_first_v31_cognitive_archetypes",
-            "cognitive_authority": "external_ai" if consultation.get("used") else "fallback",
-            "bitey_role": "context_memory_tools_evaluation_learning",
+            "architecture": "external-rector-primary-v32",
+            "cognitive_authority": "external_ai",
+            "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
             "conversation_stage": stage,
             "cognitive_state": cognitive,
             "ai_consultation": consultation,
