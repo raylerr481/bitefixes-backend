@@ -25,4 +25,4 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[test]'
-      - run: PYTHONPATH=. python -m pytest -q tests/test_ai_runtime.py tests/test_comparative_engine.py
+      - run: PYTHONPATH=. python -m pytest -q tests/test_ai_runtime.py tests/test_comparative_engine.py tests/test_experience_learning.py tests/test_knowledge_promotion.py
