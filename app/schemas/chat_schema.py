@@ -1,5 +1,6 @@
 """Bitey Chat Schemas - unified cloud gateway contract."""
 
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -14,6 +15,8 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     language_preference: str = "auto"
     preferred_contact_channel: str | None = None
+    page_context: dict[str, Any] | None = None
+    service_context: dict[str, Any] | None = None
 
 
 class ChatResponse(BaseModel):
