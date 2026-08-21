@@ -1,14 +1,16 @@
-"""Bitey Workflow Router V24.
+"""Bitey Workflow Router V25.
 
 Supabase remains useful for workflow metadata, but diagnostic-critical flows
 must execute the built-in governed module so stale database configuration cannot
-bypass safety gates.
+bypass safety gates. Investigative telemetry is advisory and cannot create
+ tickets or promote knowledge.
 """
 
 import importlib
 from typing import Any, Dict, Optional
 
 from app.database.supabase import database
+from app.ai.investigative_runtime import InvestigativeRuntime
 
 WORKFLOW_MAP = {
     "cctv_installation": "app.services.workflows.camera_installation",
@@ -20,10 +22,11 @@ WORKFLOW_MAP = {
     "mobile_repair": "app.services.workflows.mobile_repair",
 }
 
-# These workflows contain authoritative safety/diagnostic gates.
 GOVERNED_WORKFLOWS = {
     "mobile_repair": "app.services.workflows.mobile_repair",
 }
+
+_INVESTIGATOR = InvestigativeRuntime()
 
 
 def _workflow_rows(intent: str, company_id: Optional[int] = None):
@@ -52,12 +55,7 @@ def _resolve_workflow(intent: str, company_id: Optional[int] = None) -> Dict[str
         configured = None
 
     if intent in GOVERNED_WORKFLOWS:
-        return {
-            "configured": bool(configured),
-            "workflow": configured,
-            "module_path": GOVERNED_WORKFLOWS[intent],
-            "governed": True,
-        }
+        return {"configured": bool(configured), "workflow": configured, "module_path": GOVERNED_WORKFLOWS[intent], "governed": True}
 
     if configured:
         definition = configured.get("definition") or {}
@@ -68,7 +66,12 @@ def _resolve_workflow(intent: str, company_id: Optional[int] = None) -> Dict[str
 
 
 def execute_workflow(intent, message, company_id=None, customer_id=None, service_id=None, customer=None, language=None, knowledge=None, business_context=None, **kwargs):
-    """Execute a governed workflow or a safe built-in fallback."""
+    """Execute a governed workflow or a safe built-in fallback.
+
+    The investigative runtime is advisory only. It can expose a research plan
+    in metadata, but it cannot authorize a ticket, alter a workflow result, or
+    promote external knowledge.
+    """
     resolution = _resolve_workflow(intent, company_id)
     module_path = resolution["module_path"]
     configured = resolution["workflow"]
@@ -95,6 +98,15 @@ def execute_workflow(intent, message, company_id=None, customer_id=None, service
             result.setdefault("workflow_governed", bool(resolution.get("governed")))
             if configured:
                 result.setdefault("workflow_id", configured.get("id"))
+            try:
+                problem = intent or "unknown_problem"
+                facts = {}
+                if isinstance(result.get("metadata"), dict):
+                    facts = dict(result["metadata"])
+                investigation = _INVESTIGATOR.analyze(problem, facts)
+                result.setdefault("investigation", investigation)
+            except Exception as investigation_error:
+                print("[INVESTIGATION WARNING]", repr(investigation_error))
         return result
     except Exception as error:
         print("[WORKFLOW EXECUTION ERROR]", repr(error))
