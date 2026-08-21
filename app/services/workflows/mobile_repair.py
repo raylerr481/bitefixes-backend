@@ -29,6 +29,11 @@ def _has_repair_or_quote_request(text: str) -> bool:
 def _issue_type(text: str) -> str | None:
     if any(token in text for token in ("pantalla", "tela", "display", "screen")):
         return "screen"
+    # Short diagnostic follow-ups such as "está dañada" or "quebrada"
+    # commonly refer to the issue just identified as the screen. They must
+    # remain diagnostic-only until an explicit repair/quote request appears.
+    if any(token in text for token in ("está dañada", "esta danada", "dañada", "danada", "quebrada", "quebrado")):
+        return "screen"
     if any(token in text for token in ("carga", "cargar", "carrega", "carregar", "charger", "charging")):
         return "charging"
     if any(token in text for token in ("bateria", "batería", "battery")):
