@@ -17,9 +17,26 @@ except ImportError:
 PROCEDURAL_MARKERS = {
     "como", "cómo", "how", "trocar", "troca", "cambiar", "cambiarla", "cambiarlo",
     "reemplazar", "reparar", "arreglar", "instalar", "desmontar", "montar",
-    "abrir", "quitar", "poner", "cambiar", "pantalla", "tela", "screen",
-    "display", "bateria", "batería", "conector", "camara", "cámara", "teclado",
+    "abrir", "quitar", "poner", "pantalla", "tela", "screen", "display",
+    "bateria", "batería", "conector", "camara", "cámara", "teclado",
 }
+
+GREETING_WORDS = {"hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}
+
+
+def _is_greeting(message: str) -> bool:
+    text = " ".join((message or "").strip().lower().split())
+    return text in GREETING_WORDS
+
+
+def _is_substantive_request(message: str) -> bool:
+    """Anything beyond a greeting is eligible for AI reasoning.
+
+    Bitey Core still decides business actions. This only ensures substantive
+    analysis gets an external AI candidate instead of silently falling back to
+    deterministic rules whenever confidence happens to be high.
+    """
+    return bool((message or "").strip()) and not _is_greeting(message)
 
 
 def _is_procedural_request(message: str) -> bool:
@@ -46,6 +63,7 @@ def consult_if_valuable(
     intent_name = intent.get("intent")
     knowledge_found = not bool(context.get("knowledge_gap", 0))
     procedural = _is_procedural_request(message)
+    substantive = _is_substantive_request(message)
 
     cognitive = {"status": "unavailable"}
     if cognitive_observe:
@@ -75,14 +93,12 @@ def consult_if_valuable(
         knowledge_gap=float(context.get("knowledge_gap", 0) or 0),
         business_impact=float(context.get("business_impact", 0) or 0),
         estimated_cost=float(context.get("estimated_cost", 0) or 0),
-        force_advisory=procedural,
-        advisory_reason="procedural_how_to" if procedural else "",
+        force_advisory=substantive,
+        advisory_reason="substantive_ai_reasoning" if substantive else "",
     )
 
-    if not gate.consult and web.get("used"):
-        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation", "web_grounding"]}
     if not gate.consult:
-        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation"]}
+        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation"] + (["web_grounding"] if web.get("used") else [])}
 
     enriched_context = {**context, "web_grounding": web, "cognitive_state": cognitive}
     suggestions = consult(message, language=language, context=enriched_context, max_providers=gate.max_providers)
