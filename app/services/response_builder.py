@@ -1,4 +1,4 @@
-"""Bitey Response Builder V6."""
+"""Bitey Response Builder V7 - governed AI-backed conversational responses."""
 
 
 def language_text(language, data):
@@ -51,13 +51,45 @@ def normalize_response(response):
     return str(response)
 
 
+def _ai_conversational_candidate(decision):
+    """Return an external AI answer only for safe conversational turns.
+
+    Bitey Core remains authoritative for tickets, quotes and workflows. The
+    external model supplies language/reasoning for ordinary conversation, while
+    its use is recorded in decision metadata for auditability.
+    """
+    if not isinstance(decision, dict):
+        return ""
+    if decision.get("create_ticket") or decision.get("requires_quote"):
+        return ""
+    if decision.get("action") not in {None, "conversation", "answer"}:
+        return ""
+    consultation = decision.get("ai_consultation")
+    if not isinstance(consultation, dict) or not consultation.get("used"):
+        return ""
+    suggestions = consultation.get("suggestions") or []
+    if not suggestions:
+        return ""
+    # Use the best governed suggestion selected by Bitey's evaluator when it is
+    # available; otherwise use the first provider answer.
+    selected = ((consultation.get("evaluation") or {}).get("selected") or {})
+    answer = str(selected.get("answer") or "").strip()
+    if not answer:
+        answer = str((suggestions[0] or {}).get("answer") or "").strip()
+    if answer:
+        decision["response_source"] = "external_ai"
+        decision.setdefault("metadata", {})
+        decision["metadata"]["ai_response_used"] = True
+        decision["metadata"]["ai_provider"] = selected.get("provider") or (suggestions[0] or {}).get("provider")
+    return answer
+
+
 def _personalize(text, language, customer_name):
     name = _customer_name(customer_name)
     if not name or not text:
         return text
     if text.lstrip().lower().startswith(name.lower() + ","):
         return text
-    # Keep the name natural without forcing it into every sentence.
     return f"{name}, {text[0].lower() + text[1:] if len(text) > 1 else text}"
 
 
@@ -69,7 +101,8 @@ def build_final_response(decision=None, ticket=None, knowledge=None, language="e
             "en": "I could not process your request.",
         })
 
-    response = normalize_response(decision.get("response"))
+    ai_response = _ai_conversational_candidate(decision)
+    response = ai_response or normalize_response(decision.get("response"))
     if not response:
         response = language_text(language, {
             "es": "Solicitud recibida.",
