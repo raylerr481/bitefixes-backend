@@ -7,3 +7,4 @@ pydantic
 python-multipart
 letta-client
 hyperon
+requests
