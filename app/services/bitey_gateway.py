@@ -1,8 +1,14 @@
-"""Bitey Cloud Gateway - one normalized public entry point for every channel.
+"""Bitey Cloud Gateway - public facade for every channel.
 
-Channels are transport adapters. Business intelligence stays in Bitey Core.
-Internal AI reasoning is never exposed to end users unless explicitly enabled
-for controlled debugging.
+Bitey is the product identity and transport facade at this stage. It is not
+claimed to be the primary cognitive model yet. Conversation reasoning may be
+performed directly by configured external AI providers (Groq/open-source
+providers through the governed AI council), while Bitey infrastructure stores
+context, memory, telemetry and protected business state underneath.
+
+This separation is intentional: external AI answers the user today; Bitey
+provides the channel, context and business infrastructure that will allow Bitey
+Core to acquire and validate its own capabilities later.
 """
 from __future__ import annotations
 
@@ -29,12 +35,11 @@ def normalize_channel(channel: str | None) -> str:
 
 
 def _public_result(result: dict[str, Any]) -> dict[str, Any]:
-    """Return a stable public contract and keep orchestration telemetry internal."""
+    """Return a stable public contract while keeping AI orchestration internal."""
     if os.getenv("BITEY_PUBLIC_DEBUG", "false").lower() == "true":
         return result
 
     public = {k: v for k, v in result.items() if k not in _INTERNAL_KEYS}
-    # Keep a minimal machine-readable status for channel adapters.
     public["public_contract"] = "bitey-chat-v1"
     return public
 
@@ -52,7 +57,13 @@ def handle_message(
     language_preference: str = "auto",
     preferred_contact_channel: str | None = None,
 ) -> dict[str, Any]:
-    """Normalize channel context and delegate to the single Bitey brain."""
+    """Expose Bitey as the single public facade for every channel.
+
+    ``process_message`` runs the Bitey infrastructure and governed external-AI
+    consultation. For ordinary conversation turns, the configured external AI
+    provider is currently the cognitive responder; protected tickets, quotes
+    and business workflows remain under Bitey's deterministic controls.
+    """
     normalized_channel = normalize_channel(channel)
     result = process_message(
         company_id=company_id,
@@ -66,15 +77,18 @@ def handle_message(
         language_preference=language_preference,
     )
     if not isinstance(result, dict):
-        return {"success": False, "response": "No fue posible procesar la solicitud.", "public_contract": "bitey-chat-v1"}
+        return {
+            "success": False,
+            "response": "No fue posible procesar la solicitud.",
+            "public_contract": "bitey-chat-v1",
+        }
 
-    # Never leak provider comparisons, confidence scores, internal decisions or
-    # knowledge payloads through the production chat surface.
     public = _public_result(result)
     public["gateway"] = {
         "channel": normalized_channel,
-        "architecture": "bitey-cloud-gateway",
-        "brain": "bitey-core",
+        "architecture": "bitey-public-facade",
+        "cognitive_responder": "external-ai",
+        "business_infrastructure": "bitey",
     }
     if preferred_contact_channel:
         public["preferred_contact_channel"] = preferred_contact_channel
