@@ -5,36 +5,37 @@ context; it does not claim cognitive authority over the external advisors.
 """
 from __future__ import annotations
 import asyncio
+import re
 from typing import Any, Dict, List, Sequence
 from app.ai.runtime import build_ai_orchestrator
 
 
 def _search_context(message: str, language: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    """Run the shared web tool only when the rector was granted web_search.
-
-    The search itself is not learning and is not business authority. Results are
-    returned to the external AI as evidence with provenance so it can reason
-    over them. Persistent learning remains a separate evaluated step.
-    """
+    """Run the shared web tool only when the rector was granted web_search."""
     capabilities = set(context.get("capabilities") or ())
     if "web_search" not in capabilities:
         return {}
     try:
         from app.services.web_search_service import search_web
-        query = str(context.get("search_query") or message).strip()
+        query = str(context.get("search_query") or "").strip()
+        if not query:
+            postal = re.search(r"\b\d{5}-?\d{3}\b", message)
+            if postal:
+                query = f"CEP {postal.group(0)} Brasil"
+            else:
+                query = message.strip()
         if not query:
             return {}
         result = search_web(query=query, language=language or "en", limit=5)
         results = result.get("results") or []
-        return {
-            "web_search": {
-                "requested": True,
-                "provider": result.get("provider"),
-                "fallback_used": bool(result.get("fallback_used")),
-                "verified": False,
-                "results": results,
-            }
-        }
+        return {"web_search": {
+            "requested": True,
+            "query": query,
+            "provider": result.get("provider"),
+            "fallback_used": bool(result.get("fallback_used")),
+            "verified": False,
+            "results": results,
+        }}
     except Exception as exc:
         print(f"[AI COUNCIL SEARCH WARNING] error={type(exc).__name__}")
         return {"web_search": {"requested": True, "provider": None, "results": [], "error": type(exc).__name__}}
@@ -55,6 +56,7 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
             "capabilities": list(spec.capabilities),
             "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))},
             "evidence": tool_context.get("web_search", {}).get("results", []),
+            "search_query": tool_context.get("web_search", {}).get("query"),
         }
     except Exception as exc:
         print(f"[AI COUNCIL] provider={spec.name} status=error error={type(exc).__name__}")
