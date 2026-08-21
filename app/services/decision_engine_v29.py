@@ -67,12 +67,7 @@ def decision_engine(
     intent_dict = intent if isinstance(intent, dict) else {}
     history = memory_dict.get("history", [])
 
-    cognitive = build_cognitive_state(
-        message=message,
-        company_context=context,
-        memory=memory_dict,
-        history=history,
-    )
+    cognitive = build_cognitive_state(message=message, company_context=context, memory=memory_dict, history=history)
 
     consultation = {"used": False, "reason": "not_attempted"}
     try:
@@ -121,7 +116,7 @@ def decision_engine(
             "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
             "reasoning": {},
             "metadata": {
-                "architecture": "external-rector-primary-v32",
+                "architecture": "external-rector-primary-v33",
                 "cognitive_authority": "external_ai",
                 "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
                 "conversation_stage": stage,
@@ -132,52 +127,26 @@ def decision_engine(
             },
         }
 
-    # If no external AI is available, do not silently pretend Bitey reasoned.
-    # Return a transparent, contextual fallback without creating a ticket.
-    if not (consultation.get("used") and answer):
-        return {
-            "action": "conversation",
-            "create_ticket": False,
-            "requires_quote": False,
-            "ticket_type": None,
-            "response": "Estoy preparando una respuesta dentro del contexto de esta empresa. Cuéntame qué resultado necesitas conseguir y continuaré desde ahí.",
-            "workflow": None,
-            "service": None,
-            "service_id": None,
-            "reasoning": {},
-            "metadata": {
-                "architecture": "external-rector-primary-v32",
-                "cognitive_authority": "external_ai_unavailable",
-                "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
-                "conversation_stage": stage,
-                "action_engine": "deferred",
-                "cognitive_state": cognitive,
-                "ai_consultation": consultation,
-            },
-        }
-
-    # Explicit mature commitment: the legacy engine may execute the action,
-    # but only after the external rector has reasoned and the action gate says
-    # the conversation is mature. The engine is an execution plane, not a
-    # cognitive authority.
-    result = legacy_make_decision(
-        company_id,
-        customer,
-        message,
-        intent_dict,
-        knowledge,
-        memory_dict,
-        language,
-        business_context=context,
-    )
-    if isinstance(result, dict):
-        metadata = result.setdefault("metadata", {})
-        metadata.update({
-            "architecture": "external-rector-primary-v32",
-            "cognitive_authority": "external_ai",
+    # No external AI response means there is no cognitive answer. Never fake
+    # one with a deterministic filler. Keep the request safely in conversation
+    # mode until a rector is available.
+    return {
+        "action": "conversation",
+        "create_ticket": False,
+        "requires_quote": False,
+        "ticket_type": None,
+        "response": "No pude obtener en este momento una respuesta de la IA rectora. La conversación queda abierta y no se ha creado ningún ticket.",
+        "workflow": None,
+        "service": None,
+        "service_id": None,
+        "reasoning": {},
+        "metadata": {
+            "architecture": "external-rector-primary-v33",
+            "cognitive_authority": "external_ai_unavailable",
             "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
             "conversation_stage": stage,
+            "action_engine": "deferred",
             "cognitive_state": cognitive,
             "ai_consultation": consultation,
-        })
-    return result
+        },
+    }
