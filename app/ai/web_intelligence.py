@@ -17,6 +17,7 @@ POLICY=WebPolicy()
 def needs_web(message:str,*,intent:Optional[str]=None,knowledge_found:bool=False)->bool:
     text=(message or "").lower(); words=set(re.findall(r"[a-z0-9À-ÿ-]+",text))
     if words & CURRENT_MARKERS:return True
+    if knowledge_found and intent in {None,"support","conversation","general"} and len(words) <= 8:return False
     if words & PROCEDURAL_MARKERS and (words & {"como","cómo","how","trocar","cambiar","reemplazar","reparar","arreglar","instalar","desmontar","montar","pantalla","tela","screen","display"}):return True
     if not knowledge_found and len(words)>=10:return True
     return intent in {"research","comparison","troubleshooting","software_update","product_research"}
@@ -56,8 +57,7 @@ def _cache_get(key:str)->Optional[Dict[str,Any]]:
     expires,value=entry
     if expires<=time.time():_CACHE.pop(key,None);return None
     cached=dict(value);cached["cache_hit"]=True;return cached
-def _cache_put(key:str,value:Dict[str,Any])->None:
-    _CACHE[key]=(time.time()+POLICY.ttl_seconds,dict(value))
+def _cache_put(key:str,value:Dict[str,Any])->None:_CACHE[key]=(time.time()+POLICY.ttl_seconds,dict(value))
 def _verify(results:List[Dict[str,Any]],query:str)->Dict[str,Any]:
     domains={item["domain"] for item in results if item.get("domain")};strong=[item for item in results if item.get("score",0)>=POLICY.verification_min_score];token_sets=[_tokenise(f"{item['title']} {item['snippet']}") for item in strong];corroborated=False
     if len(token_sets)>=2:
