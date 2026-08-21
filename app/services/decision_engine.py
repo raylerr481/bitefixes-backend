@@ -1,4 +1,4 @@
-"""BiteFixes Decision Engine V24 — governed reasoning and AI consultation."""
+"""BiteFixes Decision Engine V25 — governed reasoning and protected AI learning."""
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
 from app.services.business_reasoning_service import resolve_business_reasoning
@@ -7,12 +7,14 @@ from app.services.workflows.workflow_service import execute_workflow
 from app.services.sales_engine import generate_sales_response
 
 try:
-    from app.services.ai_provider import ai_provider
+    from app.ai.ai_provider import ai_provider
     from app.ai.consultation_gate import evaluate as evaluate_ai_consultation
     from app.ai.ai_council import consult as consult_ai
     from app.ai.evaluator import evaluate_candidates
+    from app.ai.learning_engine import learn_pattern
+    from app.ai.privacy_engine import build_external_context
 except Exception:
-    ai_provider = evaluate_ai_consultation = consult_ai = evaluate_candidates = None
+    ai_provider = evaluate_ai_consultation = consult_ai = evaluate_candidates = learn_pattern = build_external_context = None
 
 SALES_INTENTS = {"ai_assistant", "sales", "quote", "purchase"}
 SUPPORT_INTENTS = {"computer_repair", "hardware_upgrade", "windows_installation", "mobile_repair", "cctv_installation", "camera_installation", "network_configuration", "software_problem", "remote_support", "cctv_repair", "cctv_configuration", "camera_replacement", "wifi_configuration", "router_configuration", "vpn_configuration", "network_diagnosis", "server_support", "microsoft365_support", "cloud_support", "data_recovery", "virus_malware", "performance_problem", "screen_repair", "battery_replacement", "charging_port", "camera_repair", "software_mobile", "data_transfer"}
@@ -42,20 +44,25 @@ def _is_greeting(message: str) -> bool:
     return " ".join(str(message or "").lower().strip().split()) in GREETING_WORDS
 
 
-def _external_consultation(message: str, language: Optional[str], intent: Dict[str, Any], business_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _external_consultation(message: str, language: Optional[str], intent: Dict[str, Any], business_context: Optional[Dict[str, Any]], knowledge=None, memory=None) -> Dict[str, Any]:
     if not all((evaluate_ai_consultation, consult_ai, ai_provider)) or not ai_provider.available():
         return {"ai_used": False, "reason": "provider_unavailable"}
     confidence = float(intent.get("confidence", 0) or 0)
     complexity = 0.8 if len(message) > 240 else 0.3
     novelty = 0.8 if not intent.get("intent") else 0.3
-    gap = 0.8 if not intent.get("intent") else 0.2
+    gap = 0.8 if not knowledge else 0.2
     impact = 0.7 if intent.get("intent") in {"ai_assistant", "sales", "quote"} else 0.2
     gate = evaluate_ai_consultation(confidence=confidence, complexity=complexity, novelty=novelty, knowledge_gap=gap, business_impact=impact, estimated_cost=0.0)
     if not gate.consult:
         return {"ai_used": False, "reason": gate.reason, "gate_value": gate.estimated_value}
-    candidates = consult_ai(message, language=language or "es", context={"intent": intent, "business_context": business_context or {}}, max_providers=gate.max_providers)
+
+    safe_context = build_external_context(intent=intent, business_context=business_context, knowledge=knowledge, memory=memory) if build_external_context else {"intent": intent}
+    candidates = consult_ai(message, language=language or "es", context=safe_context, max_providers=gate.max_providers)
     evaluation = evaluate_candidates(candidates, core_confidence=confidence) if evaluate_candidates else {"status": "not_evaluated"}
-    return {"ai_used": bool(candidates), "gate_reason": gate.reason, "gate_value": gate.estimated_value, "candidates": candidates, "evaluation": evaluation, "learning_candidate": bool(evaluation.get("learning_candidate"))}
+    learning = {"stored": False, "reason": "not_eligible"}
+    if learn_pattern and evaluation.get("learning_candidate") and evaluation.get("consensus"):
+        learning = learn_pattern(message=message, intent=intent.get("intent"), evaluation=evaluation)
+    return {"ai_used": bool(candidates), "gate_reason": gate.reason, "gate_value": gate.estimated_value, "candidates": candidates, "evaluation": evaluation, "learning_candidate": bool(evaluation.get("learning_candidate")), "learning": learning, "context_protected": True}
 
 
 def make_decision(company_id: int, customer: Dict, message: str, intent: Dict, knowledge=None, memory=None, language=None, channel="unknown", business_context: Optional[Dict[str, Any]] = None):
@@ -67,14 +74,15 @@ def make_decision(company_id: int, customer: Dict, message: str, intent: Dict, k
             print("[BUSINESS CONTEXT WARNING]", error)
             business_context = None
 
-    ai_metadata = _external_consultation(message, language, intent, business_context)
+    # Greetings are deterministic and never enter service/AI workflows.
+    if not intent.get("intent") and _is_greeting(message):
+        greeting = {"pt-BR": "Olá! Sou Bitey. Como posso ajudá-lo?", "en": "Hello! I'm Bitey. How can I help?"}.get(language, "Hola, soy Bitey. ¿Cómo puedo ayudarte?")
+        return {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "response": greeting, "workflow": None, "service": None, "service_id": None, "reasoning": {}, "metadata": {"reason": "greeting", "context_protected": True}}
+
+    ai_metadata = _external_consultation(message, language, intent, business_context, knowledge=knowledge, memory=memory)
     intent_name = intent.get("intent")
     confidence = float(intent.get("confidence", 0) or 0)
-
     if not intent_name:
-        if _is_greeting(message):
-            greeting = {"pt-BR": "Olá! Sou Bitey. Como posso ajudá-lo?", "en": "Hello! I'm Bitey. How can I help?"}.get(language, "Hola, soy Bitey. ¿Cómo puedo ayudarte?")
-            return {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "response": greeting, "workflow": None, "service": None, "service_id": None, "reasoning": {}, "metadata": {"reason": "greeting", **ai_metadata}}
         clarification = {"pt-BR": "Claro. Posso ajudá-lo com suporte técnico, celulares, computadores, redes, câmeras ou IA para empresas. O que você precisa?", "en": "Sure. I can help with technical support, phones, computers, networks, cameras, or business AI. What do you need?"}.get(language, "Claro. Puedo ayudarte con soporte técnico, celulares, computadoras, redes, cámaras o IA para empresas. ¿Qué necesitas?")
         return {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "response": clarification, "workflow": None, "service": None, "service_id": None, "reasoning": {}, "metadata": {"reason": "intent_not_detected", **ai_metadata}}
 
@@ -89,22 +97,8 @@ def make_decision(company_id: int, customer: Dict, message: str, intent: Dict, k
         return {"action": "sales", "create_ticket": True, "requires_quote": requires_quote, "ticket_type": "sales", "response": semantic_response or generate_sales_response(intent_name, customer.get("full_name", "Cliente"), memory), "service": service, "service_id": service_id, "workflow": None, "reasoning": reasoning, "metadata": metadata}
 
     if intent_name in SUPPORT_INTENTS:
-        workflow_result = execute_workflow(
-            intent=intent_name,
-            company_id=company_id,
-            customer_id=customer.get("id"),
-            service_id=service_id,
-            message=message,
-            knowledge=knowledge,
-            language=language,
-            business_context=business_context,
-            intent_data=intent,
-            memory=memory,
-        )
+        workflow_result = execute_workflow(intent=intent_name, company_id=company_id, customer_id=customer.get("id"), service_id=service_id, message=message, knowledge=knowledge, language=language, business_context=business_context, intent_data=intent, memory=memory)
         ok = bool(workflow_result.get("success"))
-        # Workflow responses are authoritative when the workflow is collecting
-        # diagnostic requirements. Business reasoning must not replace a
-        # question with a generic "we can repair it" sentence.
         workflow_response = workflow_result.get("response")
         if workflow_result.get("diagnostic_pending"):
             response = workflow_response or "Voy a ayudarte con el diagnóstico."
