@@ -1,5 +1,5 @@
 """
-BiteFixes - Bitey Intent Engine V7
+BiteFixes - Bitey Intent Engine V8
 Multilingual + Context Aware + Company Service Aware
 """
 
@@ -8,6 +8,12 @@ import unicodedata
 from difflib import SequenceMatcher
 
 from app.database.supabase import database
+
+
+GREETING_WORDS = {
+    "hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias",
+    "buenas tardes", "buenas noches", "bom dia", "boa tarde", "boa noite",
+}
 
 
 def normalize(text):
@@ -115,7 +121,7 @@ def mobile_typo_signal(text):
     words = normalize(text).split()
     phone_words = {"telefono", "celular", "telefone", "phone", "mobile"}
     screen_words = {"pantalla", "tela", "display", "screen"}
-    broken_words = {"rota", "roto", "quebrada", "quebrado", "broken", "quebrada", "quebrado"}
+    broken_words = {"rota", "roto", "quebrada", "quebrado", "broken"}
 
     has_phone = any(word in phone_words or fuzzy_token(word, phone_words) for word in words)
     has_screen = any(word in screen_words or fuzzy_token(word, screen_words) for word in words)
@@ -140,6 +146,13 @@ def score_company_services(text, company_id, scores):
 def detect_intent(message, company_id=None, context=None):
     try:
         text = normalize(message)
+
+        # Greetings are conversational control messages, never service intents.
+        # This guard must run before DB synonyms/company-service scoring so a stale
+        # synonym or service description cannot classify "hola" as a repair.
+        if text in GREETING_WORDS:
+            return {"intent": None, "confidence": 0.0, "scores": {}}
+
         scores = {}
 
         for item in get_synonyms():
@@ -162,16 +175,21 @@ def detect_intent(message, company_id=None, context=None):
 
         if context:
             last = context.get("last_intent")
+            # Context is a small tie-breaker, never enough to invent an intent.
             if last in scores:
                 scores[last] += 5
 
         if not scores:
-            return {"intent": None, "confidence": 0}
+            return {"intent": None, "confidence": 0.0, "scores": {}}
 
         intent = max(scores, key=scores.get)
-        confidence = scores[intent]
-        print("[INTENT SCORES]", scores)
+        raw_score = float(scores[intent])
+        # Public confidence is always normalized to [0, 1]. Keep raw scores for
+        # diagnostics, but never leak a value such as 99 that the UI can render
+        # as 9900%.
+        confidence = min(raw_score / 100.0, 1.0)
+        print("[INTENT SCORES]", scores, "confidence=", confidence)
         return {"intent": intent, "confidence": confidence, "scores": scores}
     except Exception as error:
         print("[INTENT ERROR]", error)
-        return {"intent": None, "confidence": 0}
+        return {"intent": None, "confidence": 0.0, "scores": {}}
