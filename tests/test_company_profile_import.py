@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock
-
 import pytest
 
 from app.services import company_profile_import as importer
