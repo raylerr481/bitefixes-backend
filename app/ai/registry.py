@@ -6,6 +6,8 @@ without giving providers authority over business actions.
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from .free_policy import provider_allowed
+
 
 @dataclass
 class ProviderSpec:
@@ -25,7 +27,10 @@ class AIProviderRegistry:
         self._providers[spec.name] = spec
 
     def available(self, capability: Optional[str] = None) -> list[ProviderSpec]:
-        providers = [p for p in self._providers.values() if p.enabled and p.provider]
+        providers = [
+            p for p in self._providers.values()
+            if p.enabled and p.provider and provider_allowed(p.cost_class)
+        ]
         if capability:
             providers = [p for p in providers if capability in p.capabilities]
         return sorted(providers, key=lambda p: (p.priority, p.name))
@@ -37,7 +42,7 @@ class AIProviderRegistry:
         return [
             {
                 "name": p.name,
-                "enabled": p.enabled,
+                "enabled": p.enabled and provider_allowed(p.cost_class),
                 "priority": p.priority,
                 "cost_class": p.cost_class,
                 "capabilities": list(p.capabilities),
