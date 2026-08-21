@@ -1,9 +1,4 @@
-"""Bitey Cloud Gateway - public facade for every channel.
-
-V29 routes substantive conversation through the external AI rector first.
-Bitey supplies company context, memory and governed tools. The legacy core is
-kept as the action executor/fallback, not as the first conversational brain.
-"""
+"""Bitey Cloud Gateway - AI-first public facade for every channel."""
 from __future__ import annotations
 
 import os
@@ -15,16 +10,9 @@ from app.services.customer_service import get_or_create_customer
 from app.services.conversation_service import get_or_create_conversation
 from app.services.message_service import save_customer_message, save_bitey_message
 
-SUPPORTED_CHANNELS = {
-    "website", "whatsapp", "messenger", "telegram", "email", "sms",
-    "phone", "app", "private", "api",
-}
-
-_INTERNAL_KEYS = {
-    "intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found",
-    "memory", "ai_consultation", "comparative_evaluation", "response_source",
-    "decision", "gateway_debug",
-}
+SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
+_INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
+_GREETING_WORDS = {"hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "bom dia", "boa tarde", "boa noite"}
 
 
 def normalize_channel(channel: str | None) -> str:
@@ -42,20 +30,24 @@ def _public_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def _try_ai_first(*, company_id: int, message: str, channel: str, customer_name: str,
                   last_name: str, conversation_id: str | None, language: str) -> dict[str, Any] | None:
-    """Run the external rector before the legacy action engine.
+    """Run the external rector first and persist its conversational response.
 
-    Only a conversational advisory is returned here. Action execution remains
-    delegated to the legacy process_message path when the rector does not
-    produce a safe conversational result.
+    A persistence failure must never cause a second cognitive pass through the
+    legacy action engine: that was the source of duplicate tickets and the
+    apparent bypass of the external AI.
     """
     try:
         phone = f"web:{conversation_id}" if conversation_id else "web"
-        customer = get_or_create_customer(company_id=company_id, phone=phone,
-                                           email="", name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer")
+        customer = get_or_create_customer(
+            company_id=company_id,
+            phone=phone,
+            email="",
+            name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer",
+        )
         customer_id = customer.get("id") if isinstance(customer, dict) else None
         if not customer_id:
             return None
-        conversation = get_or_create_conversation(customer_id=customer_id, channel=channel)
+        conversation = get_or_create_conversation(customer_id=customer_id, channel=channel, conversation_id=conversation_id)
         cid = conversation.get("id") if isinstance(conversation, dict) else None
         memory = {"conversation_id": cid, "history": []}
         result = ai_first_decision(
@@ -68,9 +60,7 @@ def _try_ai_first(*, company_id: int, message: str, channel: str, customer_name:
             language=language,
             business_context=None,
         )
-        if not isinstance(result, dict) or result.get("action") != "conversation":
-            return None
-        if result.get("create_ticket"):
+        if not isinstance(result, dict) or result.get("action") != "conversation" or result.get("create_ticket"):
             return None
         response = str(result.get("response") or "").strip()
         if not response:
@@ -78,8 +68,11 @@ def _try_ai_first(*, company_id: int, message: str, channel: str, customer_name:
         if cid:
             save_customer_message(company_id=company_id, customer_id=customer_id,
                                   conversation_id=cid, message=message, channel=channel)
+            # IMPORTANT: message= was an invalid keyword here. That exception
+            # caused this gateway to silently fall back to process_message(),
+            # which recreated the old ticket-first behavior.
             save_bitey_message(company_id=company_id, customer_id=customer_id,
-                               conversation_id=cid, message=response, channel=channel)
+                               conversation_id=cid, response=response, channel=channel)
         result["conversation_id"] = cid
         result["customer_id"] = customer_id
         result["gateway"] = {"channel": channel, "architecture": "bitey-ai-first-v29"}
@@ -89,29 +82,16 @@ def _try_ai_first(*, company_id: int, message: str, channel: str, customer_name:
         return None
 
 
-def handle_message(
-    *,
-    company_id: int,
-    message: str,
-    channel: str = "website",
-    phone: str = "",
-    email: str = "",
-    customer_name: str = "Customer",
-    last_name: str = "",
-    conversation_id: str | None = None,
-    language_preference: str = "auto",
-    preferred_contact_channel: str | None = None,
-) -> dict[str, Any]:
+def handle_message(*, company_id: int, message: str, channel: str = "website", phone: str = "",
+                   email: str = "", customer_name: str = "Customer", last_name: str = "",
+                   conversation_id: str | None = None, language_preference: str = "auto",
+                   preferred_contact_channel: str | None = None) -> dict[str, Any]:
     normalized_channel = normalize_channel(channel)
     language = language_preference if language_preference not in (None, "", "auto") else "es"
+    text = str(message or "").strip().lower()
 
-    # Greetings remain cheap and deterministic. Substantive messages enter the
-    # external rector first; the old engine is only reached if that layer does
-    # not produce a safe conversational answer.
-    if str(message or "").strip().lower() not in {
-        "hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias",
-        "buenas tardes", "buenas noches", "bom dia", "boa tarde", "boa noite",
-    }:
+    # Greetings do not need external reasoning.
+    if text not in _GREETING_WORDS:
         ai_first = _try_ai_first(
             company_id=company_id, message=message, channel=normalized_channel,
             customer_name=customer_name, last_name=last_name,
@@ -120,15 +100,22 @@ def handle_message(
         if ai_first:
             return _public_result(ai_first)
 
+        # Substantive messages must NOT silently fall through to the legacy
+        # ticket-first engine. If the external rector is unavailable, fail safe
+        # as a conversation and ask the user for the minimum useful detail.
+        return _public_result({
+            "action": "conversation",
+            "create_ticket": False,
+            "requires_quote": False,
+            "response": "Claro. Cuéntame un poco más sobre lo que necesitas y te ayudo a encontrar la mejor solución dentro de los servicios de esta empresa.",
+            "conversation_stage": "exploration",
+            "metadata": {"architecture": "bitey-ai-first-v29", "fallback": "safe_conversation", "cognitive_authority": "external_ai"},
+        })
+
     result = process_message(
-        company_id=company_id,
-        message=message,
-        phone=phone or "",
-        email=email or "",
-        customer_name=customer_name or "Customer",
-        last_name=last_name or "",
-        channel=normalized_channel,
-        conversation_id=conversation_id,
+        company_id=company_id, message=message, phone=phone or "", email=email or "",
+        customer_name=customer_name or "Customer", last_name=last_name or "",
+        channel=normalized_channel, conversation_id=conversation_id,
         language_preference=language_preference,
     )
     if not isinstance(result, dict):
