@@ -1,13 +1,14 @@
-"""Bitey Workflow Router V23.
+"""Bitey Workflow Router V24.
 
-Supabase-first workflow resolution with a broad legacy fallback catalog.
+Supabase remains useful for workflow metadata, but diagnostic-critical flows
+must execute the built-in governed module so stale database configuration cannot
+bypass safety gates.
 """
 
 import importlib
 from typing import Any, Dict, Optional
 
 from app.database.supabase import database
-
 
 WORKFLOW_MAP = {
     "cctv_installation": "app.services.workflows.camera_installation",
@@ -19,6 +20,11 @@ WORKFLOW_MAP = {
     "mobile_repair": "app.services.workflows.mobile_repair",
 }
 
+# These workflows contain authoritative safety/diagnostic gates.
+GOVERNED_WORKFLOWS = {
+    "mobile_repair": "app.services.workflows.mobile_repair",
+}
+
 
 def _workflow_rows(intent: str, company_id: Optional[int] = None):
     query = database.table("workflows").select("*").eq("intent", intent).eq("is_active", True)
@@ -26,8 +32,7 @@ def _workflow_rows(intent: str, company_id: Optional[int] = None):
         query = query.or_(f"company_id.eq.{company_id},company_id.is.null")
     else:
         query = query.is_("company_id", "null")
-    response = query.execute()
-    return response.data or []
+    return query.execute().data or []
 
 
 def _select_workflow(rows, company_id: Optional[int] = None):
@@ -46,16 +51,24 @@ def _resolve_workflow(intent: str, company_id: Optional[int] = None) -> Dict[str
         print("[WORKFLOW CONFIG WARNING]", repr(exc))
         configured = None
 
+    if intent in GOVERNED_WORKFLOWS:
+        return {
+            "configured": bool(configured),
+            "workflow": configured,
+            "module_path": GOVERNED_WORKFLOWS[intent],
+            "governed": True,
+        }
+
     if configured:
         definition = configured.get("definition") or {}
         module_path = configured.get("module_path") or definition.get("module_path") or WORKFLOW_MAP.get(intent)
-        return {"configured": True, "workflow": configured, "module_path": module_path}
+        return {"configured": True, "workflow": configured, "module_path": module_path, "governed": False}
 
-    return {"configured": False, "workflow": None, "module_path": WORKFLOW_MAP.get(intent)}
+    return {"configured": False, "workflow": None, "module_path": WORKFLOW_MAP.get(intent), "governed": False}
 
 
 def execute_workflow(intent, message, company_id=None, customer_id=None, service_id=None, customer=None, language=None, knowledge=None, business_context=None, **kwargs):
-    """Execute a company workflow or a safe built-in fallback."""
+    """Execute a governed workflow or a safe built-in fallback."""
     resolution = _resolve_workflow(intent, company_id)
     module_path = resolution["module_path"]
     configured = resolution["workflow"]
@@ -73,12 +86,22 @@ def execute_workflow(intent, message, company_id=None, customer_id=None, service
             intent=intent,
             customer=customer,
             language=language,
+            knowledge=knowledge,
+            business_context=business_context,
+            **kwargs,
         )
         if isinstance(result, dict):
             result.setdefault("workflow_configured", bool(configured))
+            result.setdefault("workflow_governed", bool(resolution.get("governed")))
             if configured:
                 result.setdefault("workflow_id", configured.get("id"))
         return result
     except Exception as error:
         print("[WORKFLOW EXECUTION ERROR]", repr(error))
-        return {"success": False, "workflow": intent, "response": "No pude completar ese flujo todavía. Puedo continuar con el diagnóstico contigo.", "reason": "workflow_execution_failed", "error": str(error)}
+        return {
+            "success": False,
+            "workflow": intent,
+            "response": "No pude completar ese flujo todavía. Puedo continuar con el diagnóstico contigo.",
+            "reason": "workflow_execution_failed",
+            "error": str(error),
+        }
