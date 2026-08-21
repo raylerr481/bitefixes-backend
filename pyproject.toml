@@ -15,6 +15,7 @@ dependencies = [
   "httpx",
   "pydantic",
   "python-multipart",
+  "requests",
 ]
 
 [project.optional-dependencies]
