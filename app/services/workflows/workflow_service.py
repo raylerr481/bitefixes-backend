@@ -1,6 +1,8 @@
-"""Bitey Workflow Router V24.
+"""Bitey Workflow Router V25.
 
-Supabase-first workflow resolution with a broad legacy fallback catalog.
+Supabase-first workflow resolution with a governed built-in safety fallback.
+Critical workflows must not be replaced by stale database configuration when
+that configuration would bypass safety or diagnostic gates.
 """
 
 import importlib
@@ -16,6 +18,12 @@ WORKFLOW_MAP = {
     "hardware_upgrade": "app.services.workflows.hardware_upgrade",
     "computer_repair": "app.services.workflows.computer_repair",
     "network_configuration": "app.services.workflows.network_support",
+    "mobile_repair": "app.services.workflows.mobile_repair",
+}
+
+# These workflows contain hard safety/diagnostic gates. A stale or custom DB
+# workflow must never be allowed to bypass those gates.
+GOVERNED_WORKFLOWS = {
     "mobile_repair": "app.services.workflows.mobile_repair",
 }
 
@@ -46,16 +54,26 @@ def _resolve_workflow(intent: str, company_id: Optional[int] = None) -> Dict[str
         print("[WORKFLOW CONFIG WARNING]", repr(exc))
         configured = None
 
+    # Critical workflows are code-governed. We still read the DB configuration
+    # for metadata, but never allow it to replace the safety-critical module.
+    if intent in GOVERNED_WORKFLOWS:
+        return {
+            "configured": bool(configured),
+            "workflow": configured,
+            "module_path": GOVERNED_WORKFLOWS[intent],
+            "governed": True,
+        }
+
     if configured:
         definition = configured.get("definition") or {}
         module_path = configured.get("module_path") or definition.get("module_path") or WORKFLOW_MAP.get(intent)
-        return {"configured": True, "workflow": configured, "module_path": module_path}
+        return {"configured": True, "workflow": configured, "module_path": module_path, "governed": False}
 
-    return {"configured": False, "workflow": None, "module_path": WORKFLOW_MAP.get(intent)}
+    return {"configured": False, "workflow": None, "module_path": WORKFLOW_MAP.get(intent), "governed": False}
 
 
 def execute_workflow(intent, message, company_id=None, customer_id=None, service_id=None, customer=None, language=None, knowledge=None, business_context=None, **kwargs):
-    """Execute a company workflow or a safe built-in fallback."""
+    """Execute a governed workflow or a safe built-in fallback."""
     resolution = _resolve_workflow(intent, company_id)
     module_path = resolution["module_path"]
     configured = resolution["workflow"]
@@ -79,6 +97,7 @@ def execute_workflow(intent, message, company_id=None, customer_id=None, service
         )
         if isinstance(result, dict):
             result.setdefault("workflow_configured", bool(configured))
+            result.setdefault("workflow_governed", bool(resolution.get("governed")))
             if configured:
                 result.setdefault("workflow_id", configured.get("id"))
         return result
