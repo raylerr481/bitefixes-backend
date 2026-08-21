@@ -27,44 +27,14 @@ def normalize(text):
 
 
 INTENT_RULES = {
-    "ai_assistant": [
-        "asistente ia", "assistente ia", "chatbot", "bot whatsapp",
-        "automatizar empresa", "automatizar whatsapp",
-    ],
-    "cctv_installation": [
-        "camera", "cameras", "camera seguranca", "cameras seguranca",
-        "cctv", "monitoramento", "instalar camera", "instalar cameras",
-        "security camera",
-    ],
-    "computer_repair": [
-        "no prende", "no enciende", "nao liga", "nao funciona",
-        "pantalla negra", "tela preta", "reparar", "arreglar", "virus",
-    ],
-    "hardware_upgrade": [
-        "ssd", "ram", "memoria", "upgrade", "lento", "melhorar", "mejorar",
-    ],
-    "network_configuration": [
-        "configurar wifi", "configurar minha rede", "configurar rede",
-        "configuracao wifi", "configuracao de rede", "configurar roteador",
-        "configurar router", "configurar internet", "instalar wifi",
-        "instalar rede", "rede wifi", "wifi", "roteador", "router",
-    ],
-    "remote_support": [
-        "suporte remoto", "soporte remoto", "remote support",
-        "atendimento remoto", "ayuda remota",
-    ],
-    "mobile_repair": [
-        "reparar celular", "arreglar celular", "consertar celular",
-        "reparar telefone", "consertar telefone", "mobile repair",
-        "celular quebrado", "telefono roto", "pantalla rota",
-        "pantalla del telefono", "pantalla de telefono", "pantalla de celular",
-        "tela quebrada", "tela do celular", "tela do telefone",
-        "display quebrado", "display roto", "display do celular",
-    ],
-    "windows_installation": [
-        "instalar windows", "instalacion windows", "instalacao windows",
-        "formatar computador", "formatar notebook", "formatear pc",
-    ],
+    "ai_assistant": ["asistente ia", "assistente ia", "chatbot", "bot whatsapp", "automatizar empresa", "automatizar whatsapp"],
+    "cctv_installation": ["camera", "cameras", "camera seguranca", "cameras seguranca", "cctv", "monitoramento", "instalar camera", "instalar cameras", "security camera"],
+    "computer_repair": ["no prende", "no enciende", "nao liga", "nao funciona", "pantalla negra", "tela preta", "reparar", "arreglar", "virus"],
+    "hardware_upgrade": ["ssd", "ram", "memoria", "upgrade", "lento", "melhorar", "mejorar"],
+    "network_configuration": ["configurar wifi", "configurar minha rede", "configurar rede", "configuracao wifi", "configuracao de rede", "configurar roteador", "configurar router", "configurar internet", "instalar wifi", "instalar rede", "rede wifi", "wifi", "roteador", "router"],
+    "remote_support": ["suporte remoto", "soporte remoto", "remote support", "atendimento remoto", "ayuda remota"],
+    "mobile_repair": ["reparar celular", "arreglar celular", "consertar celular", "reparar telefone", "consertar telefone", "mobile repair", "celular quebrado", "telefono roto", "pantalla rota", "pantalla del telefono", "pantalla de telefono", "pantalla de celular", "tela quebrada", "tela do celular", "tela do telefone", "display quebrado", "display roto", "display do celular"],
+    "windows_installation": ["instalar windows", "instalacion windows", "instalacao windows", "formatar computador", "formatar notebook", "formatear pc"],
 }
 
 
@@ -81,13 +51,7 @@ def get_company_services(company_id):
     if not company_id:
         return []
     try:
-        result = (
-            database.table("services")
-            .select("id,name,description,intent,capability_id,is_active")
-            .eq("company_id", company_id)
-            .eq("is_active", True)
-            .execute()
-        )
+        result = database.table("services").select("id,name,description,intent,capability_id,is_active").eq("company_id", company_id).eq("is_active", True).execute()
         return result.data or []
     except Exception as error:
         print("[SERVICE INTENT ERROR]", error)
@@ -122,11 +86,9 @@ def mobile_typo_signal(text):
     phone_words = {"telefono", "celular", "telefone", "phone", "mobile"}
     screen_words = {"pantalla", "tela", "display", "screen"}
     broken_words = {"rota", "roto", "quebrada", "quebrado", "broken"}
-
     has_phone = any(word in phone_words or fuzzy_token(word, phone_words) for word in words)
     has_screen = any(word in screen_words or fuzzy_token(word, screen_words) for word in words)
     has_broken = any(word in broken_words or fuzzy_token(word, broken_words) for word in words)
-
     return has_phone and has_screen and has_broken
 
 
@@ -135,10 +97,7 @@ def score_company_services(text, company_id, scores):
         service_intent = service.get("intent")
         if not service_intent:
             continue
-        score = 0
-        score += phrase_score(service.get("name", ""), text)
-        score += phrase_score(service.get("description", ""), text)
-        score += phrase_score(service_intent.replace("_", " "), text)
+        score = phrase_score(service.get("name", ""), text) + phrase_score(service.get("description", ""), text) + phrase_score(service_intent.replace("_", " "), text)
         if score:
             scores[service_intent] = scores.get(service_intent, 0) + score
 
@@ -146,15 +105,10 @@ def score_company_services(text, company_id, scores):
 def detect_intent(message, company_id=None, context=None):
     try:
         text = normalize(message)
-
-        # Greetings are conversational control messages, never service intents.
-        # This guard must run before DB synonyms/company-service scoring so a stale
-        # synonym or service description cannot classify "hola" as a repair.
         if text in GREETING_WORDS:
             return {"intent": None, "confidence": 0.0, "scores": {}}
 
         scores = {}
-
         for item in get_synonyms():
             keyword = item.get("keyword", "")
             intent = item.get("intent")
@@ -172,10 +126,8 @@ def detect_intent(message, company_id=None, context=None):
             scores["mobile_repair"] = scores.get("mobile_repair", 0) + 30
 
         score_company_services(text, company_id, scores)
-
         if context:
             last = context.get("last_intent")
-            # Context is a small tie-breaker, never enough to invent an intent.
             if last in scores:
                 scores[last] += 5
 
@@ -184,10 +136,10 @@ def detect_intent(message, company_id=None, context=None):
 
         intent = max(scores, key=scores.get)
         raw_score = float(scores[intent])
-        # Public confidence is always normalized to [0, 1]. Keep raw scores for
-        # diagnostics, but never leak a value such as 99 that the UI can render
-        # as 9900%.
-        confidence = min(raw_score / 100.0, 1.0)
+        # 22 is the base score for a direct phrase match. This keeps strong,
+        # explicit phrases near 99% while still normalizing all public values to
+        # the [0, 1] range expected by the UI and decision gates.
+        confidence = min((raw_score / 22.0) * 0.99, 0.99)
         print("[INTENT SCORES]", scores, "confidence=", confidence)
         return {"intent": intent, "confidence": confidence, "scores": scores}
     except Exception as error:
