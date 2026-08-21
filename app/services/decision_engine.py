@@ -1,4 +1,4 @@
-"""BiteFixes Decision Engine V23 — governed reasoning and AI consultation."""
+"""BiteFixes Decision Engine V24 — governed reasoning and AI consultation."""
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
 from app.services.business_reasoning_service import resolve_business_reasoning
@@ -102,7 +102,14 @@ def make_decision(company_id: int, customer: Dict, message: str, intent: Dict, k
             memory=memory,
         )
         ok = bool(workflow_result.get("success"))
-        response = semantic_response or workflow_result.get("response") or "Voy a ayudarte con el diagnóstico."
+        # Workflow responses are authoritative when the workflow is collecting
+        # diagnostic requirements. Business reasoning must not replace a
+        # question with a generic "we can repair it" sentence.
+        workflow_response = workflow_result.get("response")
+        if workflow_result.get("diagnostic_pending"):
+            response = workflow_response or "Voy a ayudarte con el diagnóstico."
+        else:
+            response = semantic_response or workflow_response or "Voy a ayudarte con el diagnóstico."
         return {"action": "workflow", "create_ticket": ok, "requires_quote": requires_quote if ok else False, "ticket_type": "technical_support" if ok else None, "response": response, "workflow": intent_name, "workflow_result": workflow_result, "ticket": workflow_result.get("ticket"), "service": service, "service_id": service_id, "reasoning": reasoning, "metadata": metadata}
 
     return {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "response": semantic_response or "Puedo ayudarte a identificar lo que necesitas. ¿Qué problema o servicio buscas?", "workflow": None, "service": service, "service_id": service_id, "reasoning": reasoning, "metadata": metadata}
