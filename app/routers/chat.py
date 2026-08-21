@@ -22,6 +22,8 @@ def chat(request: ChatRequest):
             conversation_id=request.conversation_id,
             language_preference=request.language_preference,
             preferred_contact_channel=request.preferred_contact_channel,
+            page_context=request.page_context,
+            service_context=request.service_context,
         )
     except Exception as error:
         import traceback
