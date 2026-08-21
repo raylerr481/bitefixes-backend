@@ -1,4 +1,4 @@
-"""Bitey Intent Engine V13 — hybrid semantic understanding with safe context inheritance."""
+"""Bitey Intent Engine V14 — explicit intent guards plus safe context inheritance."""
 import re
 import unicodedata
 from difflib import SequenceMatcher
@@ -12,19 +12,20 @@ except Exception:
 
 GREETING_VARIANTS = ("hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "bom dia", "boa tarde", "boa noite")
 PHONE_WORDS = {"telefono", "telefonos", "celular", "celulares", "movil", "moviles", "telefone", "telefones", "phone", "mobile", "mobiles", "telfono", "telf"}
-REPAIR_WORDS = {"reparar", "repararlo", "repararme", "reparo", "reparacion", "arreglar", "arreglarlo", "arreglo", "consertar", "conserto", "roto", "rota", "quebrado", "quebrada", "arreglarmi"}
+COMPUTER_WORDS = {"pc", "computadora", "computador", "ordenador", "notebook", "portatil", "laptop", "windows"}
+REPAIR_WORDS = {"reparar", "repararlo", "repararme", "reparo", "reparacion", "arreglar", "arreglarlo", "arreglo", "consertar", "conserto", "roto", "rota", "quebrado", "quebrada", "danado", "danada", "dañado", "dañada", "arreglarmi"}
 DIAGNOSTIC_WORDS = {"diagnostico", "diagnosticar", "diagnosis", "problema", "fallo", "fallando", "revisar", "revision", "revisalo", "revisarlo", "diagnosktico"}
 FOLLOWUP_WORDS = {"haz", "haga", "hacer", "diagnostico", "diagnosticar", "revisar", "revisalo", "revisarlo", "como", "dime", "decime", "puedo", "pueden", "quiero", "necesito", "precio", "costo", "cuanto", "cuando", "donde", "ubicacion", "direccion", "arreglar", "reparar", "repararlo", "eso", "este", "esta", "lo", "la", "el"}
 
 INTENT_RULES = {
     "ai_assistant": ["asistente ia", "assistente ia", "chatbot", "bot whatsapp", "automatizar empresa", "automatizar whatsapp", "inteligencia artificial"],
     "cctv_installation": ["camera", "cameras", "camara", "camaras", "camera seguranca", "cameras seguranca", "cctv", "monitoramento", "instalar camera", "instalar cameras", "security camera", "camara seguridad"],
-    "computer_repair": ["no prende", "no enciende", "nao liga", "nao funciona", "pantalla negra", "tela preta", "reparar computador", "reparar computadora", "arreglar pc", "reparar pc", "virus", "computadora", "ordenador", "pc", "notebook", "portatil", "laptop"],
+    "computer_repair": ["no prende", "no enciende", "nao liga", "nao funciona", "pantalla negra", "tela preta", "reparar computador", "reparar computadora", "arreglar pc", "reparar pc", "pc rota", "pc roto", "computadora rota", "computadora rota", "computador quebrado", "notebook roto", "laptop rota", "virus", "computadora", "ordenador", "pc", "notebook", "portatil", "laptop"],
     "hardware_upgrade": ["ssd", "ram", "memoria", "upgrade", "lento", "melhorar", "mejorar", "actualizar memoria", "aumentar memoria", "mas ram"],
     "network_configuration": ["configurar wifi", "configurar minha rede", "configurar rede", "configuracao wifi", "configuracao de rede", "configurar roteador", "configurar router", "configurar internet", "instalar wifi", "instalar rede", "rede wifi", "wifi", "roteador", "router"],
     "remote_support": ["suporte remoto", "soporte remoto", "remote support", "atendimento remoto", "ayuda remota"],
     "mobile_repair": ["celular", "celulares", "movil", "moviles", "telefono", "telefonos", "telefone", "telefones", "phone", "mobile", "mobiles", "reparar celular", "arreglar celular", "consertar celular", "reparar telefone", "consertar telefone", "mobile repair", "celular roto", "movil roto", "telefono roto", "pantalla rota", "pantalla del telefono", "pantalla de telefono", "pantalla de celular", "tela quebrada", "tela do celular", "display quebrado", "display roto", "vidro quebrado", "vidrio roto"],
-    "windows_installation": ["instalar windows", "instalacion windows", "instalacao windows", "formatar computador", "formatar notebook", "formatear pc"],
+    "windows_installation": ["instalar windows", "instalacion windows", "instalacao windows", "reinstalar windows", "reparar windows", "arreglar windows", "windows roto", "windows danado", "windows dañado", "windows no funciona", "windows no inicia", "windows no arranca", "windows con error", "formatear windows", "formatar windows", "formatar computador", "formatar notebook", "formatear pc"],
 }
 
 
@@ -58,6 +59,19 @@ def mobile_semantic_signal(text):
     has_repair = any(w in REPAIR_WORDS or fuzzy(w, REPAIR_WORDS) for w in words)
     has_diagnostic = any(w in DIAGNOSTIC_WORDS or fuzzy(w, DIAGNOSTIC_WORDS) for w in words)
     return has_phone and (has_repair or has_diagnostic)
+
+
+def explicit_intent_signal(message):
+    """Return a strong, standalone intent that must beat stale conversation context."""
+    text = normalize(message)
+    words = set(text.split())
+    if "windows" in words and (words & (REPAIR_WORDS | DIAGNOSTIC_WORDS | {"necesito", "ayuda", "problema", "error", "no", "instalar", "reinstalar", "formatear", "formatar"})):
+        return "windows_installation"
+    if words & COMPUTER_WORDS and words & REPAIR_WORDS:
+        return "computer_repair"
+    if any(keyword_match(phrase, text) for phrase in INTENT_RULES["computer_repair"] if "rota" in phrase or "roto" in phrase or "quebrado" in phrase or "quebrada" in phrase):
+        return "computer_repair"
+    return None
 
 
 def is_contextual_followup(message):
@@ -133,9 +147,7 @@ def score_company_services(text, company_id, scores):
         service_intent = service.get("intent")
         if not service_intent:
             continue
-        score = (phrase_score(service.get("name", ""), text) +
-                 phrase_score(service.get("description", ""), text) +
-                 phrase_score(service_intent.replace("_", " "), text))
+        score = (phrase_score(service.get("name", ""), text) + phrase_score(service.get("description", ""), text) + phrase_score(service_intent.replace("_", " "), text))
         if score:
             scores[service_intent] = scores.get(service_intent, 0) + score
 
@@ -158,7 +170,6 @@ def _llm_score(llm_result, scores):
         llm_conf = max(0.0, min(1.0, float(llm_result.get("confidence", 0) or 0)))
     except (TypeError, ValueError):
         llm_conf = 0.0
-    # LLMs are semantic evidence only. They never become authoritative by themselves.
     scores[llm_intent] = scores.get(llm_intent, 0) + max(8, int(llm_conf * 55))
 
 
@@ -170,9 +181,11 @@ def detect_intent(message, company_id=None, context=None):
         concept = understand_concept(message, context=context)
         primary = concept.get("concept") or {}
 
-        # Absolute guard: greetings have no service intent and cannot inherit one.
         if is_greeting(message):
             return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}, "concept": concept, "learning": {"status": "not_applicable"}, "greeting": True}
+
+        # Explicit device/OS intent is authoritative over stale conversation context.
+        explicit_intent = explicit_intent_signal(message)
 
         llm_result = {}
         if llm_understand:
@@ -200,12 +213,17 @@ def detect_intent(message, company_id=None, context=None):
             scores["mobile_repair"] = scores.get("mobile_repair", 0) + 35
         score_company_services(text, company_id, scores)
 
-        last_intent = context.get("last_intent")
-        active_ticket = recover_active_ticket(context)
-        active_intent = (active_ticket or {}).get("intent") or last_intent
-        contextual = bool(active_intent and (active_ticket or last_intent) and is_contextual_followup(message))
+        if explicit_intent:
+            scores[explicit_intent] = max(scores.get(explicit_intent, 0), 120)
+            # Explicitly identified new subject cancels stale-ticket inheritance.
+            active_ticket = None
+        else:
+            active_ticket = recover_active_ticket(context)
 
-        # Context is stronger than a weak standalone classifier on follow-up turns.
+        last_intent = context.get("last_intent")
+        active_intent = (active_ticket or {}).get("intent") or last_intent
+        contextual = bool(not explicit_intent and active_intent and (active_ticket or last_intent) and is_contextual_followup(message))
+
         if contextual and active_intent:
             scores[active_intent] = max(scores.get(active_intent, 0), 75)
             for candidate in list(scores):
@@ -221,14 +239,14 @@ def detect_intent(message, company_id=None, context=None):
             record_learning(learning, company_id=context.get("company_id"), conversation_id=context.get("conversation_id"))
             return {"intent": None, "confidence": 0.0, "raw_score": 0, "scores": {}, "concept": concept, "learning": learning, "llm": llm_result}
 
-        intent = max(scores, key=scores.get)
+        intent = explicit_intent or max(scores, key=scores.get)
         raw = scores[intent]
         confidence = _normalize_confidence(raw, scores)
 
-        # Low-confidence classifications are not actionable. Preserve the signal for
-        # diagnostics/learning, but return no intent to the decision layer.
         min_confidence = 0.70
-        if contextual and active_intent == intent:
+        if explicit_intent:
+            confidence = max(confidence, 0.92)
+        elif contextual and active_intent == intent:
             confidence = max(confidence, 0.88)
         elif confidence < min_confidence:
             learning = propose_learning(message, intent=None, language=context.get("language", "auto"))
@@ -238,18 +256,14 @@ def detect_intent(message, company_id=None, context=None):
         learning = propose_learning(message, intent=intent, language=context.get("language", "auto"))
         record_learning(learning, company_id=context.get("company_id"), conversation_id=context.get("conversation_id"))
         return {
-            "intent": intent,
-            "confidence": confidence,
-            "raw_score": raw,
-            "scores": scores,
-            "concept": concept,
-            "learning": learning,
-            "active_ticket": active_ticket,
+            "intent": intent, "confidence": confidence, "raw_score": raw, "scores": scores, "concept": concept,
+            "learning": learning, "active_ticket": active_ticket,
             "context_inherited": contextual and bool(active_intent),
             "context_source": "active_ticket" if contextual and active_ticket else ("active_conversation" if contextual else None),
             "llm": llm_result,
             "entities": llm_result.get("entities", {}) if isinstance(llm_result, dict) else {},
             "user_goal": llm_result.get("user_goal") if isinstance(llm_result, dict) else None,
+            "explicit_intent": bool(explicit_intent),
         }
     except Exception as error:
         print("[INTENT ERROR]", error)
