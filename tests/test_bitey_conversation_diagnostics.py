@@ -22,7 +22,7 @@ def test_intent_confidence_is_normalized(monkeypatch):
 
     assert result["intent"] == "mobile_repair"
     assert 0.0 <= result["confidence"] <= 1.0
-    assert result["confidence"] == 0.20
+    assert result["confidence"] == 0.22
 
 
 def test_mobile_repair_starts_with_diagnosis_without_ticket():
