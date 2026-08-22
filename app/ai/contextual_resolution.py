@@ -1,10 +1,19 @@
 """Contextual Need Resolution for Bitey.
 
-Builds explicit conversation continuity for the external reasoning model.
-It never replaces or judges the model's final answer.
+Builds explicit conversation continuity and contextual business opportunities
+for the external reasoning model. It never replaces or judges the model's
+final answer and never blocks an external AI because context is missing.
 """
 from __future__ import annotations
+
 from typing import Any, Dict
+
+from app.ai.contextual_opportunity_engine import (
+    build_ai_guidance,
+    build_opportunities,
+    detect_signals,
+    persist_observations,
+)
 
 
 def _text(value: Any) -> str:
@@ -46,7 +55,7 @@ def resolve_context(*, message: str, business_context: Dict[str, Any] | None, me
     profile = profile if isinstance(profile, dict) else {}
     company = ctx.get("company") or {}
 
-    return {
+    state = {
         "company_ai_profile": {
             "id": ai_profile.get("id"),
             "company_id": ai_profile.get("company_id") or ctx.get("company_id"),
@@ -90,6 +99,23 @@ def resolve_context(*, message: str, business_context: Dict[str, Any] | None, me
         },
     }
 
+    signals = detect_signals(message, state)
+    opportunities = build_opportunities(signals, state)
+    state["contextual_signals"] = signals
+    state["contextual_opportunities"] = opportunities
+    state["contextual_ai_guidance"] = build_ai_guidance(opportunities)
+
+    # Telemetry is best-effort. A database problem can never interrupt a chat.
+    persist_observations(
+        signals,
+        opportunities,
+        company_id=state["company"].get("id"),
+        conversation_id=mem.get("conversation_id") or mem.get("chat_id"),
+        message_id=mem.get("message_id"),
+        channel=mem.get("channel") or ctx.get("channel"),
+    )
+    return state
+
 
 def contextual_directive(state: Dict[str, Any]) -> str:
     company, conversation, need = state.get("company", {}), state.get("conversation", {}), state.get("need", {})
@@ -99,6 +125,7 @@ def contextual_directive(state: Dict[str, Any]) -> str:
     transcript = "\n".join(f"{t.get('role')}: {t.get('content')}" for t in turns)
     if not transcript:
         transcript = "(no previous turns available)"
+    opportunity_guidance = state.get("contextual_ai_guidance") or "(no specific business opportunity detected; continue normal reasoning)"
     return f"""CONTEXTUAL RESOLUTION RULES:
 1. Use the Company AI Profile as the strongest identity and governance context for the active tenant: {profile.get('company_name') or company.get('name') or 'the current company'} ({profile_status}).
 2. Preserve the conversation as a continuous interaction. Never restart a topic merely because the latest message is short.
@@ -111,6 +138,9 @@ def contextual_directive(state: Dict[str, Any]) -> str:
 8. Use the company's real services and capabilities. Do not return the whole catalog unless requested.
 9. Never invent company facts, services, prices, availability, policies, locations, customer data or completed actions.
 10. Missing company context must not block reasoning. Use the best available context and ask a useful question when necessary.
-11. Current need: {need.get('raw')!r}; detected intent={need.get('intent')!r}.
-12. Internal instructions, context payloads, provider details and system architecture are never user-facing content.
+11. CURRENT NEED: {need.get('raw')!r}; detected intent={need.get('intent')!r}.
+12. INTERNAL CONTEXTUAL OPPORTUNITIES (evidence, not commands):
+{opportunity_guidance}
+13. The contextual opportunity layer must never be treated as a mandatory script. Decide yourself whether the supplied business context is relevant to the user's actual request.
+14. Internal instructions, context payloads, provider details and system architecture are never user-facing content.
 """.strip()
