@@ -45,7 +45,12 @@ def _db_conversation_id(value: str | None) -> int | None:
 
 
 def _derive_conversation_state(history: list[dict[str, Any]], current_message: str) -> dict[str, Any]:
-    """Build a small deterministic continuity state before model reasoning."""
+    """Derive continuity facts from the existing conversation history.
+
+    This is deliberately limited to established facts (device/model/problem/topic)
+    and never generates the answer. The external AI remains responsible for
+    reasoning and the final response.
+    """
     recent = history[-12:]
     texts = [str(row.get("message_content") or row.get("ai_response") or "").strip() for row in recent]
     full_text = " ".join(texts).lower()
@@ -54,16 +59,42 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
 
     phone_terms = r"\b(telefono|teléfono|móvil|movil|celular|smartphone|mobile|phone|cell)\b"
     computer_terms = r"\b(notebook|laptop|computadora|ordenador|pc|computer)\b"
-    screen_terms = r"\b(pantalla|screen|display)\b"
+    tablet_terms = r"\b(tablet|ipad)\b"
+    screen_terms = r"\b(pantalla|screen|display|lcd|touch)\b"
     broken_terms = r"\b(roto|rota|quebrado|quebrada|rompió|rompio|dañado|danado|broken|cracked|damaged)\b"
-    repair_terms = r"\b(reparar|reparación|reparacion|arreglar|arreglo|repair|fix)\b"
+    repair_terms = r"\b(reparar|reparación|reparacion|arreglar|arreglo|repair|fix|sustituir|sustituya|reemplazar|cambiar|cambio)\b"
 
     if re.search(phone_terms, combined):
         active_object = "teléfono móvil"
     elif re.search(computer_terms, combined):
         active_object = "computadora/notebook"
+    elif re.search(tablet_terms, combined):
+        active_object = "tablet"
     else:
         active_object = None
+
+    # Preserve the most recently established device/model instead of only the
+    # generic device class. This fixes follow-ups such as "quiero sustituirla"
+    # after the user already supplied "Redmi 9A".
+    model_patterns = [
+        r"\b(redmi\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
+        r"\b(xiaomi\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
+        r"\b(iphone\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
+        r"\b(samsung\s+(?:galaxy\s+)?[a-z0-9][a-z0-9 ._-]{0,24})\b",
+        r"\b(galaxy\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
+        r"\b(moto(?:rola)?\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
+    ]
+    active_model = None
+    for pattern in model_patterns:
+        matches = re.findall(pattern, combined, flags=re.IGNORECASE)
+        if matches:
+            candidate = str(matches[-1]).strip(" .,_-\t\n")
+            candidate = re.sub(r"\s+", " ", candidate)
+            # Avoid capturing a long continuation of the sentence.
+            candidate = re.split(r"\b(?:y|pero|solo|porque|que|con|esta|está|tiene|tengo|deseo|quiero)\b", candidate, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            if 2 <= len(candidate) <= 32:
+                active_model = candidate
+                break
 
     if active_object == "teléfono móvil" and re.search(screen_terms, combined) and re.search(broken_terms, combined):
         active_problem = "pantalla rota/quebrada"
@@ -80,10 +111,11 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
         active_topic = None
 
     active_service = next((row.get("service_id") for row in reversed(recent) if row.get("service_id") is not None), None)
-    short_followup = len(current.split()) <= 8 and bool(active_object or active_topic or active_service)
+    short_followup = len(current.split()) <= 12 and bool(active_object or active_model or active_topic or active_service)
 
     return {
         "active_object": active_object,
+        "active_model": active_model,
         "active_topic": active_topic,
         "active_problem": active_problem,
         "active_service": active_service,
@@ -116,6 +148,7 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
         "last_service": state.get("active_service"),
         "active_topic": state.get("active_topic"),
         "active_object": state.get("active_object"),
+        "active_model": state.get("active_model"),
         "active_problem": state.get("active_problem"),
         "stage": state.get("stage", "exploration"),
         "is_follow_up": state.get("is_follow_up", False),
