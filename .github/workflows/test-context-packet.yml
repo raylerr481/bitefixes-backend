@@ -1,6 +1,9 @@
 name: Test company AI context packet
 
 on:
+  push:
+    branches:
+      - "improve/pr12-context-bounded"
   pull_request:
     paths:
       - "app/ai/ai_council.py"
