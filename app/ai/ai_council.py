@@ -62,69 +62,139 @@ transports context, provides authorized information/tools, stores learning
 artifacts and delivers your response.
 """.strip()
 
+# Keep the cognitive context useful without sending the entire accumulated
+# memory/knowledge payload to every provider. The user message and business
+# identity are highest priority; verbose historical/search material is bounded.
+CONTEXT_BUDGET = {
+    "business_index": 9000,
+    "contextual_state": 6000,
+    "contextual_directive": 5000,
+    "tool_context": 6000,
+    "memory": 5000,
+    "knowledge": 7000,
+}
+
+
+def _compact(value: Any, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    # Preserve both the beginning (identity/definitions) and the tail
+    # (recent/relevant material) instead of blindly dropping one side.
+    head = max(1000, int(limit * 0.72))
+    tail = max(500, limit - head - 80)
+    return text[:head] + "\n...[context compacted by Bitey]...\n" + text[-tail:]
+
+
 def _search_context(message: str, language: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    if "web_search" not in set(context.get("capabilities") or ()): return {}
+    if "web_search" not in set(context.get("capabilities") or ()):
+        return {}
     try:
         from app.services.web_search_service import search_web
-        query=str(context.get("search_query") or "").strip()
+        query = str(context.get("search_query") or "").strip()
         if not query:
-            postal=re.search(r"\b\d{5}-?\d{3}\b",message); query=f"CEP {postal.group(0)} Brasil" if postal else message.strip()
-        if not query: return {}
-        result=search_web(query=query,language=language or "en",limit=5)
-        return {"web_search":{"requested":True,"query":query,"provider":result.get("provider"),"fallback_used":bool(result.get("fallback_used")),"verified":bool(result.get("verified")),"results":result.get("results") or []}}
+            postal = re.search(r"\b\d{5}-?\d{3}\b", message)
+            query = f"CEP {postal.group(0)} Brasil" if postal else message.strip()
+        if not query:
+            return {}
+        result = search_web(query=query, language=language or "en", limit=5)
+        return {"web_search": {"requested": True, "query": query, "provider": result.get("provider"), "fallback_used": bool(result.get("fallback_used")), "verified": bool(result.get("verified")), "results": result.get("results") or []}}
     except Exception as exc:
-        print(f"[AI RECTOR SEARCH WARNING] error={type(exc).__name__}"); return {"web_search":{"requested":True,"provider":None,"results":[],"error":type(exc).__name__}}
+        print(f"[AI RECTOR SEARCH WARNING] error={type(exc).__name__}")
+        return {"web_search": {"requested": True, "provider": None, "results": [], "error": type(exc).__name__}}
+
 
 def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
     def names(items: List[Any]) -> List[str]:
-        out=[]
+        out = []
         for item in items or []:
-            value=item
-            if isinstance(item,dict): value=item.get("name") or item.get("title") or item.get("slug") or item.get("service") or item.get("capability") or item.get("domain")
-            if value: out.append(str(value))
+            value = item
+            if isinstance(item, dict):
+                value = item.get("name") or item.get("title") or item.get("slug") or item.get("service") or item.get("capability") or item.get("domain")
+            if value:
+                out.append(str(value))
         return out
-    return {"company":context.get("company") or {},"profile":context.get("business_profile") or {},"domains":names(context.get("domains")),"services":names(context.get("services")),"capabilities":names(context.get("capabilities")),"ai_scope":context.get("ai_scope") or {},"knowledge_available":bool(context.get("knowledge"))}
+    return {"company": context.get("company") or {}, "profile": context.get("business_profile") or {}, "domains": names(context.get("domains")), "services": names(context.get("services")), "capabilities": names(context.get("capabilities")), "ai_scope": context.get("ai_scope") or {}, "knowledge_available": bool(context.get("knowledge"))}
+
 
 async def _ask_provider(spec: Any, message: str, language: str, context: Dict[str, Any]) -> Dict[str, Any] | None:
     try:
-        state=resolve_context(message=message,business_context=context.get("business_context") or {},memory=context.get("memory") or {},intent=context.get("intent") or {})
-        directive=contextual_directive(state); tool_context=_search_context(message,language,context); business_index=_business_index(context.get("business_context") or {})
-        enriched={**context,"business_context_index":business_index,"contextual_state":state,"contextual_directive":directive,**tool_context,"language":language,"rector_directives":RECTOR_DIRECTIVES}
-        prompt=f"{RECTOR_DIRECTIVES}\n\nBUSINESS ENVIRONMENT INDEX:\n{business_index}\n\nCONTEXTUAL STATE:\n{state}\n\nGOVERNED TOOL RESULT:\n{tool_context}\n\nUSER MESSAGE:\n{message.strip()}"
-        print(f"[AI RECTOR] provider={spec.name} status=requested")
-        answer=await spec.provider.generate(prompt,context=enriched)
-        if not answer: return {"_error":{"category":"empty_response","http_status":None},"provider":spec.name}
-        return {"provider":spec.name,"answer":str(answer).strip(),"cost_class":spec.cost_class,"capabilities":list(spec.capabilities),"tool_use":{"web_search":bool(tool_context.get("web_search",{}).get("requested"))},"evidence":tool_context.get("web_search",{}).get("results",[]),"search_query":tool_context.get("web_search",{}).get("query"),"search_verified":bool(tool_context.get("web_search",{}).get("verified")),"contextual_state":state,"business_context_index":business_index,"learning_authority":"external_ai"}
+        state = resolve_context(message=message, business_context=context.get("business_context") or {}, memory=context.get("memory") or {}, intent=context.get("intent") or {})
+        directive = contextual_directive(state)
+        tool_context = _search_context(message, language, context)
+        business_index = _business_index(context.get("business_context") or {})
+
+        # Build a bounded cognitive packet. This is transport optimization, not
+        # cognitive selection: the external AI still receives the relevant
+        # company identity, capabilities, memory, tools and current message.
+        cognitive_packet = {
+            "business_context_index": _compact(business_index, CONTEXT_BUDGET["business_index"]),
+            "contextual_state": _compact(state, CONTEXT_BUDGET["contextual_state"]),
+            "contextual_directive": _compact(directive, CONTEXT_BUDGET["contextual_directive"]),
+            "governed_tool_result": _compact(tool_context, CONTEXT_BUDGET["tool_context"]),
+            "memory": _compact(context.get("memory"), CONTEXT_BUDGET["memory"]),
+            "knowledge": _compact(context.get("knowledge"), CONTEXT_BUDGET["knowledge"]),
+        }
+        enriched = {**context, **cognitive_packet, "business_context_index": business_index, "contextual_state": state, "contextual_directive": directive, **tool_context, "language": language, "rector_directives": RECTOR_DIRECTIVES}
+
+        prompt = (
+            f"{RECTOR_DIRECTIVES}\n\n"
+            f"BUSINESS ENVIRONMENT INDEX:\n{cognitive_packet['business_context_index']}\n\n"
+            f"CONTEXTUAL STATE:\n{cognitive_packet['contextual_state']}\n\n"
+            f"CONTEXTUAL DIRECTIVE:\n{cognitive_packet['contextual_directive']}\n\n"
+            f"GOVERNED TOOL RESULT:\n{cognitive_packet['governed_tool_result']}\n\n"
+            f"RELEVANT MEMORY:\n{cognitive_packet['memory']}\n\n"
+            f"RELEVANT KNOWLEDGE:\n{cognitive_packet['knowledge']}\n\n"
+            f"USER MESSAGE:\n{message.strip()}"
+        )
+        print(f"[AI RECTOR] provider={spec.name} status=requested context_chars={len(prompt)}")
+        answer = await spec.provider.generate(prompt, context=enriched)
+        if not answer:
+            return {"_error": {"category": "empty_response", "http_status": None}, "provider": spec.name}
+        return {"provider": spec.name, "answer": str(answer).strip(), "cost_class": spec.cost_class, "capabilities": list(spec.capabilities), "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))}, "evidence": tool_context.get("web_search", {}).get("results", []), "search_query": tool_context.get("web_search", {}).get("query"), "search_verified": bool(tool_context.get("web_search", {}).get("verified")), "contextual_state": state, "business_context_index": business_index, "learning_authority": "external_ai"}
     except Exception as exc:
-        diagnostic=classify_exception(exc); print(f"[AI RECTOR] provider={spec.name} status=error category={diagnostic.get('category')} http_status={diagnostic.get('http_status')}"); return {"_error":diagnostic,"provider":spec.name}
+        diagnostic = classify_exception(exc)
+        print(f"[AI RECTOR] provider={spec.name} status=error category={diagnostic.get('category')} http_status={diagnostic.get('http_status')}")
+        return {"_error": diagnostic, "provider": spec.name}
+
 
 def consult(message: str, *, language: str, context: Dict[str, Any], max_providers: int = 1, capabilities: Sequence[str] | None = None) -> List[Dict[str, Any]]:
     """Give one cognitive turn to the first healthy external rector; failover is operational only."""
-    if max_providers<=0: return []
-    registry=build_ai_orchestrator().registry; requested=tuple(dict.fromkeys(capabilities or ("general_reasoning",)))
-    providers=[]; seen=set()
+    if max_providers <= 0:
+        return []
+    registry = build_ai_orchestrator().registry
+    requested = tuple(dict.fromkeys(capabilities or ("general_reasoning",)))
+    providers = []
+    seen = set()
     for capability in requested:
         for spec in registry.available(capability):
-            if spec.name not in seen: providers.append(spec); seen.add(spec.name)
-    if not providers: providers=registry.available("general_reasoning")
-    if not providers: return []
-    print("[AI RECTOR] providers="+",".join(spec.name for spec in providers))
+            if spec.name not in seen:
+                providers.append(spec)
+                seen.add(spec.name)
+    if not providers:
+        providers = registry.available("general_reasoning")
+    if not providers:
+        return []
+    print("[AI RECTOR] providers=" + ",".join(spec.name for spec in providers))
 
     async def run() -> List[Dict[str, Any]]:
         for spec in providers:
-            health=await probe_provider_spec(spec)
+            health = await probe_provider_spec(spec)
             if health is not None and not health.get("ok"):
                 print(f"[AI RECTOR] provider={spec.name} health=unhealthy category={health.get('category')} http_status={health.get('http_status')}")
                 continue
-            result=await _ask_provider(spec,message,language,context)
+            result = await _ask_provider(spec, message, language, context)
             if result and result.get("answer"):
-                result["provider_health"]=health
+                result["provider_health"] = health
                 print(f"[AI RECTOR] provider={spec.name} status=selected")
                 return [result]
         return []
-    try: return asyncio.run(run())
+    try:
+        return asyncio.run(run())
     except RuntimeError:
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool: return pool.submit(lambda:asyncio.run(run())).result()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: asyncio.run(run())).result()
     except Exception as exc:
-        print("[AI RECTOR] status=error error="+type(exc).__name__); return []
+        print("[AI RECTOR] status=error error=" + type(exc).__name__)
+        return []
