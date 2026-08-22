@@ -1,41 +1,13 @@
-"""Bitey AI-first decision gateway.
+"""External-AI rector gateway.
 
-External AI is the cognitive and conversational authority. Bitey is a second
-plane: it supplies company context, memory, governed tools, persistence,
-evaluation and action safety. It must not replace a valid external-AI answer
-with a deterministic catalog/template response.
+External AI is the sole cognitive and conversational authority. Bitey supplies
+company context, memory, governed tools, persistence and operational safety,
+but does not evaluate, rewrite, rank or replace an external-AI answer.
 """
 from __future__ import annotations
-
 from typing import Any, Dict, Optional
-
 from app.services.company_service import get_company_context
-from app.services.decision_engine import make_decision as legacy_make_decision
 from app.ai.consultation_service import consult_if_valuable
-from app.cognitive.archetypes import build_cognitive_state, evaluate_response
-
-
-def _selected_answer(consultation: Dict[str, Any]) -> Optional[str]:
-    evaluation = consultation.get("evaluation") or {}
-    selected = evaluation.get("selected") or {}
-    answer = selected.get("answer")
-    if answer:
-        return str(answer).strip()
-    suggestions = consultation.get("suggestions") or []
-    if suggestions:
-        answer = suggestions[0].get("answer")
-        if answer:
-            return str(answer).strip()
-    return None
-
-
-def _external_stage(consultation: Dict[str, Any], cognitive: Dict[str, Any]) -> str:
-    readiness = cognitive.get("action_readiness") or {}
-    if readiness.get("eligible"):
-        return "commitment_candidate"
-    if consultation.get("used"):
-        return cognitive.get("conversation_stage") or "conversation_or_diagnostic"
-    return cognitive.get("conversation_stage") or "exploration"
 
 
 def decision_engine(
@@ -48,12 +20,12 @@ def decision_engine(
     language: Optional[str] = None,
     business_context: Optional[Dict[str, Any]] = None,
 ):
-    """Prepare the environment, let the external rector reason, then evaluate.
+    """Prepare context and let the external rector produce the response.
 
-    Critical rule: evaluation is second-plane feedback. A deterministic
-    evaluator may score/flag the answer, but it does not replace a valid
-    external-AI answer with a generic catalog or canned response. The legacy
-    action engine is reserved for mature, explicit commitments.
+    Bitey does not perform cognitive evaluation of the external response.
+    Provider health/failover is infrastructure only; the selected external AI
+    remains responsible for interpreting the context and self-checking its own
+    answer according to the rector directives.
     """
     context = business_context
     if context is None:
@@ -66,8 +38,6 @@ def decision_engine(
     memory_dict = memory if isinstance(memory, dict) else {}
     intent_dict = intent if isinstance(intent, dict) else {}
     history = memory_dict.get("history", [])
-
-    cognitive = build_cognitive_state(message=message, company_context=context, memory=memory_dict, history=history)
 
     consultation = {"used": False, "reason": "not_attempted"}
     try:
@@ -90,7 +60,6 @@ def decision_engine(
                 "novelty": 0.7 if not intent_dict.get("intent") else 0.25,
                 "business_impact": 0.2,
                 "estimated_cost": 0.0,
-                "cognitive_state": cognitive,
             },
             conversation_id=memory_dict.get("conversation_id"),
         )
@@ -98,13 +67,9 @@ def decision_engine(
         print("[AI-FIRST CONSULTATION WARNING]", type(exc).__name__)
         consultation = {"used": False, "reason": "consultation_error"}
 
-    answer = _selected_answer(consultation)
-    stage = _external_stage(consultation, cognitive)
-
-    # SECOND PLANE: evaluate and persist quality, but never replace the
-    # external rector's conversational answer with a canned Bitey response.
+    answer = str(consultation.get("answer") or "").strip()
+    selected_provider = consultation.get("provider")
     if answer:
-        response_check = evaluate_response(answer, cognitive)
         return {
             "action": "conversation",
             "create_ticket": False,
@@ -116,20 +81,16 @@ def decision_engine(
             "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
             "reasoning": {},
             "metadata": {
-                "architecture": "external-rector-primary-v33",
+                "architecture": "external-rector-primary-v34",
                 "cognitive_authority": "external_ai",
-                "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
-                "conversation_stage": stage,
-                "action_engine": "deferred" if stage != "commitment_candidate" else "commitment_guarded",
-                "cognitive_state": cognitive,
-                "response_evaluation": response_check,
+                "bitey_role": "context_memory_tools_persistence_operations",
+                "response_authority": selected_provider or "external_ai",
+                "external_ai_self_evaluation": True,
+                "action_engine": "deferred",
                 "ai_consultation": consultation,
             },
         }
 
-    # No external AI response means there is no cognitive answer. Never fake
-    # one with a deterministic filler. Keep the request safely in conversation
-    # mode until a rector is available.
     return {
         "action": "conversation",
         "create_ticket": False,
@@ -141,12 +102,11 @@ def decision_engine(
         "service_id": None,
         "reasoning": {},
         "metadata": {
-            "architecture": "external-rector-primary-v33",
+            "architecture": "external-rector-primary-v34",
             "cognitive_authority": "external_ai_unavailable",
-            "bitey_role": "second_plane_context_memory_tools_evaluation_learning",
-            "conversation_stage": stage,
+            "bitey_role": "context_memory_tools_persistence_operations",
+            "external_ai_self_evaluation": True,
             "action_engine": "deferred",
-            "cognitive_state": cognitive,
             "ai_consultation": consultation,
         },
     }
