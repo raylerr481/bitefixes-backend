@@ -12,6 +12,42 @@ import httpx
 from app.config import settings
 
 
+def _context_text(context: dict[str, Any]) -> str:
+    """Serialize the prepared context for the external cognitive provider.
+
+    `_transport` is internal diagnostics and is never exposed to the model.
+    The provider receives the already selected/compacted context; it does not
+    perform Bitey's selection or evaluation logic.
+    """
+    parts: list[str] = []
+    for key, value in context.items():
+        if key.startswith("_") or value is None:
+            continue
+        text = value if isinstance(value, str) else str(value)
+        text = text.strip()
+        if text:
+            parts.append(f"[{key}]\n{text}")
+    return "\n\n".join(parts)
+
+
+def _cognitive_messages(prompt: str, context: dict[str, Any]) -> list[dict[str, str]]:
+    context_text = _context_text(context)
+    system = (
+        "You are the external cognitive authority for BiteFixes. "
+        "Analyze the user's need using the provided company context, services, "
+        "capabilities, relevant memory and sources. Adapt the answer to the "
+        "user's actual need and to what BiteFixes can really provide. "
+        "Do not invent services or company facts. Return the final answer "
+        "directly to the user."
+    )
+    if context_text:
+        system += "\n\nCOMPANY AND RELEVANT CONTEXT:\n" + context_text
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
+
+
 class HTTPProvider:
     def __init__(self, name: str, base_url: str, api_key: str | None, model: str):
         self.name = name
@@ -27,14 +63,15 @@ class OllamaProvider(HTTPProvider):
     async def generate(self, prompt: str, *, context: dict[str, Any]) -> str:
         payload = {
             "model": self.model,
-            "prompt": prompt,
+            "messages": _cognitive_messages(prompt, context),
             "stream": False,
             "options": {"num_predict": settings.AI_MAX_OUTPUT_TOKENS},
         }
         async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
-            response = await client.post(f"{self.base_url}/api/generate", json=payload)
+            response = await client.post(f"{self.base_url}/api/chat", json=payload)
             response.raise_for_status()
-            return response.json().get("response", "")
+            data = response.json()
+            return data.get("message", {}).get("content", "")
 
 
 class OpenAICompatibleProvider(HTTPProvider):
@@ -47,18 +84,22 @@ class OpenAICompatibleProvider(HTTPProvider):
         }
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": _cognitive_messages(prompt, context),
             "temperature": 0.2,
             "max_tokens": settings.AI_MAX_OUTPUT_TOKENS,
         }
         async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
+            response = await httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT).__aenter__() if False else None
+            # Keep one client for the actual request; the conditional above is
+            # intentionally inert and avoids changing the established request path.
+            async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
 
         choices = data.get("choices") if isinstance(data, dict) else None
         if isinstance(choices, list) and choices:
@@ -91,8 +132,10 @@ class GroqProvider(OpenAICompatibleProvider):
 
 class GeminiProvider(HTTPProvider):
     async def generate(self, prompt: str, *, context: dict[str, Any]) -> str:
+        context_text = _context_text(context)
+        full_prompt = f"{_cognitive_messages(prompt, context)[0]['content']}\n\nUSER REQUEST:\n{prompt}"
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
+            "contents": [{"parts": [{"text": full_prompt}]}],
             "generationConfig": {"maxOutputTokens": settings.AI_MAX_OUTPUT_TOKENS},
         }
         params = {"key": self.api_key}
