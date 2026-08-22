@@ -1,187 +1,172 @@
 # BiteFixes Backend / Bitey Core
 
-FastAPI backend and intelligence core for **Bitey AI**, designed to serve BiteFixes first and evolve into a multi-tenant SaaS platform for companies using branded AI assistants across web, WordPress, APIs and messaging channels.
+FastAPI backend and intelligence core for **Bitey AI**. BiteFixes is the first real company context in which Bitey is being developed and measured, while the platform is designed to evolve into a multi-tenant SaaS for branded enterprise AI assistants.
 
-## Role in the platform
+## Architectural principle: channel, intelligence, evolution
+
+Bitey has three deliberately separated concerns:
+
+1. **Bitey Channel** — the communication path: WordPress/web, WhatsApp, voice/phone, app, API and future authorized channels. A channel transports identity, messages and permitted attachments; it is not the intelligence core.
+2. **Bitey IA** — Bitey's own evolving intelligence. It interprets company context, conversation context and authorized knowledge and produces useful business-grounded responses. External AI providers are collaborators/cognitive infrastructure, not the definition of Bitey.
+3. **Bitey Evolution** — the longitudinal learning and evaluation layer. Responses must not be blocked by intermediate evaluations. Evaluations can run asynchronously and record how Bitey changes over time.
 
 ```text
-Bitey SaaS / Universal Widget / WordPress / Channels
-                         |
-                  Bitey Cloud API
-                         |
-                  BiteFixes Backend
-                         |
-        +----------------+----------------+
-        |                |                |
-      Memory            RAG          AI Router
-        |                |                |
-     Supabase      FAISS/Qdrant/Chroma   |
-                                         |
-                         +---------------+----------------+
-                         |        |        |        |
-                       Groq    Gemini      HF      Ollama
+Authorized Channel
+      ↓
+Identity + conversation/session
+      ↓
+Bitey Backend
+      ↓
+Company AI Profile + authorized context
+      ↓
+Bitey IA reasoning / external AI collaboration
+      ↓
+Immediate response to user
+      │
+      └──────────────→ asynchronous evaluation
+                              ↓
+                       evolution history
+                              ↓
+                    future Bitey improvements
 ```
 
-The backend is the authoritative layer for business context, tenant isolation, workflows, tool permissions, observability and AI orchestration. Provider models are replaceable infrastructure, not the business core.
+## Enterprise context acquisition
 
-## Core capabilities
+Bitey may use authorized context available through the corresponding channel and company resources, including:
+
+- company web pages and approved web evidence;
+- onboarding/company-provided text;
+- messages received through supported channels;
+- authorized attachments and documents;
+- conversation history;
+- channel identity and permitted customer identity signals;
+- company services, capabilities and operational knowledge;
+- other explicitly authorized sources.
+
+Context acquisition must respect tenant isolation, permissions, privacy and source authorization. Context is evidence for reasoning; it is not an instruction to expose secrets or private data.
+
+## Bitey IA response model
+
+The response path should remain direct:
+
+```text
+message
+  ↓
+resolve company + channel + conversation
+  ↓
+assemble relevant authorized context
+  ↓
+Bitey IA / external cognitive provider
+  ↓
+response
+```
+
+There must be **no mandatory evaluator, score gate or approval chain between the user message and the response** merely to measure quality. Quality evaluation belongs to the observability/evolution path unless a specific safety or authorization control is required.
+
+The intelligence should preserve conversational continuity. If the user already established `device = mobile phone` and `problem = broken screen`, the next turn must use those facts instead of repeatedly asking for them.
+
+## Longitudinal evolution and evaluation markers
+
+Every meaningful evaluation event should be timestamped and associated with the relevant company, conversation/channel where permitted, Bitey version/build and evaluation criteria. The goal is to measure evolution rather than merely store isolated scores.
+
+Recommended marker dimensions include:
+
+- `context_grounding` — how well the response reflects authorized company/context evidence;
+- `conversation_continuity` — whether previously established facts are retained and used;
+- `business_alignment` — alignment with the company's real services and capabilities;
+- `service_alignment` — whether the response identifies/advances the appropriate service or need;
+- `factuality` — unsupported claims or contradictions;
+- `helpfulness` — usefulness to the user;
+- `safety_authorization` — appropriate handling of permissions and private information;
+- `language_quality` — language and communication quality;
+- `external_ai_collaboration` — quality of collaboration with external cognitive providers when used.
+
+A longitudinal record should retain at least:
+
+```text
+marker_id
+occurred_at
+company_id
+channel
+conversation_id
+bitey_version / build_id
+context_snapshot_or_reference
+evaluator_id / evaluator_type
+criteria
+scores
+strengths
+weaknesses
+missing_context
+result
+change_reference
+```
+
+Scores must not be treated as permanent truth. They are measurements tied to a specific version, context and evaluation method.
+
+## Evolution cycle
+
+```text
+real interaction
+    ↓
+response
+    ↓
+post-response observation/evaluation
+    ↓
+record marker
+    ↓
+compare against previous versions
+    ↓
+identify regression / improvement
+    ↓
+implement controlled change
+    ↓
+validate
+    ↓
+new version/build marker
+```
+
+Periodic reviews should compare a stable evaluation set and recent real-world samples. The comparison must answer: what improved, what regressed, why, and which change produced the difference.
+
+## External AI relationship
+
+External models can provide reasoning, multimodal capabilities, research or evaluation. They do not become the business identity of Bitey. Over time, Bitey IA should increasingly develop its own reusable capabilities and collaborate with external models where this improves outcomes.
+
+Evaluation by external IAs is useful for measuring Bitey's evolution, but evaluation must remain observable/asynchronous and must not become an unnecessary response gate.
+
+## Core platform capabilities
 
 - FastAPI API and Bitey Core runtime.
-- Supabase persistence for customers, conversations, messages, tickets, services and knowledge.
-- AI provider routing with optional Groq, Gemini, Hugging Face and Ollama integrations.
-- RAG/vector-store architecture using FAISS, Qdrant and Chroma adapters.
+- Supabase persistence for companies, profiles, conversations, messages, customers, tickets, services, knowledge and evolution data.
+- AI provider routing and collaboration.
+- RAG/vector-store architecture with tenant isolation.
 - Web Intelligence and source verification.
 - Customer memory and operational context.
 - Intent detection, service resolution and business workflows.
 - Ticket and customer management.
 - Incident recording and remediation foundations.
 - Provider health and AI infrastructure diagnostics.
-- GitHub Actions automated tests.
+- Automated tests and production observability.
 - Render deployment target.
-
-## AI strategy
-
-Bitey should select the best available provider for the task instead of coupling the application to a single model vendor.
-
-Typical strategy:
-
-1. Use a fast/low-cost provider for simple requests.
-2. Use RAG when company knowledge is required.
-3. Use Web Intelligence when current external information is required.
-4. Use stronger/multimodal providers when the task requires them.
-5. Fail over safely when a provider is unavailable or rate-limited.
-6. Fall back to deterministic Bitey Core behavior when external AI is unavailable.
-
-OpenAI can be supported as an **optional official API provider** when an `OPENAI_API_KEY` is supplied. A ChatGPT subscription is not treated as an API credential.
-
-## Vector and knowledge layer
-
-The vector layer is designed to be replaceable:
-
-- **FAISS** — local/high-speed vector search and development.
-- **Qdrant** — persistent/scalable production vector search.
-- **Chroma** — alternative local/development vector store.
-
-All production retrieval must enforce tenant isolation. A vector query must never be allowed to retrieve another company's private knowledge.
 
 ## Multi-tenant / white-label architecture
 
-Bitey is intended to support multiple companies on the same platform. Each tenant can have a branded assistant with its own:
+Each tenant has an isolated business identity and can have its own assistant identity, language, tone, branding, knowledge, customers, conversations, workflows, permissions and enabled channels. Tenant isolation must be preserved in database queries, retrieval, memory, logs, tools and provider context.
 
-- assistant name;
-- display name;
-- language;
-- personality/tone;
-- logo/avatar;
-- knowledge base;
-- customers and conversations;
-- workflows and permissions;
-- enabled AI providers/channels.
+## Security
 
-Example:
-
-```text
-Bitey Cloud
-  ├── BiteFixes → Bitey
-  ├── Company A → Nexa
-  └── Company B → Luna
-```
-
-The tenant boundary must be preserved in database queries, vector retrieval, memory, logs, tools and provider context.
-
-## Incident and self-healing architecture
-
-Operational failures should be recorded instead of disappearing into application logs.
-
-```text
-Error
-  ↓
-Incident
-  ↓
-Fingerprint / classify
-  ↓
-Safe automatic remediation?
-  ├─ yes → repair → test → resolve
-  └─ no  → alert → human approval
-```
-
-Examples of safe remediation candidates include provider failover, retry, cache invalidation and vector-index rebuilding. High-risk business mutations require authorization and verification.
-
-## API principles
-
-The backend is the shared intelligence API for:
-
-- Bitey SaaS web application;
-- WordPress plugin;
-- universal website widget;
-- custom applications through SDK/API;
-- future WhatsApp and other channel connectors.
-
-Clients must not receive provider secrets. Provider credentials remain server-side in environment/secrets management.
-
-## Development
-
-Typical local setup:
-
-```bash
-python -m venv .venv
-# activate the environment
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-Optional AI/RAG dependencies are maintained separately where appropriate so the core can remain usable without every provider installed.
-
-## Configuration
-
-Use environment variables/secrets for:
-
-- Supabase URL and service credentials;
-- Groq API key;
-- Gemini API key;
-- Hugging Face token/provider configuration;
-- Ollama endpoint;
-- Qdrant URL/API key where applicable;
-- optional OpenAI API key;
-- application authentication and security secrets.
-
-Never commit real credentials.
-
-## Testing and production readiness
-
-The project includes automated test workflows. Production promotion should require successful validation of:
-
-- application startup;
-- Supabase connectivity;
-- authentication/authorization;
-- tenant isolation;
-- AI provider health/fallback;
-- embeddings and vector retrieval;
-- RAG quality;
-- Web Intelligence;
-- incident creation;
-- remediation/rollback behavior;
-- WordPress → backend → AI end-to-end flow.
-
-Failures should be registered in the incident/test observability layer and repaired before promotion when possible.
+Provider credentials remain server-side. Channels are untrusted clients and must authenticate/authorize requests. Company-private context must never cross tenant boundaries. Attachments, web evidence and channel-derived identity must be processed according to authorization and retention rules.
 
 ## Deployment
 
-Render is the current deployment platform for the backend. Production configuration should use Render environment variables/secrets and separate staging/production validation.
+Render is the current backend deployment platform. Production configuration uses Render secrets/environment variables. Changes should be validated through automated tests and end-to-end channel tests before promotion.
 
 ## Project relationship
 
-- `bitefixes-backend` — Bitey Core/backend/intelligence layer.
-- `bitey-ai` — WordPress plugin and website channel.
+- `bitefixes-backend` — Bitey Core, business context, intelligence orchestration and evolution observability.
+- `bitey-ai` — WordPress/web channel.
 - `bitey-search-core` — web/search intelligence service.
-- Future `Bitey Cloud Web` — independent ChatGPT-like SaaS interface.
-
-BiteFixes is the first real company/tenant implementation; the architecture is intentionally being generalized for other businesses.
+- Future SaaS/mobile/channel repositories — additional communication paths using the same intelligence core.
 
 ## Status
 
-Active development toward **Bitey Cloud Platform v1**. This README describes the target architecture; individual integrations must still pass their real environment and end-to-end tests before being considered production-ready.
-
-## License
-
-See the repository license and project terms before redistribution or commercial deployment.
+Active development toward **Bitey Platform v1 and an evolving Bitey IA**. This repository is the authoritative place for the backend architecture and longitudinal evolution model.
