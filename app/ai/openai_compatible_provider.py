@@ -64,7 +64,7 @@ class OpenAICompatibleProvider:
         self.endpoint = endpoint.rstrip("/")
         self.credential_env = credential_env.strip()
         self.config_enabled = enabled
-        self.timeout = float(os.getenv("AI_TIMEOUT", "20"))
+        self.timeout = float(os.getenv("AI_TIMEOUT", "45"))
         self.max_output_tokens = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "700"))
 
     @property
@@ -87,7 +87,7 @@ class OpenAICompatibleProvider:
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": f"Context: {context or {}}\n\nTask: {prompt}"},
+                {"role": "user", "content": prompt},
             ],
             "max_tokens": self.max_output_tokens,
             "temperature": 0.1,
