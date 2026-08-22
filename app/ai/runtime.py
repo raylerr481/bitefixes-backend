@@ -13,10 +13,10 @@ from .registry import AIProviderRegistry, ProviderSpec
 
 
 def _register_database_models(registry: AIProviderRegistry, company_id: int | None) -> None:
-    """Load enabled open-model metadata from Supabase.
+    """Load enabled open-model metadata from Supabase incrementally.
 
-    Secrets are never read from the database; credential_env is only the name
-    of an environment variable containing the secret.
+    Existing providers are never replaced. Secrets are never read from the
+    database; credential_env is only the name of an environment variable.
     """
     try:
         from app.supabase_client import supabase
@@ -49,6 +49,37 @@ def _register_database_models(registry: AIProviderRegistry, company_id: int | No
             ))
     except Exception as exc:
         print("[AI MODEL REGISTRY WARNING]", type(exc).__name__)
+
+
+def _register_huggingface(registry: AIProviderRegistry) -> None:
+    """Add Hugging Face as an incremental OpenAI-compatible candidate.
+
+    HF_TOKEN is supplied by Render. No token is stored in Supabase or code.
+    HF_MODEL is intentionally configurable so the model can be changed without
+    modifying the application.
+    """
+    token = os.getenv("HF_TOKEN", "").strip()
+    model = os.getenv("HF_MODEL", "").strip()
+    if not token or not model:
+        print("[AI PROVIDER] huggingface=not_configured")
+        return
+    endpoint = os.getenv("HF_ENDPOINT", "https://router.huggingface.co/v1").strip()
+    provider = OpenAICompatibleProvider(
+        name="huggingface",
+        model=model,
+        endpoint=endpoint,
+        credential_env="HF_TOKEN",
+        enabled=os.getenv("HF_ENABLED", "true").lower() != "false",
+    )
+    registry.register(ProviderSpec(
+        name="huggingface",
+        enabled=provider.enabled,
+        priority=int(os.getenv("HF_PRIORITY", "30")),
+        cost_class="free",
+        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
+        provider=provider,
+    ))
+    print(f"[AI PROVIDER] huggingface=registered model={model}")
 
 
 def build_ai_orchestrator(company_id: int | None = None) -> AIOrchestrator:
@@ -94,5 +125,8 @@ def build_ai_orchestrator(company_id: int | None = None) -> AIOrchestrator:
         provider=cloudflare,
     ))
 
+    # Incremental additions: database-discovered models and Hugging Face are
+    # appended to the existing pool; no legacy provider is removed.
     _register_database_models(registry, company_id)
+    _register_huggingface(registry)
     return AIOrchestrator(registry)
