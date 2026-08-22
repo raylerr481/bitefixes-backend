@@ -11,6 +11,52 @@ from typing import Any
 import httpx
 
 
+def _extract_text(data: Any) -> str | None:
+    """Extract text from common OpenAI-compatible response formats."""
+    if not isinstance(data, dict):
+        return None
+    for key in ("output_text", "answer", "response"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    choices = data.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+            if parts:
+                return "\n".join(parts)
+        text = choice.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    output = data.get("output")
+    if isinstance(output, list):
+        parts = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content") or []
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if isinstance(block, dict):
+                    text = block.get("text") or block.get("content")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+        if parts:
+            return "\n".join(parts)
+    return None
+
+
 class OpenAICompatibleProvider:
     def __init__(self, *, name: str, model: str, endpoint: str, credential_env: str = "", enabled: bool = True) -> None:
         self.name = name
@@ -54,9 +100,11 @@ class OpenAICompatibleProvider:
                 response = await client.post(f"{self.endpoint}/chat/completions", json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
-            choices = data.get("choices") or []
-            content = choices[0].get("message", {}).get("content") if choices else None
-            return str(content).strip() if content else None
+            content = _extract_text(data)
+            if not content:
+                keys = sorted(data.keys()) if isinstance(data, dict) else type(data).__name__
+                print(f"[OPEN-COMPATIBLE EMPTY] provider={self.name} model={self.model} keys={keys}")
+            return content
         except Exception as exc:
             print(f"[OPEN-COMPATIBLE WARNING] {self.name}/{self.model}: {type(exc).__name__}")
-            return None
+            raise
