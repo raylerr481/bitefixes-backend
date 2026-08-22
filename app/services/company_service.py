@@ -1,4 +1,8 @@
-"""Bitey Company Context Service V4."""
+"""Bitey Company Context Service V5.
+
+The Company AI Profile is the authoritative tenant identity/context layer.
+Legacy business tables remain available as supporting structured context.
+"""
 from typing import Any, Dict, List, Optional
 from app.database.supabase import database
 
@@ -15,6 +19,27 @@ def _rows(table: str, **filters: Any) -> List[Dict[str, Any]]:
 def get_company(company_id: int) -> Optional[Dict[str, Any]]:
     rows = _rows("companies", id=company_id)
     return rows[0] if rows else None
+
+
+def get_company_ai_profile(company_id: int) -> Optional[Dict[str, Any]]:
+    """Return the authoritative Company AI Profile for one tenant."""
+    rows = _rows("company_ai_profiles", company_id=company_id)
+    if not rows:
+        return None
+    row = rows[0]
+    profile = row.get("profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    return {
+        "id": row.get("id"),
+        "company_id": row.get("company_id"),
+        "company_name": row.get("company_name"),
+        "description": row.get("description"),
+        "industry": row.get("industry"),
+        "profile": profile,
+        "updated_at": row.get("updated_at"),
+        "authoritative": True,
+    }
 
 
 def get_business_profile(company_id: int) -> Optional[Dict[str, Any]]:
@@ -90,10 +115,33 @@ def get_company_knowledge(company_id: int) -> List[Dict[str, Any]]:
 def get_company_context(company_id: int) -> Dict[str, Any]:
     company = get_company(company_id)
     if not company:
-        return {"company": None, "business_profile": None, "industries": [], "business_models": [], "business_functions": [], "subscription": None, "ai_scope": None, "domains": [], "capabilities": [], "services": [], "knowledge": []}
+        return {
+            "company": None,
+            "company_id": company_id,
+            "company_name": None,
+            "company_ai_profile": None,
+            "business_profile": None,
+            "industries": [],
+            "business_models": [],
+            "business_functions": [],
+            "subscription": None,
+            "ai_scope": None,
+            "domains": [],
+            "capabilities": [],
+            "services": [],
+            "knowledge": [],
+        }
+
+    business_profile = get_business_profile(company_id)
+    ai_profile = get_company_ai_profile(company_id)
+    profile_data = (ai_profile or {}).get("profile") or {}
+
     return {
         "company": company,
-        "business_profile": get_business_profile(company_id),
+        "company_id": company_id,
+        "company_name": ai_profile.get("company_name") if ai_profile else company.get("name"),
+        "company_ai_profile": ai_profile,
+        "business_profile": business_profile,
         "industries": get_industries(company_id),
         "business_models": get_business_models(company_id),
         "business_functions": get_business_functions(company_id),
@@ -103,4 +151,7 @@ def get_company_context(company_id: int) -> Dict[str, Any]:
         "capabilities": get_company_capabilities(company_id),
         "services": get_company_services(company_id),
         "knowledge": get_company_knowledge(company_id),
+        "objectives": profile_data.get("objectives") or (business_profile or {}).get("objective") or [],
+        "directives": {**(profile_data.get("behavior") or {}), **(profile_data.get("governance") or {})},
+        "profile_authoritative": bool(ai_profile and ai_profile.get("authoritative")),
     }
