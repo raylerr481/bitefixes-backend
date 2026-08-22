@@ -5,6 +5,8 @@ supabase
 httpx
 pydantic
 python-multipart
+pypdf
+python-docx
 letta-client
 hyperon
 requests
