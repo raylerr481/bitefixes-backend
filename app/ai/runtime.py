@@ -11,13 +11,13 @@ from .openai_compatible_provider import OpenAICompatibleProvider
 from .orchestrator import AIOrchestrator
 from .registry import AIProviderRegistry, ProviderSpec
 
+# Hugging Face Inference Providers currently documents Qwen3-32B on Groq and
+# supports the OpenAI-compatible router at /v1. Keep the default configurable.
+DEFAULT_HF_MODEL = "Qwen/Qwen3-32B:groq"
+
 
 def _register_database_models(registry: AIProviderRegistry, company_id: int | None) -> None:
-    """Load enabled open-model metadata from Supabase incrementally.
-
-    Existing providers are never replaced. Secrets are never read from the
-    database; credential_env is only the name of an environment variable.
-    """
+    """Load enabled open-model metadata from Supabase incrementally."""
     try:
         from app.supabase_client import supabase
         query = supabase.table("bitey_ai_models").select(
@@ -52,14 +52,9 @@ def _register_database_models(registry: AIProviderRegistry, company_id: int | No
 
 
 def _register_huggingface(registry: AIProviderRegistry) -> None:
-    """Add Hugging Face as an incremental OpenAI-compatible candidate.
-
-    HF_TOKEN is supplied by Render. No token is stored in Supabase or code.
-    HF_MODEL is intentionally configurable so the model can be changed without
-    modifying the application.
-    """
+    """Add Hugging Face as an incremental OpenAI-compatible candidate."""
     token = os.getenv("HF_TOKEN", "").strip()
-    model = os.getenv("HF_MODEL", "").strip()
+    model = os.getenv("HF_MODEL", DEFAULT_HF_MODEL).strip()
     if not token or not model:
         print("[AI PROVIDER] huggingface=not_configured")
         return
@@ -84,49 +79,14 @@ def _register_huggingface(registry: AIProviderRegistry) -> None:
 
 def build_ai_orchestrator(company_id: int | None = None) -> AIOrchestrator:
     registry = AIProviderRegistry()
-
     groq = GroqProvider()
-    registry.register(ProviderSpec(
-        name="groq",
-        enabled=groq.enabled and os.getenv("GROQ_ENABLED", "true").lower() != "false",
-        priority=int(os.getenv("GROQ_PRIORITY", "5")),
-        cost_class="free",
-        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-        provider=groq,
-    ))
-
+    registry.register(ProviderSpec(name="groq", enabled=groq.enabled and os.getenv("GROQ_ENABLED", "true").lower() != "false", priority=int(os.getenv("GROQ_PRIORITY", "5")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=groq))
     qwen = OpenRouterProvider(model=os.getenv("OPENROUTER_QWEN_MODEL", QWEN_FREE_MODEL))
-    registry.register(ProviderSpec(
-        name="qwen-free",
-        enabled=qwen.enabled,
-        priority=int(os.getenv("QWEN_PRIORITY", "10")),
-        cost_class="free",
-        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-        provider=qwen,
-    ))
-
+    registry.register(ProviderSpec(name="qwen-free", enabled=qwen.enabled, priority=int(os.getenv("QWEN_PRIORITY", "10")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=qwen))
     deepseek = OpenRouterProvider(model=os.getenv("OPENROUTER_DEEPSEEK_MODEL", DEEPSEEK_FREE_MODEL))
-    registry.register(ProviderSpec(
-        name="deepseek-free",
-        enabled=deepseek.enabled and os.getenv("DEEPSEEK_ENABLED", "true").lower() != "false",
-        priority=int(os.getenv("DEEPSEEK_PRIORITY", "15")),
-        cost_class="free",
-        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-        provider=deepseek,
-    ))
-
+    registry.register(ProviderSpec(name="deepseek-free", enabled=deepseek.enabled and os.getenv("DEEPSEEK_ENABLED", "true").lower() != "false", priority=int(os.getenv("DEEPSEEK_PRIORITY", "15")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=deepseek))
     cloudflare = CloudflareAIProvider()
-    registry.register(ProviderSpec(
-        name="cloudflare-free",
-        enabled=cloudflare.enabled,
-        priority=int(os.getenv("CLOUDFLARE_PRIORITY", "20")),
-        cost_class="free",
-        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-        provider=cloudflare,
-    ))
-
-    # Incremental additions: database-discovered models and Hugging Face are
-    # appended to the existing pool; no legacy provider is removed.
+    registry.register(ProviderSpec(name="cloudflare-free", enabled=cloudflare.enabled, priority=int(os.getenv("CLOUDFLARE_PRIORITY", "20")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=cloudflare))
     _register_database_models(registry, company_id)
     _register_huggingface(registry)
     return AIOrchestrator(registry)
