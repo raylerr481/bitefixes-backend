@@ -1,8 +1,7 @@
 """Optional AI providers for Bitey.
 
-The adapters use simple HTTP clients so Bitey can run with zero mandatory
-cloud dependencies. Cloud providers are opt-in; Ollama is the preferred
-local/open-source path. Provider failures never become business actions.
+Bitey is the transport/context/memory layer. External providers are the
+cognitive authority and return the final answer for the interaction.
 """
 from __future__ import annotations
 
@@ -38,9 +37,14 @@ class OllamaProvider(HTTPProvider):
             return response.json().get("response", "")
 
 
-class GroqProvider(HTTPProvider):
+class OpenAICompatibleProvider(HTTPProvider):
+    """Adapter for OpenAI-compatible external inference routers."""
+
     async def generate(self, prompt: str, *, context: dict[str, Any]) -> str:
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -49,10 +53,40 @@ class GroqProvider(HTTPProvider):
         }
         async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
             response = await client.post(
-                f"{self.base_url}/chat/completions", headers=headers, json=payload
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
             )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            data = response.json()
+
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if isinstance(choices, list) and choices:
+            first = choices[0] or {}
+            message = first.get("message") if isinstance(first, dict) else None
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                if isinstance(content, list):
+                    parts = []
+                    for part in content:
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            parts.append(part["text"])
+                    if parts:
+                        return "".join(parts).strip()
+            text = first.get("text") if isinstance(first, dict) else None
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+
+        output_text = data.get("output_text") if isinstance(data, dict) else None
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text.strip()
+        return ""
+
+
+class GroqProvider(OpenAICompatibleProvider):
+    pass
 
 
 class GeminiProvider(HTTPProvider):
@@ -75,25 +109,8 @@ class GeminiProvider(HTTPProvider):
             return candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
 
 
-class HuggingFaceProvider(HTTPProvider):
-    async def generate(self, prompt: str, *, context: dict[str, Any]) -> str:
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": settings.AI_MAX_OUTPUT_TOKENS,
-                "return_full_text": False,
-            },
-        }
-        async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                f"{self.base_url}/{self.model}", headers=headers, json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list) and data:
-                return data[0].get("generated_text", "")
-            return data.get("generated_text", "") if isinstance(data, dict) else ""
+class HuggingFaceProvider(OpenAICompatibleProvider):
+    pass
 
 
 def build_provider_registry():
@@ -146,7 +163,12 @@ def build_provider_registry():
                 priority=40,
                 cost_class="free-tier-or-paid",
                 capabilities=("general_reasoning", "coding", "multilingual"),
-                provider=HuggingFaceProvider("huggingface", "https://router.huggingface.co/hf-inference/models", settings.HF_API_TOKEN, settings.HF_MODEL),
+                provider=HuggingFaceProvider(
+                    "huggingface",
+                    "https://router.huggingface.co/v1",
+                    settings.HF_API_TOKEN,
+                    settings.HF_MODEL,
+                ),
             )
         )
 
