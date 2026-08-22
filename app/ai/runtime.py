@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+import httpx
 
 from .cloudflare_provider import CloudflareAIProvider
 from .groq_provider import GroqProvider
@@ -11,9 +12,7 @@ from .openai_compatible_provider import OpenAICompatibleProvider
 from .orchestrator import AIOrchestrator
 from .registry import AIProviderRegistry, ProviderSpec
 
-# Hugging Face Inference Providers currently documents Qwen3-32B on Groq and
-# supports the OpenAI-compatible router at /v1. Keep the default configurable.
-DEFAULT_HF_MODEL = "Qwen/Qwen3-32B:groq"
+DEFAULT_HF_MODEL = "openai/gpt-oss-20b:fastest"
 
 
 def _register_database_models(registry: AIProviderRegistry, company_id: int | None) -> None:
@@ -33,47 +32,52 @@ def _register_database_models(registry: AIProviderRegistry, company_id: int | No
                 continue
             name = f"{row.get('provider', 'open')}-{row.get('model_name')}"
             provider = OpenAICompatibleProvider(
-                name=name,
-                model=str(row.get("model_name")),
-                endpoint=str(row.get("endpoint_url")),
-                credential_env=str(row.get("credential_env") or ""),
-                enabled=bool(row.get("enabled", True)),
-            )
+                name=name, model=str(row.get("model_name")), endpoint=str(row.get("endpoint_url")),
+                credential_env=str(row.get("credential_env") or ""), enabled=bool(row.get("enabled", True)))
             registry.register(ProviderSpec(
-                name=name,
-                enabled=provider.enabled,
-                priority=int(row.get("priority", 100)),
+                name=name, enabled=provider.enabled, priority=int(row.get("priority", 100)),
                 cost_class=str(row.get("cost_class") or "free"),
-                capabilities=tuple(row.get("capabilities") or ("general_reasoning",)),
-                provider=provider,
-            ))
+                capabilities=tuple(row.get("capabilities") or ("general_reasoning",)), provider=provider))
     except Exception as exc:
         print("[AI MODEL REGISTRY WARNING]", type(exc).__name__)
 
 
+def _discover_huggingface_model(token: str, endpoint: str) -> str | None:
+    """Select a currently live HF chat model without entering the event loop."""
+    try:
+        with httpx.Client(timeout=10) as client:
+            response = client.get(f"{endpoint.rstrip('/')}/models", headers={"Authorization": f"Bearer {token}"})
+            response.raise_for_status()
+            data = response.json().get("data") or []
+        for item in data:
+            if any(str(p.get("status", "")).lower() == "live" for p in (item.get("providers") or [])):
+                model_id = item.get("id")
+                if model_id:
+                    return f"{model_id}:fastest"
+    except Exception as exc:
+        print("[AI PROVIDER] huggingface=discovery_failed", type(exc).__name__)
+    return None
+
+
 def _register_huggingface(registry: AIProviderRegistry) -> None:
-    """Add Hugging Face as an incremental OpenAI-compatible candidate."""
+    """Add Hugging Face incrementally; never replace existing providers."""
     token = os.getenv("HF_TOKEN", "").strip()
-    model = os.getenv("HF_MODEL", DEFAULT_HF_MODEL).strip()
-    if not token or not model:
+    if not token:
         print("[AI PROVIDER] huggingface=not_configured")
         return
     endpoint = os.getenv("HF_ENDPOINT", "https://router.huggingface.co/v1").strip()
+    model = os.getenv("HF_MODEL", "").strip()
+    if not model and os.getenv("HF_AUTO_DISCOVERY", "true").lower() != "false":
+        model = _discover_huggingface_model(token, endpoint) or DEFAULT_HF_MODEL
+    if not model:
+        model = DEFAULT_HF_MODEL
     provider = OpenAICompatibleProvider(
-        name="huggingface",
-        model=model,
-        endpoint=endpoint,
-        credential_env="HF_TOKEN",
-        enabled=os.getenv("HF_ENABLED", "true").lower() != "false",
-    )
+        name="huggingface", model=model, endpoint=endpoint, credential_env="HF_TOKEN",
+        enabled=os.getenv("HF_ENABLED", "true").lower() != "false")
     registry.register(ProviderSpec(
-        name="huggingface",
-        enabled=provider.enabled,
-        priority=int(os.getenv("HF_PRIORITY", "30")),
-        cost_class="free",
-        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
-        provider=provider,
-    ))
+        name="huggingface", enabled=provider.enabled, priority=int(os.getenv("HF_PRIORITY", "30")),
+        cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
+        provider=provider))
     print(f"[AI PROVIDER] huggingface=registered model={model}")
 
 
