@@ -53,16 +53,19 @@ class AIOrchestrator:
                 continue
             try:
                 provider_context = build_context(spec.name, context)
+                transport = provider_context.get("_transport", {})
+                print(f"[AI ROUTER] provider={spec.name} context_budget={transport.get('char_budget')} compacted={transport.get('compacted')} coverage_ok={transport.get('coverage_ok')} missing={transport.get('coverage_missing')}")
                 answer = await spec.provider.generate(prompt, context=provider_context)
                 if answer and answer.strip():
                     self._record(spec, health, "healthy", "selected")
-                    print(f"[AI ROUTER] provider={spec.name} status=selected context_budget={provider_context.get('_transport', {}).get('char_budget')} compacted={provider_context.get('_transport', {}).get('compacted')}")
+                    print(f"[AI ROUTER] provider={spec.name} status=selected context_budget={transport.get('char_budget')} compacted={transport.get('compacted')} coverage_ok={transport.get('coverage_ok')}")
                     return {
                         "status": "ok",
                         "provider": spec.name,
                         "answer": answer.strip(),
                         "failures": failures,
                         "health": health,
+                        "context_transport": transport,
                         "provider_observations": self.observation_store.snapshot(),
                     }
                 diagnostic = {"provider": spec.name, "category": "empty_response", "http_status": health.get("http_status") if health else None}
