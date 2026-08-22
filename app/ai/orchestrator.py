@@ -11,6 +11,7 @@ from typing import Any
 from .registry import AIProviderRegistry, ProviderSpec
 from .provider_health import probe_provider_spec, classify_exception
 from .incremental_registry import IncrementalProviderStore, ProviderObservation
+from .context_budget import build_context
 
 
 class AIOrchestrator:
@@ -51,10 +52,11 @@ class AIOrchestrator:
                 print(f"[AI ROUTER] provider={spec.name} health=unhealthy category={diagnostic.get('category')} http_status={diagnostic.get('http_status')}")
                 continue
             try:
-                answer = await spec.provider.generate(prompt, context=context or {})
+                provider_context = build_context(spec.name, context)
+                answer = await spec.provider.generate(prompt, context=provider_context)
                 if answer and answer.strip():
                     self._record(spec, health, "healthy", "selected")
-                    print(f"[AI ROUTER] provider={spec.name} status=selected")
+                    print(f"[AI ROUTER] provider={spec.name} status=selected context_budget={provider_context.get('_transport', {}).get('char_budget')} compacted={provider_context.get('_transport', {}).get('compacted')}")
                     return {
                         "status": "ok",
                         "provider": spec.name,
@@ -75,10 +77,5 @@ class AIOrchestrator:
         return {"status": "no_provider", "answer": None, "provider": None, "failures": failures, "provider_observations": self.observation_store.snapshot()}
 
     async def ask_council(self, prompt: str, *, capability: str = "general_reasoning", context: dict[str, Any] | None = None, max_providers: int | None = None) -> dict[str, Any]:
-        """Compatibility alias: a council request is still one-provider cognition.
-
-        The legacy name remains to avoid breaking callers, but it never queries
-        multiple successful models, compares answers, or performs cognitive
-        arbitration. ``max_providers`` is intentionally ignored.
-        """
+        """Compatibility alias: a council request is still one-provider cognition."""
         return await self.ask(prompt, capability=capability, context=context)
