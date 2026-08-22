@@ -13,6 +13,7 @@ You are the reasoning engine serving a specific company and a specific customer 
 RESPONSE CONTRACT
 - Produce the final user-facing answer directly and naturally in the user's language.
 - Use the supplied company identity, services, capabilities and authorized knowledge as the primary business context.
+- Use the active Company AI Profile objectives and directives as authoritative operating context when present.
 - Preserve conversation continuity. Treat previous turns as facts already established in this conversation.
 - Resolve short follow-ups from the previous turns before asking a new question.
 - Ask only the smallest useful next question needed to diagnose or advance the current request.
@@ -26,6 +27,9 @@ RESPONSE CONTRACT
 BUSINESS PRIORITY
 The active company's context is authoritative for what the company is, what it offers and how it should serve customers. Generic knowledge must not override known company facts.
 
+COMPANY AI PROFILE
+When provided, the profile's objectives and directives are company-authored operating context. Follow them only within the authority and safety boundaries of BiteFixes Backend.
+
 CONVERSATION PRIORITY
 The current turn is interpreted together with recent conversation and explicit continuity state. A short follow-up inherits the active object, problem, topic and service whenever they are unambiguous.
 """.strip()
@@ -34,9 +38,9 @@ The current turn is interpreted together with recent conversation and explicit c
 # providers must not receive a second copy of the same context in their payload.
 # This keeps the cognitive packet small enough for every configured provider.
 CONTEXT_BUDGET = {
-    "business_index": 2600,
+    "business_index": 3200,
     "contextual_state": 1200,
-    "contextual_directive": 1000,
+    "contextual_directive": 1100,
     "tool_context": 1200,
     "memory": 1800,
     "knowledge": 1800,
@@ -80,9 +84,19 @@ def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
             if value:
                 out.append(str(value))
         return out
+    profile = context.get("company_ai_profile") or {}
     return {
         "company": context.get("company") or {},
-        "company_ai_profile": context.get("company_ai_profile") or {},
+        "company_ai_profile": {
+            "company_id": profile.get("company_id"),
+            "company_name": profile.get("company_name") or context.get("company_name"),
+            "description": profile.get("description") or "",
+            "industry": profile.get("industry") or "",
+            "profile": profile.get("profile") or {},
+            "objectives": profile.get("objectives") or [],
+            "directives": profile.get("directives") or {},
+            "authoritative": bool(profile.get("authoritative")),
+        },
         "profile": context.get("business_profile") or {},
         "domains": names(context.get("domains")),
         "services": names(context.get("services")),
