@@ -33,15 +33,19 @@ def decision_engine(
     language: Optional[str] = None,
     business_context: Optional[Dict[str, Any]] = None,
 ):
-    """Prepare the governed context and give one cognitive turn to external AI."""
-    context = business_context
-    if context is None:
-        try:
-            context = get_company_context(company_id) or {}
-        except Exception as exc:
-            print("[AI-FIRST CONTEXT WARNING]", type(exc).__name__)
-            context = {}
+    """Load authoritative tenant context, then give one cognitive turn to external AI."""
+    runtime_context = business_context if isinstance(business_context, dict) else {}
+    try:
+        authoritative_context = get_company_context(company_id) or {}
+    except Exception as exc:
+        print("[AI-FIRST CONTEXT WARNING]", type(exc).__name__)
+        authoritative_context = {}
 
+    # Never let a conversational/legacy context replace the tenant profile.
+    # It may add runtime state, but the persisted Company AI Profile wins.
+    context = {**runtime_context, **authoritative_context}
+    if runtime_context.get("conversation_id"):
+        context["conversation_id"] = runtime_context["conversation_id"]
     if not _profile_is_valid(context):
         return {
             "action": "conversation",
