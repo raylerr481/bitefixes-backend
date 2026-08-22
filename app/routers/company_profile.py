@@ -1,20 +1,14 @@
 """Company AI Profile document ingestion endpoint."""
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from app.security.channel_auth import require_channel_key
 from app.services.company_document_service import ingest_company_document
 
 router = APIRouter(prefix="/company-profile", tags=["company-profile"])
-
 _ALLOWED = {"pdf", "docx", "txt", "csv", "json", "md"}
 _MAX_BYTES = 10 * 1024 * 1024
 
-@router.post("/import")
-async def import_company_document(
-    company_id: int = Form(...),
-    company_name: str = Form(""),
-    source: str = Form("wordpress"),
-    channel: str = Form("website"),
-    file: UploadFile = File(...),
-):
+@router.post("/import", dependencies=[Depends(require_channel_key)])
+async def import_company_document(company_id: int = Form(...), company_name: str = Form(""), source: str = Form("wordpress"), channel: str = Form("website"), file: UploadFile = File(...)):
     filename = file.filename or "document"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in _ALLOWED:
