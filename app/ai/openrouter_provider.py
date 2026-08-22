@@ -10,6 +10,31 @@ QWEN_FREE_MODEL = "qwen/qwen3-235b-a22b-instruct-2507:free"
 DEEPSEEK_FREE_MODEL = "deepseek/deepseek-v4-flash:free"
 
 
+def _extract_text(data: Any) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    choices = data.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+            if parts:
+                return "\n".join(parts)
+        text = choice.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return None
+
+
 class OpenRouterProvider:
     name = "openrouter-free"
 
@@ -43,8 +68,7 @@ class OpenRouterProvider:
                     "You are an external cognitive worker behind Bitey AI. "
                     "Bitey is the public facade and owns business infrastructure. "
                     "Review the supplied customer/business context carefully. "
-                    "Propose accurate, practical answers and structured information "
-                    "for Bitey's records. Never invent customer data, prices, tickets, "
+                    "Produce the final user-facing answer directly. Never invent customer data, prices, tickets, "
                     "permissions, service IDs or completed actions. Never execute an action. "
                     "Answer in the user's language."
                 )},
@@ -59,18 +83,12 @@ class OpenRouterProvider:
             "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "https://bitefixes.com"),
             "X-Title": os.getenv("OPENROUTER_APP_NAME", "Bitey AI"),
         }
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    json=payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                data = response.json()
-            choices = data.get("choices") or []
-            content = choices[0].get("message", {}).get("content") if choices else None
-            return str(content).strip() if content else None
-        except Exception as exc:
-            print(f"[OPENROUTER WARNING] {self.model}: {type(exc).__name__}")
-            return None
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        content = _extract_text(data)
+        if not content:
+            keys = sorted(data.keys()) if isinstance(data, dict) else type(data).__name__
+            print(f"[OPENROUTER EMPTY] model={self.model} keys={keys}")
+        return content
