@@ -1,8 +1,8 @@
-"""Transport-only health diagnostics for external AI providers.
+"""Transport-only diagnostics for external AI providers.
 
 External AI remains the cognitive authority. This module only verifies that a
-provider can be reached and can return usable text; it never evaluates the
-business quality of an answer.
+provider can be reached and reports response structure. It never evaluates the
+business quality of an answer and never decides which answer is better.
 """
 from __future__ import annotations
 
@@ -25,11 +25,7 @@ def classify_http_status(status: int) -> str:
 def classify_exception(exc: Exception) -> Dict[str, Any]:
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status is not None:
-        return {
-            "category": classify_http_status(int(status)),
-            "http_status": int(status),
-            "error_type": type(exc).__name__,
-        }
+        return {"category": classify_http_status(int(status)), "http_status": int(status), "error_type": type(exc).__name__}
     if isinstance(exc, httpx.TimeoutException):
         return {"category": "timeout", "http_status": None, "error_type": type(exc).__name__}
     return {"category": type(exc).__name__, "http_status": None, "error_type": type(exc).__name__}
@@ -50,10 +46,8 @@ def extract_response_text(data: Any) -> str:
             if value:
                 return extract_response_text(value)
         return ""
-
     if data.get("output_text"):
         return str(data["output_text"]).strip()
-
     choices = data.get("choices")
     if isinstance(choices, list) and choices:
         choice = choices[0] or {}
@@ -63,11 +57,9 @@ def extract_response_text(data: Any) -> str:
                 return extract_response_text(message["content"])
             if choice.get("text"):
                 return extract_response_text(choice["text"])
-
     for key in ("content", "text", "response", "answer"):
         if data.get(key):
             return extract_response_text(data[key])
-
     output = data.get("output")
     if output:
         return extract_response_text(output)
@@ -75,12 +67,11 @@ def extract_response_text(data: Any) -> str:
 
 
 async def probe_openai_compatible(base_url: str, api_key: str, model: str, *, timeout: float = 20.0) -> Dict[str, Any]:
-    """Perform a minimal transport/capability probe without judging answer quality.
+    """Check transport/HTTP/response structure only.
 
-    Groq's GPT-OSS models may spend a small token budget on reasoning. The old
-    8-token probe could therefore produce HTTP 200 with no visible answer and
-    incorrectly mark a healthy provider as empty. Give the probe enough budget
-    and request low reasoning for Groq only.
+    A successful HTTP response is transport-healthy even when the probe has no
+    visible text. Content availability is reported separately so a provider is
+    not blocked from the real cognitive request by a false ``empty_response``.
     """
     started = time.perf_counter()
     normalized_base = base_url.rstrip("/")
@@ -93,14 +84,9 @@ async def probe_openai_compatible(base_url: str, api_key: str, model: str, *, ti
     if "api.groq.com" in normalized_base and model.startswith("openai/gpt-oss-"):
         payload["reasoning_effort"] = "low"
         payload["include_reasoning"] = False
-
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                normalized_base,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            )
+            response = await client.post(normalized_base, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=payload)
         latency = round((time.perf_counter() - started) * 1000, 1)
         if response.is_success:
             try:
@@ -110,29 +96,24 @@ async def probe_openai_compatible(base_url: str, api_key: str, model: str, *, ti
             text = extract_response_text(data)
             keys = sorted(data.keys()) if isinstance(data, dict) else []
             return {
-                "ok": bool(text),
+                "ok": True,
+                "http_ok": True,
+                "content_present": bool(text),
                 "http_status": response.status_code,
-                "category": "healthy" if text else "empty_response",
+                "category": "http_ok_with_content" if text else "http_ok_no_content",
                 "latency_ms": latency,
                 "response_format": type(data).__name__,
                 "response_keys": keys[:20],
             }
-        return {
-            "ok": False,
-            "http_status": response.status_code,
-            "category": classify_http_status(response.status_code),
-            "latency_ms": latency,
-            "response_content_type": response.headers.get("content-type", ""),
-        }
+        return {"ok": False, "http_ok": False, "content_present": False, "http_status": response.status_code, "category": classify_http_status(response.status_code), "latency_ms": latency, "response_content_type": response.headers.get("content-type", "")}
     except Exception as exc:
         result = classify_exception(exc)
-        result["ok"] = False
-        result["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        result.update({"ok": False, "http_ok": False, "content_present": False, "latency_ms": round((time.perf_counter() - started) * 1000, 1)})
         return result
 
 
 async def probe_provider_spec(spec: Any) -> Dict[str, Any] | None:
-    """Probe a provider using its configured endpoint and credential."""
+    """Probe configured transport without granting cognitive authority."""
     provider = getattr(spec, "provider", spec)
     api_key = getattr(provider, "api_key", None)
     base_url = getattr(provider, "base_url", None)
@@ -145,7 +126,7 @@ async def probe_provider_spec(spec: Any) -> Dict[str, Any] | None:
             return None
         api_key = os.getenv(str(credential_env), "") if credential_env else ""
         if credential_env and not api_key:
-            return {"ok": False, "category": "missing_credentials", "http_status": None, "latency_ms": 0.0}
+            return {"ok": False, "http_ok": False, "content_present": False, "category": "missing_credentials", "http_status": None, "latency_ms": 0.0}
         base_url = str(endpoint)
         if not base_url.endswith("/chat/completions"):
             base_url = base_url.rstrip("/") + "/chat/completions"
