@@ -13,7 +13,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 class Settings:
     PROJECT_NAME = "BiteFixes Backend"
-    VERSION = "2.3.0"
+    VERSION = "2.3.1"
     ENGINE = "Bitey"
 
     SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -31,6 +31,19 @@ class Settings:
 
     DEFAULT_LANGUAGE = "pt-BR"
     CONFIDENCE_MIN = 0.70
+
+    # External AI providers. Bitey transports context/memory; external models
+    # remain the cognitive authority. Empty keys simply disable a provider.
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    HF_API_TOKEN = os.getenv("HF_API_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    HF_MODEL = os.getenv("HF_MODEL", "Qwen/Qwen3-8B")
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+    AI_REQUEST_TIMEOUT = float(os.getenv("AI_REQUEST_TIMEOUT", "45"))
+    AI_MAX_OUTPUT_TOKENS = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "1024"))
 
     # Bitey Web Intelligence. Primary is Bitey-owned Search Core/SearXNG.
     # Tavily is an optional secondary fallback. Brave and similar providers are not supported.
