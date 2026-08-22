@@ -26,17 +26,53 @@ def _sample(value: Any, limit: int = 20) -> Any:
 
 
 _SIGNAL_PATTERNS = {
-    "NEED": ("necesito", "necesita", "quiero arreglar", "quiero reparar", "no funciona", "problema", "ayuda"),
-    "SERVICE_REQUEST": ("reparar", "reparacion", "reparación", "instalar", "instalación", "configurar", "mantenimiento", "soporte", "automatizar"),
-    "QUOTE_REQUEST": ("cuanto cuesta", "cuánto cuesta", "precio", "presupuesto", "cotizacion", "cotización"),
-    "LOCATION_REQUEST": ("donde estan", "dónde están", "donde queda", "dónde queda", "como llego", "cómo llego", "direccion", "dirección", "donde puedo llevar"),
-    "CONTACT_REQUEST": ("como contacto", "cómo contacto", "contactar", "whatsapp", "telefono", "teléfono", "hablar con un tecnico", "hablar con un técnico"),
-    "HOME_SERVICE_REQUEST": ("a domicilio", "mi casa", "pueden venir", "venir a mi casa", "en mi casa", "a mi empresa", "en mi local", "mandar un tecnico", "mandar un técnico"),
-    "APPOINTMENT_REQUEST": ("agendar", "reservar", "cita", "cuando puedo", "cuándo puedo", "disponibilidad"),
-    "BUSINESS_CAPABILITY_REQUEST": ("ustedes hacen", "hacen ese servicio", "tienen ese servicio", "pueden hacerlo", "ofrecen", "trabajan con", "puedo contratar"),
+    "NEED": (
+        "necesito", "necesita", "quiero arreglar", "quiero reparar", "no funciona", "problema", "ayuda",
+        "preciso", "precisamos", "quero consertar", "quero reparar", "não funciona", "problema", "ajuda",
+        "i need", "i need to fix", "i want to repair", "doesn't work", "problem", "help",
+    ),
+    "SERVICE_REQUEST": (
+        "reparar", "reparacion", "reparación", "instalar", "instalación", "configurar", "mantenimiento", "soporte", "automatizar",
+        "reparo", "reparação", "instalação", "configuração", "manutenção", "suporte", "automatizar",
+        "repair", "installation", "install", "configure", "maintenance", "support", "automate",
+    ),
+    "QUOTE_REQUEST": (
+        "cuanto cuesta", "cuánto cuesta", "precio", "presupuesto", "cotizacion", "cotización",
+        "quanto custa", "preço", "orçamento", "cotação",
+        "how much", "price", "quote", "estimate", "cost",
+    ),
+    "LOCATION_REQUEST": (
+        "donde estan", "dónde están", "donde queda", "dónde queda", "como llego", "cómo llego", "direccion", "dirección", "donde puedo llevar",
+        "onde ficam", "onde fica", "como chego", "endereço", "onde posso levar",
+        "where are you", "where is", "how do i get there", "address", "where can i take",
+    ),
+    "CONTACT_REQUEST": (
+        "como contacto", "cómo contacto", "contactar", "whatsapp", "telefono", "teléfono", "hablar con un tecnico", "hablar con un técnico",
+        "como contato", "contato", "telefone", "falar com um técnico",
+        "how do i contact", "contact", "phone", "talk to a technician",
+    ),
+    "HOME_SERVICE_REQUEST": (
+        "a domicilio", "mi casa", "pueden venir", "venir a mi casa", "en mi casa", "a mi empresa", "en mi local", "mandar un tecnico", "mandar un técnico",
+        "em casa", "podem vir", "vir até minha casa", "na minha empresa", "no meu local", "mandar um técnico", "atendimento domiciliar",
+        "at home", "can you come", "come to my house", "at my company", "on site", "send a technician", "home service",
+    ),
+    "APPOINTMENT_REQUEST": (
+        "agendar", "reservar", "cita", "cuando puedo", "cuándo puedo", "disponibilidad",
+        "agendar", "reservar", "horário", "quando posso", "disponibilidade",
+        "schedule", "appointment", "book", "when can i", "availability",
+    ),
+    "BUSINESS_CAPABILITY_REQUEST": (
+        "ustedes hacen", "hacen ese servicio", "tienen ese servicio", "pueden hacerlo", "ofrecen", "trabajan con", "puedo contratar",
+        "vocês fazem", "fazem esse serviço", "têm esse serviço", "podem fazer", "oferecem", "trabalham com", "posso contratar",
+        "do you offer", "do you provide", "can you do", "do you have this service", "can i hire",
+    ),
 }
 
-_REFERENCE_TERMS = {"ella", "el", "él", "esa", "ese", "eso", "esta", "este", "esto", "la", "lo", "las", "los", "otra", "otro", "mismo", "misma"}
+_REFERENCE_TERMS = {
+    "ella", "el", "él", "esa", "ese", "eso", "esta", "este", "esto", "la", "lo", "las", "los", "otra", "otro", "mismo", "misma",
+    "ela", "ele", "essa", "esse", "isso", "esta", "este", "isto", "aquela", "aquele", "outra", "outro", "mesmo", "mesma",
+    "it", "that", "this", "her", "him", "them", "another", "same",
+}
 
 
 def detect_signals(message: str, state: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -99,13 +135,8 @@ def build_opportunities(signals: List[Dict[str, Any]], state: Dict[str, Any]) ->
     opportunities = []
     seen_types = set()
     eligible = {
-        "SERVICE_REQUEST",
-        "BUSINESS_CAPABILITY_REQUEST",
-        "LOCATION_REQUEST",
-        "CONTACT_REQUEST",
-        "HOME_SERVICE_REQUEST",
-        "QUOTE_REQUEST",
-        "APPOINTMENT_REQUEST",
+        "SERVICE_REQUEST", "BUSINESS_CAPABILITY_REQUEST", "LOCATION_REQUEST", "CONTACT_REQUEST",
+        "HOME_SERVICE_REQUEST", "QUOTE_REQUEST", "APPOINTMENT_REQUEST",
     }
     for signal in signals:
         if signal["signal_type"] not in eligible or not has_business_context:
@@ -164,44 +195,37 @@ def persist_observations(signals: List[Dict[str, Any]], opportunities: List[Dict
         client = supabase_manager.get_client()
         if client is None:
             return
-        signal_rows = []
-        for signal in signals:
-            signal_rows.append({
-                "company_id": str(company_id) if company_id is not None else None,
-                "conversation_id": str(conversation_id) if conversation_id is not None else None,
-                "message_id": str(message_id) if message_id is not None else None,
-                "channel": channel,
-                "signal_type": signal.get("signal_type"),
-                "signal_value": signal.get("signal_value"),
-                "confidence": signal.get("confidence"),
-                "evidence": signal.get("evidence"),
-                "metadata": signal.get("metadata") or {},
-            })
+        signal_rows = [{
+            "company_id": str(company_id) if company_id is not None else None,
+            "conversation_id": str(conversation_id) if conversation_id is not None else None,
+            "message_id": str(message_id) if message_id is not None else None,
+            "channel": channel,
+            "signal_type": signal.get("signal_type"),
+            "signal_value": signal.get("signal_value"),
+            "confidence": signal.get("confidence"),
+            "evidence": signal.get("evidence"),
+            "metadata": signal.get("metadata") or {},
+        } for signal in signals]
         inserted = []
         if signal_rows:
             response = client.table("contextual_signals").insert(signal_rows).execute()
             inserted = getattr(response, "data", None) or []
-
         signal_ids_by_type = {}
         for row in inserted:
             signal_type = row.get("signal_type")
             if signal_type and signal_type not in signal_ids_by_type:
                 signal_ids_by_type[signal_type] = row.get("id")
-
         if opportunities:
-            rows = []
-            for opportunity in opportunities:
-                rows.append({
-                    "company_id": str(company_id) if company_id is not None else None,
-                    "conversation_id": str(conversation_id) if conversation_id is not None else None,
-                    "signal_id": signal_ids_by_type.get(opportunity.get("signal_type")),
-                    "opportunity_type": opportunity.get("opportunity_type"),
-                    "business_capability": opportunity.get("business_capability"),
-                    "context_payload": opportunity.get("context_payload") or {},
-                    "confidence": opportunity.get("confidence"),
-                    "offered_to_ai": True,
-                })
+            rows = [{
+                "company_id": str(company_id) if company_id is not None else None,
+                "conversation_id": str(conversation_id) if conversation_id is not None else None,
+                "signal_id": signal_ids_by_type.get(opportunity.get("signal_type")),
+                "opportunity_type": opportunity.get("opportunity_type"),
+                "business_capability": opportunity.get("business_capability"),
+                "context_payload": opportunity.get("context_payload") or {},
+                "confidence": opportunity.get("confidence"),
+                "offered_to_ai": True,
+            } for opportunity in opportunities]
             client.table("contextual_opportunities").insert(rows).execute()
     except Exception as exc:
-        # Observability only: never turn a learning-table failure into an AI failure.
         print(f"[CONTEXT OPPORTUNITY] persistence skipped: {exc}")
