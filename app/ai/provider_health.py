@@ -1,13 +1,15 @@
-"""Runtime provider health and failure diagnostics.
+"""Transport-only health diagnostics for external AI providers.
 
-Providers are external authorities. This module only checks transport/capability
-health and normalizes common OpenAI-compatible response shapes; it never makes
-business decisions and never persists secrets.
+External AI remains the cognitive authority. This module only verifies that a
+provider can be reached and can return usable text; it never evaluates the
+business quality of an answer.
 """
 from __future__ import annotations
+
 import os
 import time
 from typing import Any, Dict
+
 import httpx
 
 
@@ -23,25 +25,25 @@ def classify_http_status(status: int) -> str:
 def classify_exception(exc: Exception) -> Dict[str, Any]:
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status is not None:
-        return {"category": classify_http_status(int(status)), "http_status": int(status), "error_type": type(exc).__name__}
+        return {
+            "category": classify_http_status(int(status)),
+            "http_status": int(status),
+            "error_type": type(exc).__name__,
+        }
     if isinstance(exc, httpx.TimeoutException):
         return {"category": "timeout", "http_status": None, "error_type": type(exc).__name__}
     return {"category": type(exc).__name__, "http_status": None, "error_type": type(exc).__name__}
 
 
 def extract_response_text(data: Any) -> str:
-    """Normalize common provider response formats into one text value.
-
-    Supports OpenAI chat-completions, Responses API, simple content fields,
-    and nested content blocks. Empty HTTP-200 responses are therefore not
-    incorrectly treated as successful model calls.
-    """
+    """Normalize common provider response formats into one text value."""
     if data is None:
         return ""
     if isinstance(data, str):
         return data.strip()
     if isinstance(data, list):
-        return "\n".join(extract_response_text(x) for x in data).strip()
+        parts = [extract_response_text(item) for item in data]
+        return "\n".join(part for part in parts if part).strip()
     if not isinstance(data, dict):
         for attr in ("output_text", "content", "text"):
             value = getattr(data, attr, None)
@@ -49,26 +51,23 @@ def extract_response_text(data: Any) -> str:
                 return extract_response_text(value)
         return ""
 
-    # OpenAI Responses API.
     if data.get("output_text"):
         return str(data["output_text"]).strip()
 
-    # OpenAI-compatible chat completions.
     choices = data.get("choices")
     if isinstance(choices, list) and choices:
         choice = choices[0] or {}
-        message = choice.get("message") if isinstance(choice, dict) else None
-        if isinstance(message, dict) and message.get("content"):
-            return extract_response_text(message["content"])
-        if isinstance(choice, dict) and choice.get("text"):
-            return extract_response_text(choice["text"])
+        if isinstance(choice, dict):
+            message = choice.get("message") or {}
+            if isinstance(message, dict) and message.get("content"):
+                return extract_response_text(message["content"])
+            if choice.get("text"):
+                return extract_response_text(choice["text"])
 
-    # Generic provider formats.
     for key in ("content", "text", "response", "answer"):
         if data.get(key):
             return extract_response_text(data[key])
 
-    # Some Responses API payloads expose output blocks rather than output_text.
     output = data.get("output")
     if output:
         return extract_response_text(output)
@@ -76,18 +75,31 @@ def extract_response_text(data: Any) -> str:
 
 
 async def probe_openai_compatible(base_url: str, api_key: str, model: str, *, timeout: float = 20.0) -> Dict[str, Any]:
+    """Perform a minimal transport/capability probe without judging answer quality.
+
+    Groq's GPT-OSS models may spend a small token budget on reasoning. The old
+    8-token probe could therefore produce HTTP 200 with no visible answer and
+    incorrectly mark a healthy provider as empty. Give the probe enough budget
+    and request low reasoning for Groq only.
+    """
     started = time.perf_counter()
+    normalized_base = base_url.rstrip("/")
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply only: OK"}],
+        "max_tokens": 32,
+        "temperature": 0,
+    }
+    if "api.groq.com" in normalized_base and model.startswith("openai/gpt-oss-"):
+        payload["reasoning_effort"] = "low"
+        payload["include_reasoning"] = False
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                base_url,
+                normalized_base,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": "Reply only: OK"}],
-                    "max_tokens": 8,
-                    "temperature": 0,
-                },
+                json=payload,
             )
         latency = round((time.perf_counter() - started) * 1000, 1)
         if response.is_success:
@@ -96,18 +108,21 @@ async def probe_openai_compatible(base_url: str, api_key: str, model: str, *, ti
             except ValueError:
                 data = response.text
             text = extract_response_text(data)
+            keys = sorted(data.keys()) if isinstance(data, dict) else []
             return {
-                "ok": bool(text.strip()),
+                "ok": bool(text),
                 "http_status": response.status_code,
-                "category": "healthy" if text.strip() else "empty_response",
+                "category": "healthy" if text else "empty_response",
                 "latency_ms": latency,
                 "response_format": type(data).__name__,
+                "response_keys": keys[:20],
             }
         return {
             "ok": False,
             "http_status": response.status_code,
             "category": classify_http_status(response.status_code),
             "latency_ms": latency,
+            "response_content_type": response.headers.get("content-type", ""),
         }
     except Exception as exc:
         result = classify_exception(exc)
@@ -117,7 +132,7 @@ async def probe_openai_compatible(base_url: str, api_key: str, model: str, *, ti
 
 
 async def probe_provider_spec(spec: Any) -> Dict[str, Any] | None:
-    """Probe OpenAI-compatible providers using explicit or env-backed credentials."""
+    """Probe a provider using its configured endpoint and credential."""
     provider = getattr(spec, "provider", spec)
     api_key = getattr(provider, "api_key", None)
     base_url = getattr(provider, "base_url", None)
