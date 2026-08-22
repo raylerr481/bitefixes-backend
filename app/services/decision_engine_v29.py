@@ -1,13 +1,26 @@
 """External-AI rector gateway.
 
-External AI is the sole cognitive and conversational authority. Bitey supplies
-company context, memory, governed tools, persistence and operational safety,
-but does not evaluate, rewrite, rank or replace an external-AI answer.
+The Company AI Profile is loaded first and is authoritative for tenant
+identity, business context and governance. External AI is the cognitive
+authority only after that profile is present and valid.
 """
 from __future__ import annotations
 from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
 from app.ai.consultation_service import consult_if_valuable
+
+
+def _profile_is_valid(context: Dict[str, Any]) -> bool:
+    profile_record = context.get("company_ai_profile")
+    if not isinstance(profile_record, dict):
+        return False
+    profile = profile_record.get("profile")
+    return bool(
+        profile_record.get("authoritative")
+        and isinstance(profile, dict)
+        and profile
+        and profile_record.get("company_id")
+    )
 
 
 def decision_engine(
@@ -20,20 +33,37 @@ def decision_engine(
     language: Optional[str] = None,
     business_context: Optional[Dict[str, Any]] = None,
 ):
-    """Prepare context and let the external rector produce the response.
+    """Load authoritative tenant context, then give one cognitive turn to external AI."""
+    runtime_context = business_context if isinstance(business_context, dict) else {}
+    try:
+        authoritative_context = get_company_context(company_id) or {}
+    except Exception as exc:
+        print("[AI-FIRST CONTEXT WARNING]", type(exc).__name__)
+        authoritative_context = {}
 
-    Bitey does not perform cognitive evaluation of the external response.
-    Provider health/failover is infrastructure only; the selected external AI
-    remains responsible for interpreting the context and self-checking its own
-    answer according to the rector directives.
-    """
-    context = business_context
-    if context is None:
-        try:
-            context = get_company_context(company_id) or {}
-        except Exception as exc:
-            print("[AI-FIRST CONTEXT WARNING]", type(exc).__name__)
-            context = {}
+    # Never let a conversational/legacy context replace the tenant profile.
+    # It may add runtime state, but the persisted Company AI Profile wins.
+    context = {**runtime_context, **authoritative_context}
+    if runtime_context.get("conversation_id"):
+        context["conversation_id"] = runtime_context["conversation_id"]
+    if not _profile_is_valid(context):
+        return {
+            "action": "conversation",
+            "create_ticket": False,
+            "requires_quote": False,
+            "ticket_type": None,
+            "response": "No puedo iniciar una respuesta empresarial todavía porque el perfil de contexto de esta empresa no está disponible o no está validado.",
+            "workflow": None,
+            "service": None,
+            "service_id": None,
+            "reasoning": {},
+            "metadata": {
+                "architecture": "company-ai-profile-first-v35",
+                "cognitive_authority": "blocked_profile_missing",
+                "profile_required": True,
+                "action_engine": "deferred",
+            },
+        }
 
     memory_dict = memory if isinstance(memory, dict) else {}
     intent_dict = intent if isinstance(intent, dict) else {}
@@ -50,6 +80,7 @@ def decision_engine(
                 "company_id": company_id,
                 "customer_id": customer.get("id"),
                 "business_context": context,
+                "company_ai_profile": context.get("company_ai_profile"),
                 "memory": memory_dict,
                 "history": history,
                 "last_service": memory_dict.get("last_service"),
@@ -81,11 +112,12 @@ def decision_engine(
             "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
             "reasoning": {},
             "metadata": {
-                "architecture": "external-rector-primary-v34",
+                "architecture": "company-ai-profile-first-v35",
                 "cognitive_authority": "external_ai",
-                "bitey_role": "context_memory_tools_persistence_operations",
+                "bitey_role": "authoritative_company_context_memory_tools_persistence_operations",
                 "response_authority": selected_provider or "external_ai",
                 "external_ai_self_evaluation": True,
+                "profile_id": context.get("company_ai_profile", {}).get("id"),
                 "action_engine": "deferred",
                 "ai_consultation": consultation,
             },
@@ -102,10 +134,11 @@ def decision_engine(
         "service_id": None,
         "reasoning": {},
         "metadata": {
-            "architecture": "external-rector-primary-v34",
+            "architecture": "company-ai-profile-first-v35",
             "cognitive_authority": "external_ai_unavailable",
-            "bitey_role": "context_memory_tools_persistence_operations",
+            "bitey_role": "authoritative_company_context_memory_tools_persistence_operations",
             "external_ai_self_evaluation": True,
+            "profile_id": context.get("company_ai_profile", {}).get("id"),
             "action_engine": "deferred",
             "ai_consultation": consultation,
         },
