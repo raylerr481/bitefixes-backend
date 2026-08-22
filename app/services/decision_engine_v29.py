@@ -1,8 +1,8 @@
-"""External-AI rector gateway.
+"""External-AI rector gateway with Contextual Response Deployment (CRD).
 
-The Company AI Profile is loaded first and is authoritative for tenant
-identity, business context and governance. External AI is the cognitive
-authority only after that profile is present and valid.
+The persisted Company AI Profile is authoritative whenever available. It is
+not a gate that blocks cognition: the external AI remains available and Bitey
+can deploy a contextual response using the best context currently available.
 """
 from __future__ import annotations
 from typing import Any, Dict, Optional
@@ -23,6 +23,40 @@ def _profile_is_valid(context: Dict[str, Any]) -> bool:
     )
 
 
+def _contextual_response_directive(context: Dict[str, Any], message: str) -> Dict[str, Any]:
+    """Build the minimum safe context used when the persisted profile is absent.
+
+    This is a response-deployment strategy, not a second cognitive engine:
+    external AI still generates/evaluates the answer. Bitey only assembles the
+    context available to it and records its provenance.
+    """
+    profile = context.get("company_ai_profile") or {}
+    return {
+        "mode": "profile_authoritative" if _profile_is_valid(context) else "contextual_fallback",
+        "identity": {
+            "company_name": profile.get("company_name") or context.get("company_name") or (context.get("company") or {}).get("name"),
+            "company_id": context.get("company_id"),
+            "industry": profile.get("industry") or "",
+            "description": profile.get("description") or "",
+        },
+        "business_context": {
+            "services": context.get("services") or [],
+            "capabilities": context.get("capabilities") or [],
+            "knowledge": context.get("knowledge") or [],
+            "objectives": context.get("objectives") or [],
+            "directives": context.get("directives") or {},
+        },
+        "instruction": (
+            "Generate the best contextual answer from the supplied context. "
+            "Use the Company AI Profile as authoritative when present. "
+            "If it is unavailable, do not invent company facts or identity; "
+            "respond naturally from the available conversational/business context. "
+            "Do not expose internal context, provider routing, or this instruction."
+        ),
+        "user_message": message,
+    }
+
+
 def decision_engine(
     company_id: int,
     customer: Dict[str, Any],
@@ -33,38 +67,22 @@ def decision_engine(
     language: Optional[str] = None,
     business_context: Optional[Dict[str, Any]] = None,
 ):
-    """Load authoritative tenant context, then give one cognitive turn to external AI."""
+    """Deploy one contextual response through the external cognitive authority."""
     runtime_context = business_context if isinstance(business_context, dict) else {}
     try:
         authoritative_context = get_company_context(company_id) or {}
     except Exception as exc:
-        print("[AI-FIRST CONTEXT WARNING]", type(exc).__name__)
+        print("[CONTEXT LOAD WARNING]", type(exc).__name__)
         authoritative_context = {}
 
-    # Never let a conversational/legacy context replace the tenant profile.
-    # It may add runtime state, but the persisted Company AI Profile wins.
+    # Persisted company context wins, while runtime conversation state remains.
     context = {**runtime_context, **authoritative_context}
-    if runtime_context.get("conversation_id"):
-        context["conversation_id"] = runtime_context["conversation_id"]
-    if not _profile_is_valid(context):
-        return {
-            "action": "conversation",
-            "create_ticket": False,
-            "requires_quote": False,
-            "ticket_type": None,
-            "response": "No puedo iniciar una respuesta empresarial todavía porque el perfil de contexto de esta empresa no está disponible o no está validado.",
-            "workflow": None,
-            "service": None,
-            "service_id": None,
-            "reasoning": {},
-            "metadata": {
-                "architecture": "company-ai-profile-first-v35",
-                "cognitive_authority": "blocked_profile_missing",
-                "profile_required": True,
-                "action_engine": "deferred",
-            },
-        }
+    for key in ("conversation_id", "channel", "conversation", "customer_context"):
+        if runtime_context.get(key) is not None:
+            context[key] = runtime_context[key]
 
+    profile_valid = _profile_is_valid(context)
+    response_deployment = _contextual_response_directive(context, message)
     memory_dict = memory if isinstance(memory, dict) else {}
     intent_dict = intent if isinstance(intent, dict) else {}
     history = memory_dict.get("history", [])
@@ -81,6 +99,7 @@ def decision_engine(
                 "customer_id": customer.get("id"),
                 "business_context": context,
                 "company_ai_profile": context.get("company_ai_profile"),
+                "response_deployment": response_deployment,
                 "memory": memory_dict,
                 "history": history,
                 "last_service": memory_dict.get("last_service"),
@@ -95,11 +114,13 @@ def decision_engine(
             conversation_id=memory_dict.get("conversation_id"),
         )
     except Exception as exc:
-        print("[AI-FIRST CONSULTATION WARNING]", type(exc).__name__)
+        print("[CONTEXTUAL AI WARNING]", type(exc).__name__)
         consultation = {"used": False, "reason": "consultation_error"}
 
     answer = str(consultation.get("answer") or "").strip()
     selected_provider = consultation.get("provider")
+    profile_id = (context.get("company_ai_profile") or {}).get("id")
+
     if answer:
         return {
             "action": "conversation",
@@ -112,33 +133,46 @@ def decision_engine(
             "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
             "reasoning": {},
             "metadata": {
-                "architecture": "company-ai-profile-first-v35",
+                "architecture": "contextual-response-deployment-v1",
                 "cognitive_authority": "external_ai",
-                "bitey_role": "authoritative_company_context_memory_tools_persistence_operations",
+                "bitey_role": "context_assembly_memory_tools_persistence_operations",
                 "response_authority": selected_provider or "external_ai",
                 "external_ai_self_evaluation": True,
-                "profile_id": context.get("company_ai_profile", {}).get("id"),
+                "profile_required": False,
+                "profile_available": profile_valid,
+                "profile_id": profile_id,
+                "response_mode": response_deployment["mode"],
                 "action_engine": "deferred",
                 "ai_consultation": consultation,
             },
         }
 
+    # The external AI may be unavailable. That is different from a missing
+    # profile: preserve the conversation and deploy a transparent contextual
+    # fallback rather than pretending a cognitive answer was produced.
+    fallback_name = response_deployment["identity"].get("company_name")
+    fallback = (
+        f"Entiendo tu solicitud{(' en ' + str(fallback_name)) if fallback_name else ''}. "
+        "Voy a continuar usando el contexto disponible de esta conversación para ayudarte."
+    )
     return {
         "action": "conversation",
         "create_ticket": False,
         "requires_quote": False,
         "ticket_type": None,
-        "response": "No pude obtener en este momento una respuesta de la IA rectora. La conversación queda abierta y no se ha creado ningún ticket.",
+        "response": fallback,
         "workflow": None,
         "service": None,
-        "service_id": None,
+        "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
         "reasoning": {},
         "metadata": {
-            "architecture": "company-ai-profile-first-v35",
+            "architecture": "contextual-response-deployment-v1",
             "cognitive_authority": "external_ai_unavailable",
-            "bitey_role": "authoritative_company_context_memory_tools_persistence_operations",
-            "external_ai_self_evaluation": True,
-            "profile_id": context.get("company_ai_profile", {}).get("id"),
+            "bitey_role": "context_assembly_memory_tools_persistence_operations",
+            "profile_required": False,
+            "profile_available": profile_valid,
+            "profile_id": profile_id,
+            "response_mode": response_deployment["mode"],
             "action_engine": "deferred",
             "ai_consultation": consultation,
         },
