@@ -45,14 +45,16 @@ def _db_conversation_id(value: str | None) -> int | None:
 
 
 def _derive_conversation_state(history: list[dict[str, Any]], current_message: str) -> dict[str, Any]:
-    """Derive continuity facts from the existing conversation history.
+    """Build a compact, relevance-oriented state from the existing conversation.
 
-    This is deliberately limited to established facts (device/model/problem/topic)
-    and never generates the answer. The external AI remains responsible for
-    reasoning and the final response.
+    This is context reconstruction, not answer generation. It deliberately avoids
+    hard-coding a service catalog so the same mechanism works for BiteFixes and
+    future companies/channels. External AI remains responsible for reasoning.
     """
     recent = history[-12:]
+    user_rows = [row for row in recent if str(row.get("sender_type") or "").lower() in {"customer", "user"}]
     texts = [str(row.get("message_content") or row.get("ai_response") or "").strip() for row in recent]
+    user_texts = [str(row.get("message_content") or "").strip() for row in user_rows]
     full_text = " ".join(texts).lower()
     current = str(current_message or "").strip().lower()
     combined = f"{full_text} {current}"
@@ -63,6 +65,7 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
     screen_terms = r"\b(pantalla|screen|display|lcd|touch)\b"
     broken_terms = r"\b(roto|rota|quebrado|quebrada|rompió|rompio|dañado|danado|broken|cracked|damaged)\b"
     repair_terms = r"\b(reparar|reparación|reparacion|arreglar|arreglo|repair|fix|sustituir|sustituya|reemplazar|cambiar|cambio)\b"
+    replace_terms = r"\b(sustituir|sustituya|reemplazar|cambiar|cambio|replace|replacement)\b"
 
     if re.search(phone_terms, combined):
         active_object = "teléfono móvil"
@@ -73,9 +76,9 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
     else:
         active_object = None
 
-    # Preserve the most recently established device/model instead of only the
-    # generic device class. This fixes follow-ups such as "quiero sustituirla"
-    # after the user already supplied "Redmi 9A".
+    # Preserve the most recently established device/model. This is deliberately
+    # generic enough for the existing catalog and prevents follow-ups such as
+    # "quiero sustituirla" from losing the previously supplied model.
     model_patterns = [
         r"\b(redmi\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
         r"\b(xiaomi\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
@@ -90,7 +93,6 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
         if matches:
             candidate = str(matches[-1]).strip(" .,_-\t\n")
             candidate = re.sub(r"\s+", " ", candidate)
-            # Avoid capturing a long continuation of the sentence.
             candidate = re.split(r"\b(?:y|pero|solo|porque|que|con|esta|está|tiene|tengo|deseo|quiero)\b", candidate, maxsplit=1, flags=re.IGNORECASE)[0].strip()
             if 2 <= len(candidate) <= 32:
                 active_model = candidate
@@ -110,15 +112,53 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
     else:
         active_topic = None
 
+    active_action = "sustitución/reemplazo" if re.search(replace_terms, combined) else ("reparación" if re.search(repair_terms, combined) else None)
+
+    # Keep an explicit location when the user has supplied one. This is useful
+    # across channels without tying the gateway to one city or business.
+    location_patterns = [
+        r"\b(?:en|desde|estoy en|ubicado en|ubicada en)\s+([a-záéíóúñü][a-záéíóúñü0-9 .,'-]{2,80})",
+        r"\b(esteio(?:\s+centro)?(?:\s*,?\s*porto\s+alegre)?(?:\s*,?\s*rio\s+grande\s+do\s+sul)?)\b",
+    ]
+    active_location = None
+    for row_text in reversed(user_texts + [str(current_message or "")]):
+        for pattern in location_patterns:
+            match = re.search(pattern, row_text, flags=re.IGNORECASE)
+            if match:
+                candidate = (match.group(1) if match.lastindex else match.group(0)).strip(" .,_-\t\n")
+                candidate = re.sub(r"\s+", " ", candidate)
+                if 3 <= len(candidate) <= 90:
+                    active_location = candidate
+                    break
+        if active_location:
+            break
+
     active_service = next((row.get("service_id") for row in reversed(recent) if row.get("service_id") is not None), None)
-    short_followup = len(current.split()) <= 12 and bool(active_object or active_model or active_topic or active_service)
+    short_followup = len(current.split()) <= 18 and bool(active_object or active_model or active_topic or active_service or active_location)
+
+    # Confirmed user facts are compacted into a small list. These are facts
+    # inferred from what the user already said, not instructions to the model.
+    confirmed_facts = []
+    for label, value in (
+        ("objeto", active_object),
+        ("modelo", active_model),
+        ("problema", active_problem),
+        ("acción", active_action),
+        ("ubicación", active_location),
+        ("servicio_id", active_service),
+    ):
+        if value not in (None, ""):
+            confirmed_facts.append(f"{label}: {value}")
 
     return {
         "active_object": active_object,
         "active_model": active_model,
         "active_topic": active_topic,
         "active_problem": active_problem,
+        "active_action": active_action,
+        "active_location": active_location,
         "active_service": active_service,
+        "confirmed_facts": confirmed_facts,
         "stage": "diagnosis" if active_topic or active_problem else "exploration",
         "is_follow_up": short_followup,
         "recent_turns": recent,
@@ -145,11 +185,14 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
         "external_conversation_id": conversation_id,
         "history": history,
         "recent_turns": state.get("recent_turns", []),
+        "confirmed_facts": state.get("confirmed_facts", []),
         "last_service": state.get("active_service"),
         "active_topic": state.get("active_topic"),
         "active_object": state.get("active_object"),
         "active_model": state.get("active_model"),
         "active_problem": state.get("active_problem"),
+        "active_action": state.get("active_action"),
+        "active_location": state.get("active_location"),
         "stage": state.get("stage", "exploration"),
         "is_follow_up": state.get("is_follow_up", False),
         "current_message": message,
