@@ -14,8 +14,7 @@ RESPONSE CONTRACT
 - Produce the final user-facing answer directly and naturally in the user's language.
 - Use the supplied company identity, services, capabilities and authorized knowledge as the primary business context.
 - Preserve conversation continuity. Treat previous turns as facts already established in this conversation.
-- If the user says something short such as "pantalla rota", "sí", "el móvil", or "esa misma", resolve the reference from the previous turns before asking a new question.
-- Never ask again for a device, object or problem that has already been established unless the conversation contains conflicting information.
+- Resolve short follow-ups from the previous turns before asking a new question.
 - Ask only the smallest useful next question needed to diagnose or advance the current request.
 - Do not restart the conversation or return a generic catalog when the user is already discussing a specific service.
 - Never invent company services, prices, availability, policies, locations, customer data or completed actions.
@@ -28,16 +27,19 @@ BUSINESS PRIORITY
 The active company's context is authoritative for what the company is, what it offers and how it should serve customers. Generic knowledge must not override known company facts.
 
 CONVERSATION PRIORITY
-The current turn is interpreted together with the recent conversation and explicit continuity state. A short follow-up inherits the active object, problem, topic and service whenever they are unambiguous.
+The current turn is interpreted together with recent conversation and explicit continuity state. A short follow-up inherits the active object, problem, topic and service whenever they are unambiguous.
 """.strip()
 
+# Deliberately compact. The full context is reconstructed once in the prompt;
+# providers must not receive a second copy of the same context in their payload.
+# This keeps the cognitive packet small enough for every configured provider.
 CONTEXT_BUDGET = {
-    "business_index": 9000,
-    "contextual_state": 7000,
-    "contextual_directive": 5000,
-    "tool_context": 6000,
-    "memory": 7000,
-    "knowledge": 7000,
+    "business_index": 2600,
+    "contextual_state": 1200,
+    "contextual_directive": 1000,
+    "tool_context": 1200,
+    "memory": 1800,
+    "knowledge": 1800,
 }
 
 
@@ -45,8 +47,8 @@ def _compact(value: Any, limit: int) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
         return text
-    head = max(1000, int(limit * 0.70))
-    tail = max(500, limit - head - 80)
+    head = max(500, int(limit * 0.68))
+    tail = max(300, limit - head - 50)
     return text[:head] + "\n...[context compacted]...\n" + text[-tail:]
 
 
@@ -97,7 +99,6 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
         tool_context = _search_context(message, language, context)
         business_index = _business_index(context.get("business_context") or {})
         memory = context.get("memory") or {}
-
         cognitive_packet = {
             "business_context_index": _compact(business_index, CONTEXT_BUDGET["business_index"]),
             "contextual_state": _compact(state, CONTEXT_BUDGET["contextual_state"]),
@@ -106,8 +107,6 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
             "conversation_memory": _compact(memory, CONTEXT_BUDGET["memory"]),
             "knowledge": _compact(context.get("knowledge"), CONTEXT_BUDGET["knowledge"]),
         }
-        enriched = {**context, **cognitive_packet, "business_context_index": business_index, "contextual_state": state, "contextual_directive": directive, **tool_context, "language": language}
-
         prompt = (
             f"{RECTOR_DIRECTIVES}\n\n"
             f"BUSINESS ENVIRONMENT:\n{cognitive_packet['business_context_index']}\n\n"
@@ -120,7 +119,10 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
             f"Before answering, resolve the current message against the conversation state and recent turns. Then answer only the current need."
         )
         print(f"[AI REASONING] provider={spec.name} status=requested context_chars={len(prompt)}")
-        answer = await spec.provider.generate(prompt, context=enriched)
+        # The prompt already contains the bounded cognitive packet. Passing the
+        # full context again caused oversized requests (HTTP 413) and duplicated
+        # enterprise data for OpenAI-compatible providers. Send one packet only.
+        answer = await spec.provider.generate(prompt)
         if not answer:
             return {"_error": {"category": "empty_response", "http_status": None}, "provider": spec.name}
         return {
