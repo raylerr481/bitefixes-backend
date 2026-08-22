@@ -8,6 +8,19 @@ from typing import Any, Dict, Optional
 from app.services.company_service import get_company_context
 from app.ai.consultation_service import consult_if_valuable
 
+try:
+    from app.ai.contextual_opportunity_engine import (
+        build_ai_guidance,
+        build_opportunities,
+        detect_signals,
+        persist_observations,
+    )
+except ImportError:
+    build_ai_guidance = None
+    build_opportunities = None
+    detect_signals = None
+    persist_observations = None
+
 
 def _profile_is_valid(context: Dict[str, Any]) -> bool:
     profile_record = context.get("company_ai_profile")
@@ -33,6 +46,7 @@ def _contextual_response_directive(context: Dict[str, Any], message: str) -> Dic
             "knowledge": context.get("knowledge") or [],
             "objectives": context.get("objectives") or [],
             "directives": context.get("directives") or {},
+            "contextual_opportunities": context.get("contextual_opportunities") or [],
         },
         "instruction": (
             "Use the supplied context to make the response relevant to the current company and user. "
@@ -42,6 +56,53 @@ def _contextual_response_directive(context: Dict[str, Any], message: str) -> Dic
         ),
         "user_message": message,
     }
+
+
+def _apply_contextual_opportunities(context: Dict[str, Any], message: str, *, company_id: int, conversation_id: Any, channel: Any) -> Dict[str, Any]:
+    """Observe and enrich context without becoming a response authority."""
+    if not (detect_signals and build_opportunities):
+        return context
+    try:
+        company = context.get("company") or {}
+        profile = context.get("company_ai_profile") or {}
+        state = {
+            "company": {
+                "id": company_id,
+                "name": company.get("name") or profile.get("company_name") or context.get("company_name"),
+            },
+            "services": context.get("services") or [],
+            "capabilities": context.get("capabilities") or [],
+            "conversation": context.get("conversation") or {
+                "active_topic": context.get("active_topic") or context.get("last_intent"),
+                "active_object": context.get("active_object"),
+                "active_model": context.get("active_model"),
+                "active_problem": context.get("active_problem"),
+                "active_service": context.get("last_service") or context.get("service_id"),
+            },
+        }
+        signals = detect_signals(message, state)
+        opportunities = build_opportunities(signals, state)
+        enriched = dict(context)
+        enriched["contextual_signals"] = signals
+        enriched["contextual_opportunities"] = opportunities
+        if build_ai_guidance:
+            enriched["external_ai_context_guidance"] = build_ai_guidance(opportunities)
+        if persist_observations:
+            persist_observations(
+                signals,
+                opportunities,
+                company_id=company_id,
+                conversation_id=conversation_id,
+                channel=channel,
+            )
+        if signals:
+            print(f"[CONTEXT OPPORTUNITY] signals={len(signals)} opportunities={len(opportunities)}")
+        return enriched
+    except Exception as exc:
+        # The contextual layer is strictly additive. A failure here must never
+        # prevent the external AI from researching, reasoning or answering.
+        print("[CONTEXT OPPORTUNITY WARNING]", type(exc).__name__)
+        return context
 
 
 def decision_engine(company_id: int, customer: Dict[str, Any], message: str, intent: Dict[str, Any], knowledge: Any = None, memory: Any = None, language: Optional[str] = None, business_context: Optional[Dict[str, Any]] = None):
@@ -56,6 +117,16 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
     for key in ("conversation_id", "channel", "conversation", "customer_context"):
         if runtime_context.get(key) is not None:
             context[key] = runtime_context[key]
+
+    # Additive contextual layer: preserve all existing company, memory and
+    # knowledge context, then attach observed opportunities for the external AI.
+    context = _apply_contextual_opportunities(
+        context,
+        message,
+        company_id=company_id,
+        conversation_id=(runtime_context.get("conversation_id") or (memory or {}).get("conversation_id")),
+        channel=runtime_context.get("channel"),
+    )
 
     profile_valid = _profile_is_valid(context)
     response_deployment = _contextual_response_directive(context, message)
@@ -74,6 +145,8 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
                 "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
                 "complexity": 0.4, "novelty": 0.7 if not intent_dict.get("intent") else 0.25, "business_impact": 0.2,
                 "estimated_cost": 0.0,
+                "contextual_opportunities": context.get("contextual_opportunities") or [],
+                "external_ai_context_guidance": context.get("external_ai_context_guidance") or "",
             },
             conversation_id=memory_dict.get("conversation_id"),
         )
@@ -95,6 +168,7 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
                 "response_authority": selected_provider or "external_ai", "external_ai_self_evaluation": True,
                 "profile_required": False, "profile_available": profile_valid, "profile_id": profile_id,
                 "response_mode": response_deployment["mode"], "action_engine": "deferred", "ai_consultation": consultation,
+                "contextual_opportunities": len(context.get("contextual_opportunities") or []),
             },
         }
 
@@ -112,5 +186,6 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
             "bitey_role": "communication_context_memory_apprentice_tools_persistence", "profile_required": False,
             "profile_available": profile_valid, "profile_id": profile_id, "response_mode": response_deployment["mode"],
             "action_engine": "deferred", "ai_consultation": consultation, "operational_reason": reason,
+            "contextual_opportunities": len(context.get("contextual_opportunities") or []),
         },
     }
