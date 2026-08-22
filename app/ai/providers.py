@@ -13,12 +13,7 @@ from app.config import settings
 
 
 def _context_text(context: dict[str, Any]) -> str:
-    """Serialize the prepared context for the external cognitive provider.
-
-    `_transport` is internal diagnostics and is never exposed to the model.
-    The provider receives the already selected/compacted context; it does not
-    perform Bitey's selection or evaluation logic.
-    """
+    """Serialize prepared context; internal transport diagnostics stay private."""
     parts: list[str] = []
     for key, value in context.items():
         if key.startswith("_") or value is None:
@@ -42,10 +37,7 @@ def _cognitive_messages(prompt: str, context: dict[str, Any]) -> list[dict[str, 
     )
     if context_text:
         system += "\n\nCOMPANY AND RELEVANT CONTEXT:\n" + context_text
-    return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": prompt},
-    ]
+    return [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
 
 
 class HTTPProvider:
@@ -70,18 +62,14 @@ class OllamaProvider(HTTPProvider):
         async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
             response = await client.post(f"{self.base_url}/api/chat", json=payload)
             response.raise_for_status()
-            data = response.json()
-            return data.get("message", {}).get("content", "")
+            return response.json().get("message", {}).get("content", "")
 
 
 class OpenAICompatibleProvider(HTTPProvider):
     """Adapter for OpenAI-compatible external inference routers."""
 
     async def generate(self, prompt: str, *, context: dict[str, Any]) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         payload = {
             "model": self.model,
             "messages": _cognitive_messages(prompt, context),
@@ -89,17 +77,13 @@ class OpenAICompatibleProvider(HTTPProvider):
             "max_tokens": settings.AI_MAX_OUTPUT_TOKENS,
         }
         async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
-            response = await httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT).__aenter__() if False else None
-            # Keep one client for the actual request; the conditional above is
-            # intentionally inert and avoids changing the established request path.
-            async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-                response.raise_for_status()
-                data = response.json()
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
 
         choices = data.get("choices") if isinstance(data, dict) else None
         if isinstance(choices, list) and choices:
@@ -110,10 +94,7 @@ class OpenAICompatibleProvider(HTTPProvider):
                 if isinstance(content, str) and content.strip():
                     return content.strip()
                 if isinstance(content, list):
-                    parts = []
-                    for part in content:
-                        if isinstance(part, dict) and isinstance(part.get("text"), str):
-                            parts.append(part["text"])
+                    parts = [p["text"] for p in content if isinstance(p, dict) and isinstance(p.get("text"), str)]
                     if parts:
                         return "".join(parts).strip()
             text = first.get("text") if isinstance(first, dict) else None
@@ -121,9 +102,7 @@ class OpenAICompatibleProvider(HTTPProvider):
                 return text.strip()
 
         output_text = data.get("output_text") if isinstance(data, dict) else None
-        if isinstance(output_text, str) and output_text.strip():
-            return output_text.strip()
-        return ""
+        return output_text.strip() if isinstance(output_text, str) and output_text.strip() else ""
 
 
 class GroqProvider(OpenAICompatibleProvider):
@@ -132,17 +111,16 @@ class GroqProvider(OpenAICompatibleProvider):
 
 class GeminiProvider(HTTPProvider):
     async def generate(self, prompt: str, *, context: dict[str, Any]) -> str:
-        context_text = _context_text(context)
-        full_prompt = f"{_cognitive_messages(prompt, context)[0]['content']}\n\nUSER REQUEST:\n{prompt}"
+        messages = _cognitive_messages(prompt, context)
+        full_prompt = f"{messages[0]['content']}\n\nUSER REQUEST:\n{messages[1]['content']}"
         payload = {
             "contents": [{"parts": [{"text": full_prompt}]}],
             "generationConfig": {"maxOutputTokens": settings.AI_MAX_OUTPUT_TOKENS},
         }
-        params = {"key": self.api_key}
         async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT) as client:
             response = await client.post(
                 f"{self.base_url}/v1beta/models/{self.model}:generateContent",
-                params=params,
+                params={"key": self.api_key},
                 json=payload,
             )
             response.raise_for_status()
@@ -161,58 +139,31 @@ def build_provider_registry():
     from .registry import AIProviderRegistry, ProviderSpec
 
     registry = AIProviderRegistry()
-    registry.register(
-        ProviderSpec(
-            "ollama",
-            enabled=True,
-            priority=10,
-            cost_class="local-free",
-            capabilities=("general_reasoning", "coding", "summarization"),
-            provider=OllamaProvider("ollama", settings.OLLAMA_BASE_URL, None, settings.OLLAMA_MODEL),
-        )
-    )
+    registry.register(ProviderSpec(
+        "ollama", enabled=True, priority=10, cost_class="local-free",
+        capabilities=("general_reasoning", "coding", "summarization"),
+        provider=OllamaProvider("ollama", settings.OLLAMA_BASE_URL, None, settings.OLLAMA_MODEL),
+    ))
 
     if settings.GEMINI_API_KEY:
-        registry.register(
-            ProviderSpec(
-                "gemini",
-                enabled=True,
-                priority=20,
-                cost_class="free-tier-or-paid",
-                capabilities=("general_reasoning", "coding", "multilingual"),
-                provider=GeminiProvider(
-                    "gemini", "https://generativelanguage.googleapis.com", settings.GEMINI_API_KEY, settings.GEMINI_MODEL
-                ),
-            )
-        )
+        registry.register(ProviderSpec(
+            "gemini", enabled=True, priority=20, cost_class="free-tier-or-paid",
+            capabilities=("general_reasoning", "coding", "multilingual"),
+            provider=GeminiProvider("gemini", "https://generativelanguage.googleapis.com", settings.GEMINI_API_KEY, settings.GEMINI_MODEL),
+        ))
 
     if settings.GROQ_API_KEY:
-        registry.register(
-            ProviderSpec(
-                "groq",
-                enabled=True,
-                priority=30,
-                cost_class="free-tier-or-paid",
-                capabilities=("general_reasoning", "coding", "fast_inference"),
-                provider=GroqProvider("groq", "https://api.groq.com/openai/v1", settings.GROQ_API_KEY, settings.GROQ_MODEL),
-            )
-        )
+        registry.register(ProviderSpec(
+            "groq", enabled=True, priority=30, cost_class="free-tier-or-paid",
+            capabilities=("general_reasoning", "coding", "fast_inference"),
+            provider=GroqProvider("groq", "https://api.groq.com/openai/v1", settings.GROQ_API_KEY, settings.GROQ_MODEL),
+        ))
 
     if settings.HF_API_TOKEN:
-        registry.register(
-            ProviderSpec(
-                "huggingface",
-                enabled=True,
-                priority=40,
-                cost_class="free-tier-or-paid",
-                capabilities=("general_reasoning", "coding", "multilingual"),
-                provider=HuggingFaceProvider(
-                    "huggingface",
-                    "https://router.huggingface.co/v1",
-                    settings.HF_API_TOKEN,
-                    settings.HF_MODEL,
-                ),
-            )
-        )
+        registry.register(ProviderSpec(
+            "huggingface", enabled=True, priority=40, cost_class="free-tier-or-paid",
+            capabilities=("general_reasoning", "coding", "multilingual"),
+            provider=HuggingFaceProvider("huggingface", "https://router.huggingface.co/v1", settings.HF_API_TOKEN, settings.HF_MODEL),
+        ))
 
     return registry
