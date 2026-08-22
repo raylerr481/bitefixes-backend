@@ -89,7 +89,7 @@ def build_opportunities(signals: List[Dict[str, Any]], state: Dict[str, Any]) ->
         return []
 
     company = state.get("company") or {}
-    services = state.get("available_services") or []
+    services = state.get("services") or state.get("available_services") or []
     capabilities = state.get("capabilities") or []
     conversation = state.get("conversation") or {}
     services_sample = _sample(services)
@@ -116,6 +116,7 @@ def build_opportunities(signals: List[Dict[str, Any]], state: Dict[str, Any]) ->
         seen_types.add(key)
         opportunities.append({
             "opportunity_type": "BUSINESS_CAPABILITY_MATCH",
+            "signal_type": signal["signal_type"],
             "business_capability": conversation.get("active_service") or "relevant company capability",
             "confidence": signal["confidence"],
             "context_payload": {
@@ -146,7 +147,7 @@ def build_ai_guidance(opportunities: List[Dict[str, Any]]) -> str:
     ]
     for item in opportunities:
         payload = item.get("context_payload") or {}
-        lines.append(f"- opportunity={item.get('opportunity_type')}; capability={item.get('business_capability')}; confidence={item.get('confidence')}")
+        lines.append(f"- opportunity={item.get('opportunity_type')}; signal={item.get('signal_type')}; capability={item.get('business_capability')}; confidence={item.get('confidence')}")
         lines.append(f"  company={payload.get('company_name')!r}")
         lines.append(f"  services={payload.get('services')!r}")
         lines.append(f"  capabilities={payload.get('capabilities')!r}")
@@ -180,13 +181,20 @@ def persist_observations(signals: List[Dict[str, Any]], opportunities: List[Dict
         if signal_rows:
             response = client.table("contextual_signals").insert(signal_rows).execute()
             inserted = getattr(response, "data", None) or []
+
+        signal_ids_by_type = {}
+        for row in inserted:
+            signal_type = row.get("signal_type")
+            if signal_type and signal_type not in signal_ids_by_type:
+                signal_ids_by_type[signal_type] = row.get("id")
+
         if opportunities:
             rows = []
-            for index, opportunity in enumerate(opportunities):
+            for opportunity in opportunities:
                 rows.append({
                     "company_id": str(company_id) if company_id is not None else None,
                     "conversation_id": str(conversation_id) if conversation_id is not None else None,
-                    "signal_id": inserted[index].get("id") if index < len(inserted) else None,
+                    "signal_id": signal_ids_by_type.get(opportunity.get("signal_type")),
                     "opportunity_type": opportunity.get("opportunity_type"),
                     "business_capability": opportunity.get("business_capability"),
                     "context_payload": opportunity.get("context_payload") or {},
