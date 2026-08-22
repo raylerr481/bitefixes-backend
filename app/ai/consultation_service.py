@@ -1,9 +1,13 @@
-"""Single governed entry point for external AI and web consultation."""
+"""External-AI consultation service.
+
+External providers are the cognitive authority. Bitey may prepare context,
+request governed web evidence, persist telemetry and learn operationally, but it
+does not score, rank, rewrite or veto an external-AI response.
+"""
 from typing import Any, Dict
 
 from app.ai.consultation_gate import evaluate
 from app.ai.ai_council import consult
-from app.ai.evaluator_suggestions import evaluate_suggestions
 from app.ai.learning_candidates import record_candidate
 from app.ai.web_intelligence import needs_web, search_web
 from app.ai.web_learning import record_web_candidate
@@ -14,7 +18,6 @@ try:
 except ImportError:
     cognitive_observe = None
 
-PROCEDURAL_MARKERS = {"como", "cómo", "how", "trocar", "troca", "cambiar", "cambiarla", "cambiarlo", "reemplazar", "reparar", "arreglar", "instalar", "desmontar", "montar", "abrir", "quitar", "poner", "pantalla", "tela", "screen", "display", "bateria", "batería", "conector", "camara", "cámara", "teclado"}
 GREETING_WORDS = {"hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}
 
 
@@ -25,16 +28,6 @@ def _is_greeting(message: str) -> bool:
 
 def _is_substantive_request(message: str) -> bool:
     return bool((message or "").strip()) and not _is_greeting(message)
-
-
-def _is_procedural_request(message: str) -> bool:
-    text = (message or "").strip().lower()
-    if not text: return False
-    words = set(text.replace("?", " ").replace("¿", " ").split())
-    has_how = bool(words & {"como", "cómo", "how"})
-    has_action = bool(words & {"trocar", "troca", "cambiar", "reemplazar", "reparar", "arreglar", "instalar", "desmontar", "montar", "abrir", "quitar", "poner"})
-    has_component = bool(words & {"pantalla", "tela", "screen", "display", "bateria", "batería", "conector", "camara", "cámara", "teclado"})
-    return (has_how and has_action) or (has_action and has_component)
 
 
 def consult_if_valuable(*, company_id: int, message: str, language: str, intent: Dict[str, Any], context: Dict[str, Any], conversation_id: Any = None) -> Dict[str, Any]:
@@ -48,7 +41,7 @@ def consult_if_valuable(*, company_id: int, message: str, language: str, intent:
         try:
             cognitive = cognitive_observe(customer_id=int(context.get("customer_id") or 0), conversation_id=str(conversation_id or "unknown"), message=message, intent=intent_name, service_id=context.get("last_service") or context.get("service_id"), confidence=confidence)
         except Exception as error:
-            print("[COGNITIVE WARNING]", error); cognitive = {"status": "error", "error": str(error)}
+            print("[COGNITIVE WARNING]", type(error).__name__); cognitive = {"status": "error"}
 
     web = {"used": False, "grounding_status": "not_needed", "results": [], "queries": []}
     if needs_web(message, intent=intent_name, knowledge_found=knowledge_found):
@@ -56,22 +49,26 @@ def consult_if_valuable(*, company_id: int, message: str, language: str, intent:
         if web.get("learning_candidate"):
             record_web_candidate(company_id=company_id, message=message, web=web, conversation_id=conversation_id)
 
-    gate = evaluate(confidence=confidence, complexity=float(context.get("complexity", 0) or 0), novelty=float(context.get("novelty", 0) or 0), knowledge_gap=float(context.get("knowledge_gap", 0) or 0), business_impact=float(context.get("business_impact", 0) or 0), estimated_cost=float(context.get("estimated_cost", 0) or 0), force_advisory=substantive, advisory_reason="substantive_ai_reasoning" if substantive else "")
+    # This gate only controls infrastructure/resource policy. It does not
+    # evaluate or judge an external-AI answer. Substantive user requests are
+    # always advisory so the external rector gets the first cognitive turn.
+    gate = evaluate(confidence=confidence, complexity=float(context.get("complexity", 0) or 0), novelty=float(context.get("novelty", 0) or 0), knowledge_gap=float(context.get("knowledge_gap", 0) or 0), business_impact=float(context.get("business_impact", 0) or 0), estimated_cost=float(context.get("estimated_cost", 0) or 0), force_advisory=substantive or _is_greeting(message), advisory_reason="external_rector_primary")
     if not gate.consult:
-        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation"] + (["web_grounding"] if web.get("used") else [])}
+        return {"used": False, "reason": gate.reason, "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "cognitive": cognitive}
 
     enriched_context = {**context, "web_grounding": web, "cognitive_state": cognitive}
-    suggestions = consult(message, language=language, context=enriched_context, max_providers=gate.max_providers)
-    evaluation = evaluate_suggestions(suggestions, core_confidence=confidence)
+    suggestions = consult(message, language=language, context=enriched_context, max_providers=1)
     interaction_id = str(conversation_id or context.get("conversation_id") or "unknown")
 
-    for suggestion in suggestions:
-        answer = str(suggestion.get("answer") or "").strip()
-        if answer:
-            record_provider_evaluation(company_id=company_id, interaction_id=interaction_id, provider=str(suggestion.get("provider") or "unknown"), task_type=str(intent_name or "general_reasoning"), answer=answer, context={**enriched_context, "verified_evidence": bool(suggestion.get("search_verified")), "cognitive_state": suggestion.get("contextual_state") or cognitive})
+    if not suggestions:
+        return {"used": False, "reason": "no_external_ai_response", "gate": gate.__dict__, "suggestions": [], "web_grounding": web, "cognitive": cognitive}
 
-    if evaluation.get("learning_candidate") and evaluation.get("selected"):
-        selected = evaluation["selected"]
-        record_candidate(company_id=company_id, message=message, provider=selected.get("provider", "unknown"), suggestion=selected, evaluation=evaluation, conversation_id=conversation_id)
+    # First healthy external rector owns the response. No Bitey scoring or
+    # comparative selection is performed after the provider answers.
+    selected = suggestions[0]
+    answer = str(selected.get("answer") or "").strip()
+    if answer:
+        record_provider_evaluation(company_id=company_id, interaction_id=interaction_id, provider=str(selected.get("provider") or "unknown"), task_type=str(intent_name or "general_reasoning"), answer=answer, context={**enriched_context, "verified_evidence": bool(selected.get("search_verified")), "cognitive_state": selected.get("contextual_state") or cognitive, "evaluation_authority": "external_ai"})
+        record_candidate(company_id=company_id, message=message, provider=str(selected.get("provider") or "unknown"), suggestion=selected, evaluation={"authority": "external_ai", "mode": "self_evaluated"}, conversation_id=conversation_id)
 
-    return {"used": bool(suggestions), "reason": gate.reason, "gate": gate.__dict__, "suggestions": suggestions, "evaluation": evaluation, "web_grounding": web, "cognitive": cognitive, "process": ["core_analysis", "cognitive_observation"] + (["web_grounding"] if web.get("used") else []) + ["external_ai_consultation", "provider_evaluation_persisted", "comparative_evaluation", "learning_candidate"]}
+    return {"used": bool(answer), "reason": gate.reason, "gate": gate.__dict__, "answer": answer, "provider": selected.get("provider"), "suggestions": suggestions, "selection": {"authority": "external_ai", "mode": "first_healthy_provider", "provider": selected.get("provider")}, "web_grounding": web, "cognitive": cognitive, "process": ["context_preparation", "external_ai_consultation", "provider_health", "provider_telemetry", "external_ai_self_evaluation", "learning_candidate"]}
