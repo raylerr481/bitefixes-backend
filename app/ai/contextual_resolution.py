@@ -35,9 +35,10 @@ def resolve_context(*, message: str, business_context: Dict[str, Any] | None, me
     active_service = mem.get("last_service") or it.get("service_id")
     active_topic = mem.get("active_topic") or mem.get("topic")
     active_object = mem.get("active_object")
+    active_model = mem.get("active_model")
     active_problem = mem.get("active_problem")
     recent_turns = _recent_turns(mem)
-    short_followup = bool(mem.get("is_follow_up")) or (len(text.split()) <= 8 and bool(active_object or active_topic or active_service or recent_turns))
+    short_followup = bool(mem.get("is_follow_up")) or (len(text.split()) <= 8 and bool(active_object or active_model or active_topic or active_service or recent_turns))
     reference_terms = {"ella", "él", "el", "esa", "ese", "eso", "quebrada", "roto", "rota", "sí", "si", "esa misma", "that", "it"}
     contextual_reference = short_followup or bool(set(text.split()) & reference_terms)
     ai_profile = ctx.get("company_ai_profile") or {}
@@ -69,6 +70,7 @@ def resolve_context(*, message: str, business_context: Dict[str, Any] | None, me
         "conversation": {
             "active_topic": active_topic,
             "active_object": active_object,
+            "active_model": active_model,
             "active_problem": active_problem,
             "active_service": active_service,
             "history": mem.get("history") or [],
@@ -100,10 +102,10 @@ def contextual_directive(state: Dict[str, Any]) -> str:
     return f"""CONTEXTUAL RESOLUTION RULES:
 1. Use the Company AI Profile as the strongest identity and governance context for the active tenant: {profile.get('company_name') or company.get('name') or 'the current company'} ({profile_status}).
 2. Preserve the conversation as a continuous interaction. Never restart a topic merely because the latest message is short.
-3. Known continuity: topic={conversation.get('active_topic')!r}; object={conversation.get('active_object')!r}; problem={conversation.get('active_problem')!r}; service={conversation.get('active_service')!r}; stage={conversation.get('stage')!r}; follow_up={conversation.get('is_follow_up')!r}.
+3. Known continuity: topic={conversation.get('active_topic')!r}; object={conversation.get('active_object')!r}; model={conversation.get('active_model')!r}; problem={conversation.get('active_problem')!r}; service={conversation.get('active_service')!r}; stage={conversation.get('stage')!r}; follow_up={conversation.get('is_follow_up')!r}.
 4. RECENT CONVERSATION TRANSCRIPT (use this to resolve pronouns and short follow-ups):
 {transcript}
-5. If the user has already established the device/object, inherit it. Do NOT ask again what device they mean unless the context genuinely contains conflicting objects.
+5. If the user has already established the device/object or model, inherit it. Do NOT ask again what device they mean unless the context genuinely contains conflicting objects.
 6. If the user has already established a problem, inherit it and ask only for the next missing diagnostic detail.
 7. Ask the smallest useful question needed to advance the current need. Do not repeat information already known.
 8. Use the company's real services and capabilities. Do not return the whole catalog unless requested.
