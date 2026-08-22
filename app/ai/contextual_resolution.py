@@ -1,6 +1,7 @@
 """Contextual Need Resolution (CNRA) for Bitey.
 
-The Company AI Profile is the first-order identity and governance source.
+Bitey supplies context to external AI. Context is enrichment, never a gate
+that blocks an external cognitive turn.
 """
 from __future__ import annotations
 from typing import Any, Dict
@@ -53,7 +54,7 @@ def resolve_context(*, message: str, business_context: Dict[str, Any] | None,
         },
         "need": {"raw": message, "intent": it.get("intent"), "confidence": it.get("confidence"), "missing": []},
         "governance": {
-            "profile_required": True,
+            "profile_required": False,
             "profile_authoritative": bool(ai_profile.get("authoritative")),
             "ticket_allowed": False, "catalog_only_if_requested": True,
             "invented_business_facts_forbidden": True, "external_ai_is_reasoning_authority": True,
@@ -64,10 +65,11 @@ def resolve_context(*, message: str, business_context: Dict[str, Any] | None,
 def contextual_directive(state: Dict[str, Any]) -> str:
     company, conversation, need = state.get("company", {}), state.get("conversation", {}), state.get("need", {})
     profile = state.get("company_ai_profile", {})
+    profile_status = "available and authoritative" if profile.get("authoritative") else "not available or not yet authoritative"
     return f"""CONTEXTUAL RESOLUTION RULES:
-1. The Company AI Profile is the authoritative identity and governance source for the active tenant: {profile.get('company_name') or company.get('name') or 'the current company'}.
-2. The external AI is the sole reasoning authority. Bitey supplies the authoritative profile, supporting company context, memory, authorized tools and storage; Bitey does not evaluate, rank, rewrite, approve, reject or cognitively validate the answer.
-3. The Company AI Profile must be present and authoritative before an external AI turn is allowed. If it is missing or invalid, do not fabricate a business identity; stop the cognitive turn safely.
+1. Use the Company AI Profile as the strongest available identity and governance context for the active tenant: {profile.get('company_name') or company.get('name') or 'the current company'} ({profile_status}).
+2. The external AI is the sole reasoning authority. Bitey supplies profile/context, memory, authorized tools and storage; Bitey does not evaluate, rank, rewrite, approve, reject or cognitively validate the answer.
+3. Missing or incomplete company context MUST NOT block an external AI turn. Use the best available conversational and business context, ask useful questions when needed, and continue the interaction naturally. Never fabricate company facts.
 4. Use the company's real services and capabilities to understand what can be offered. Do not ask the user to wait while Bitey verifies capabilities that are already present in context.
 5. Answer the user's actual need, not the whole service catalog. Show the catalog only if the user asks what services are available.
 6. Preserve continuity: topic={conversation.get('active_topic')!r}; object={conversation.get('active_object')!r}; service={conversation.get('active_service')!r}; stage={conversation.get('stage')!r}.
