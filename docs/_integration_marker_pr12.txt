@@ -1,1 +1,0 @@
-Temporary integration marker. This file will be removed after the real PR #12 changes are applied and tested.
