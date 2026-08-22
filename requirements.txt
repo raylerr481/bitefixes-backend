@@ -8,5 +8,4 @@ python-multipart
 pypdf
 python-docx
 letta-client
-hyperon
 requests
