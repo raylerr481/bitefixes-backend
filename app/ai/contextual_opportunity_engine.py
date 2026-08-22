@@ -1,8 +1,8 @@
 """Contextual Opportunity Engine for Bitey.
 
-This layer observes conversations and discovers when authorized business
-capabilities can improve an external AI's reasoning. It never generates the
-user-facing answer and never blocks an external AI.
+Observes conversations and discovers when authorized business capabilities can
+improve an external AI's reasoning. It never generates the user-facing answer
+and never blocks an external AI.
 """
 from __future__ import annotations
 
@@ -13,6 +13,18 @@ def _norm(value: Any) -> str:
     return " ".join(str(value or "").lower().strip().split())
 
 
+def _sample(value: Any, limit: int = 20) -> Any:
+    if isinstance(value, list):
+        return value[:limit]
+    if isinstance(value, tuple):
+        return list(value[:limit])
+    if isinstance(value, dict):
+        return dict(list(value.items())[:limit])
+    if value is None:
+        return []
+    return [value]
+
+
 _SIGNAL_PATTERNS = {
     "NEED": ("necesito", "necesita", "quiero arreglar", "quiero reparar", "no funciona", "problema", "ayuda"),
     "SERVICE_REQUEST": ("reparar", "reparacion", "reparación", "instalar", "instalación", "configurar", "mantenimiento", "soporte", "automatizar"),
@@ -20,7 +32,7 @@ _SIGNAL_PATTERNS = {
     "LOCATION_REQUEST": ("donde estan", "dónde están", "donde queda", "dónde queda", "como llego", "cómo llego", "direccion", "dirección", "donde puedo llevar"),
     "CONTACT_REQUEST": ("como contacto", "cómo contacto", "contactar", "whatsapp", "telefono", "teléfono", "hablar con un tecnico", "hablar con un técnico"),
     "HOME_SERVICE_REQUEST": ("a domicilio", "mi casa", "pueden venir", "venir a mi casa", "en mi casa", "a mi empresa", "en mi local", "mandar un tecnico", "mandar un técnico"),
-    "APPOINTMENT_REQUEST": ("agendar", "reservar", "cita", "cuando puedo", "cuándo puedo", "disponibilidad", "mañana", "hoy"),
+    "APPOINTMENT_REQUEST": ("agendar", "reservar", "cita", "cuando puedo", "cuándo puedo", "disponibilidad"),
     "BUSINESS_CAPABILITY_REQUEST": ("ustedes hacen", "hacen ese servicio", "tienen ese servicio", "pueden hacerlo", "ofrecen", "trabajan con", "puedo contratar"),
 }
 
@@ -50,7 +62,11 @@ def detect_signals(message: str, state: Dict[str, Any]) -> List[Dict[str, Any]]:
             "signal_value": "short_or_referential_follow_up",
             "confidence": 0.88,
             "evidence": message,
-            "metadata": {"active_object": conversation.get("active_object"), "active_model": conversation.get("active_model"), "active_problem": conversation.get("active_problem")},
+            "metadata": {
+                "active_object": conversation.get("active_object"),
+                "active_model": conversation.get("active_model"),
+                "active_problem": conversation.get("active_problem"),
+            },
         })
 
     if conversation.get("active_service") or conversation.get("active_object") or conversation.get("active_model"):
@@ -59,7 +75,10 @@ def detect_signals(message: str, state: Dict[str, Any]) -> List[Dict[str, Any]]:
             "signal_value": conversation.get("active_service") or conversation.get("active_object") or conversation.get("active_model"),
             "confidence": 0.90,
             "evidence": message,
-            "metadata": {"active_topic": conversation.get("active_topic"), "active_service": conversation.get("active_service")},
+            "metadata": {
+                "active_topic": conversation.get("active_topic"),
+                "active_service": conversation.get("active_service"),
+            },
         })
 
     return signals
@@ -73,33 +92,46 @@ def build_opportunities(signals: List[Dict[str, Any]], state: Dict[str, Any]) ->
     services = state.get("available_services") or []
     capabilities = state.get("capabilities") or []
     conversation = state.get("conversation") or {}
-
-    # Do not force a service mapping here. The external AI remains the reasoning authority.
-    service_text = " ".join(str(s) for s in services[:50])
-    capability_text = " ".join(str(c) for c in capabilities[:50])
-    has_business_context = bool(service_text or capability_text or company.get("name"))
+    services_sample = _sample(services)
+    capabilities_sample = _sample(capabilities)
+    has_business_context = bool(services_sample or capabilities_sample or company.get("name"))
 
     opportunities = []
+    seen_types = set()
+    eligible = {
+        "SERVICE_REQUEST",
+        "BUSINESS_CAPABILITY_REQUEST",
+        "LOCATION_REQUEST",
+        "CONTACT_REQUEST",
+        "HOME_SERVICE_REQUEST",
+        "QUOTE_REQUEST",
+        "APPOINTMENT_REQUEST",
+    }
     for signal in signals:
-        if signal["signal_type"] in {"SERVICE_REQUEST", "BUSINESS_CAPABILITY_REQUEST", "LOCATION_REQUEST", "CONTACT_REQUEST", "HOME_SERVICE_REQUEST", "QUOTE_REQUEST", "APPOINTMENT_REQUEST"} and has_business_context:
-            opportunities.append({
-                "opportunity_type": "BUSINESS_CAPABILITY_MATCH",
-                "business_capability": conversation.get("active_service") or "relevant company capability",
-                "confidence": signal["confidence"],
-                "context_payload": {
-                    "company_name": company.get("name"),
-                    "services": services[:20],
-                    "capabilities": capabilities[:20],
-                    "conversation": {
-                        "active_topic": conversation.get("active_topic"),
-                        "active_object": conversation.get("active_object"),
-                        "active_model": conversation.get("active_model"),
-                        "active_problem": conversation.get("active_problem"),
-                        "active_service": conversation.get("active_service"),
-                    },
-                    "reason": "The current conversation contains a signal that may benefit from authorized business context.",
+        if signal["signal_type"] not in eligible or not has_business_context:
+            continue
+        key = signal["signal_type"]
+        if key in seen_types:
+            continue
+        seen_types.add(key)
+        opportunities.append({
+            "opportunity_type": "BUSINESS_CAPABILITY_MATCH",
+            "business_capability": conversation.get("active_service") or "relevant company capability",
+            "confidence": signal["confidence"],
+            "context_payload": {
+                "company_name": company.get("name"),
+                "services": services_sample,
+                "capabilities": capabilities_sample,
+                "conversation": {
+                    "active_topic": conversation.get("active_topic"),
+                    "active_object": conversation.get("active_object"),
+                    "active_model": conversation.get("active_model"),
+                    "active_problem": conversation.get("active_problem"),
+                    "active_service": conversation.get("active_service"),
                 },
-            })
+                "reason": "The current conversation contains a signal that may benefit from authorized business context.",
+            },
+        })
 
     return opportunities
 
