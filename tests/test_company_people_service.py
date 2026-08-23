@@ -1,7 +1,7 @@
 from app.services import company_people_service
 
 
-def test_company_people_context_hides_contact_details(monkeypatch):
+def test_company_people_context_hides_contact_details_and_filters_authority(monkeypatch):
     monkeypatch.setattr(
         company_people_service,
         "list_company_people",
@@ -27,7 +27,18 @@ def test_company_people_context_hides_contact_details(monkeypatch):
                 "preferred_channel": "whatsapp",
                 "phone": "+5511999999999",
                 "email": "ana@example.com",
-            }
+            },
+            {
+                "id": 11,
+                "full_name": "Bruno Silva",
+                "job_title": "Employee",
+                "department": "Operations",
+                "person_type": "employee",
+                "roles": [],
+                "is_primary": False,
+                "ai_context_authority": False,
+                "can_be_contacted_by_ai": False,
+            },
         ],
     )
 
@@ -39,6 +50,7 @@ def test_company_people_context_hides_contact_details(monkeypatch):
     assert person["roles"][0]["code"] == "technical_lead"
     assert "phone" not in person
     assert "email" not in person
+    assert all(p["name"] != "Bruno Silva" for p in context["company_people"])
 
 
 def test_unknown_role_is_rejected():
