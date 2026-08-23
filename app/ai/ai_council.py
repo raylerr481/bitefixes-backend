@@ -26,15 +26,17 @@ RESPONSE CONTRACT
 BUSINESS PRIORITY
 The active company's context is authoritative for what the company is, what it offers and how it should serve customers. Generic knowledge must not override known company facts.
 
+PEOPLE AUTHORITY
+Only company people explicitly marked as AI-context authority are relevant to enterprise reasoning. Their roles describe organizational responsibility; they do not by themselves authorize tool actions, financial commitments or external contact. Never expose private contact details unless an authorized action specifically requires them.
+
 CONVERSATION PRIORITY
 The current turn is interpreted together with recent conversation and explicit continuity state. A short follow-up inherits the active object, problem, topic and service whenever they are unambiguous.
 """.strip()
 
 # Deliberately compact. The full context is reconstructed once in the prompt;
 # providers must not receive a second copy of the same context in their payload.
-# This keeps the cognitive packet small enough for every configured provider.
 CONTEXT_BUDGET = {
-    "business_index": 2600,
+    "business_index": 3000,
     "contextual_state": 1200,
     "contextual_directive": 1000,
     "tool_context": 1200,
@@ -80,9 +82,30 @@ def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
             if value:
                 out.append(str(value))
         return out
+
+    people_context = {"company_people": [], "count": 0}
+    company_id = context.get("company_id")
+    if company_id is None and isinstance(context.get("company"), dict):
+        company_id = context["company"].get("id")
+    try:
+        if company_id is not None:
+            from app.services.company_people_service import build_company_people_context
+            raw_people = build_company_people_context(int(company_id)) or {}
+            people_context = {
+                "company_people": [
+                    person
+                    for person in (raw_people.get("company_people") or [])
+                    if bool(person.get("ai_context_authority"))
+                ],
+                "count": int(raw_people.get("count") or 0),
+            }
+    except Exception as exc:
+        print(f"[AI REASONING PEOPLE WARNING] error={type(exc).__name__}")
+
     return {
         "company": context.get("company") or {},
         "company_ai_profile": context.get("company_ai_profile") or {},
+        "people_authority": people_context,
         "profile": context.get("business_profile") or {},
         "domains": names(context.get("domains")),
         "services": names(context.get("services")),
