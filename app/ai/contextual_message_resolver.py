@@ -19,9 +19,9 @@ _PUBLIC_ENTITY_MARKERS = (
 )
 
 _RESEARCH_FOLLOWUP = re.compile(
-    r"\b(?:eval(?:ua|ual|uar|u|ú)a?|analiz|analisa|revis|audit|diagnost|"
-    r"cu[aá]nt|quanto|pre[çc]o|costo|custa|vale|compar|dime|diz|"
-    r"inform|explica|detalh|m[aá]s)\b",
+    r"\b(?:evalua\w*|evalualo|evaluarlo|analiz\w*|analisa\w*|revis\w*|audit\w*|"
+    r"diagnost\w*|cuant\w*|quant\w*|pre[çc]o\w*|costo\w*|custa\w*|vale\w*|"
+    r"compar\w*|dime\w*|diz\w*|inform\w*|explica\w*|detalh\w*|m[aá]s)\b",
     re.IGNORECASE,
 )
 
@@ -32,7 +32,6 @@ def _looks_like_public_entity(message: str) -> bool:
     if len(words) < 2:
         return False
 
-    # Preserve the original proper-name heuristic when users type normal casing.
     if re.search(
         r"\b(?:[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.-]{2,})"
         r"(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.-]{2,})+\b",
@@ -40,10 +39,11 @@ def _looks_like_public_entity(message: str) -> bool:
     ):
         return True
 
-    # Users frequently type company names in lowercase. Business markers provide
-    # a bounded signal without treating every two-word sentence as a web search.
     lowered = text.casefold()
-    return any(marker in lowered.split() or re.search(rf"\b{re.escape(marker)}\b", lowered) for marker in _PUBLIC_ENTITY_MARKERS)
+    return any(
+        marker in lowered.split() or re.search(rf"\b{re.escape(marker)}\b", lowered)
+        for marker in _PUBLIC_ENTITY_MARKERS
+    )
 
 
 def _history_url(history: list[dict[str, Any]]) -> str | None:
