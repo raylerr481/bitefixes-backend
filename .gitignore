@@ -7,6 +7,7 @@ __pycache__/
 *.py[cod]
 *.bak
 *_backup*
+backup_*/
 openapi.json
 .pytest_cache/
 .coverage
