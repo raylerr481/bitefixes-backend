@@ -1,7 +1,12 @@
 name: Test contextual research
 
 on:
+  push:
+    branches:
+      - contextual-research-regression
   pull_request:
+    branches:
+      - main
     paths:
       - "app/ai/consultation_service.py"
       - "app/ai/web_intelligence.py"
