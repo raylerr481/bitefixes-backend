@@ -1,10 +1,4 @@
-"""Safe, bounded website fetching for Bitey business diagnostics.
-
-This module is intentionally independent from the search core. It fetches only
-an explicitly supplied public HTTP(S) URL, applies SSRF protections, limits the
-response size, and extracts useful visible text/metadata for contextual AI
-reasoning. No paid search provider is required.
-"""
+"""Safe, bounded website fetching for Bitey business diagnostics."""
 from __future__ import annotations
 
 import html
@@ -74,7 +68,7 @@ def _visible_text(markup: str) -> str:
 
 
 def _meta(markup: str, name: str) -> str:
-    pattern = rf'<meta[^>]+(?:name|property)=[\"\']{re.escape(name)}[\"\'][^>]+content=[\"\'](.*?)[\"\']'
+    pattern = rf"<meta[^>]+(?:name|property)=[\"']{re.escape(name)}[\"'][^>]+content=[\"'](.*?)[\"']"
     match = re.search(pattern, markup, flags=re.I | re.S)
     return html.unescape(match.group(1)).strip()[:1000] if match else ""
 
@@ -96,7 +90,7 @@ def fetch_website_context(url: str) -> dict:
     title_match = re.search(r"<title[^>]*>(.*?)</title>", markup, flags=re.I | re.S)
     title = html.unescape(re.sub(r"\s+", " ", title_match.group(1)).strip())[:500] if title_match else ""
     links = []
-    for href in re.findall(r'<a[^>]+href=[\"\']([^\"\']+)[\"\']', markup, flags=re.I):
+    for href in re.findall(r"<a[^>]+href=[\"']([^\"']+)[\"']", markup, flags=re.I):
         absolute = urljoin(final_url, href)
         if absolute.startswith(("http://", "https://")) and absolute not in links:
             links.append(absolute)
