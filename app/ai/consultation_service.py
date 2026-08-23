@@ -12,11 +12,28 @@ from app.ai.web_intelligence import needs_web, search_web
 from app.ai.web_learning import record_web_candidate
 
 
+def _contextual_inputs(context: Dict[str, Any]) -> tuple[list[dict[str, Any]], str | None, str | None, str | None]:
+    memory = context.get("memory") or {}
+    conversation = context.get("conversation") or {}
+    state = context.get("contextual_state") or {}
+    profile = context.get("company_ai_profile") or {}
+    recent = conversation.get("recent_turns") or memory.get("recent_turns") or context.get("history") or []
+    entity = (
+        state.get("active_object") or state.get("active_topic") or
+        conversation.get("active_object") or conversation.get("active_topic") or
+        memory.get("active_object") or memory.get("active_topic") or
+        profile.get("company_name")
+    )
+    goal = context.get("active_goal") or memory.get("active_goal")
+    active_url = memory.get("active_url") or state.get("active_url")
+    return recent, entity, goal, active_url
+
+
 def _research_query(message: str, context: Dict[str, Any], intent_name: str | None) -> str:
     """Expand a short follow-up and preserve an active research subject."""
     state = context.get("contextual_state") or {}
-    conversation = context.get("conversation") or {}
-    candidates = [state.get("active_topic"), state.get("active_object"), state.get("active_problem"), state.get("active_service"), conversation.get("active_topic"), conversation.get("active_object"), conversation.get("active_problem"), context.get("last_service")]
+    recent, entity, goal, active_url = _contextual_inputs(context)
+    candidates = [state.get("active_topic"), state.get("active_object"), state.get("active_problem"), state.get("active_service"), (context.get("conversation") or {}).get("active_topic"), (context.get("conversation") or {}).get("active_object"), (context.get("conversation") or {}).get("active_problem"), (context.get("memory") or {}).get("last_service")]
     anchors = []
     for value in candidates:
         if isinstance(value, dict):
@@ -29,14 +46,10 @@ def _research_query(message: str, context: Dict[str, Any], intent_name: str | No
     base = " ".join(str(message or "").strip().split())
     if not base:
         return ""
-    resolved = resolve_contextual_message(
-        base,
-        history=conversation.get("recent_turns") or context.get("history") or [],
-        active_entity=state.get("active_object") or state.get("active_topic") or conversation.get("active_object") or conversation.get("active_topic"),
-        active_goal=context.get("active_goal"),
-    )
+    resolved = resolve_contextual_message(base, history=recent, active_entity=entity, active_goal=goal)
     base = resolved.get("resolved_message") or base
-    # Do not bloat already-specific queries. Add at most two contextual anchors.
+    if active_url and len(base.split()) <= 8 and active_url not in base:
+        base = f"{base} [context_url: {active_url}]"
     if len(base.split()) >= 8:
         return base
     return " ".join(anchors[:2] + [base]) if anchors else base
@@ -46,12 +59,8 @@ def consult_if_valuable(*, company_id: int, message: str, language: str, intent:
     """Transport bounded enterprise context to one external cognitive rector."""
     intent_name = intent.get("intent")
     knowledge_found = not bool(context.get("knowledge_gap", 0))
-    contextual = resolve_contextual_message(
-        message,
-        history=(context.get("conversation") or {}).get("recent_turns") or context.get("history") or [],
-        active_entity=(context.get("contextual_state") or {}).get("active_object") or (context.get("contextual_state") or {}).get("active_topic") or (context.get("conversation") or {}).get("active_object") or (context.get("conversation") or {}).get("active_topic"),
-        active_goal=context.get("active_goal"),
-    )
+    recent, entity, goal, active_url = _contextual_inputs(context)
+    contextual = resolve_contextual_message(message, history=recent, active_entity=entity, active_goal=goal)
 
     web = {"used": False, "grounding_status": "not_needed", "results": [], "queries": [], "research_candidate": bool(contextual.get("research_candidate"))}
     research_query = _research_query(message, context, intent_name)
@@ -64,7 +73,6 @@ def consult_if_valuable(*, company_id: int, message: str, language: str, intent:
 
     enriched_knowledge = {"company_knowledge": context.get("knowledge"), "web_grounding": web}
     enriched_context = {**context, "knowledge": enriched_knowledge, "web_grounding": web, "research_query": research_query, "contextual_resolution": contextual, "cognitive_authority": "external_ai", "bitey_role": "communication_context_memory_apprentice_tools_persistence", "bitey_decision_authority": False, "learning_authority": "external_ai"}
-
     results = consult(message, language=language, context=enriched_context, max_providers=1)
 
     if not results:
