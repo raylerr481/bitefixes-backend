@@ -108,6 +108,11 @@ def get_company_services(company_id: int) -> List[Dict[str, Any]]:
     return _rows("services", company_id=company_id, is_active=True)
 
 
+def get_company_locations(company_id: int) -> List[Dict[str, Any]]:
+    """Return active company locations for routing/location questions."""
+    return _rows("company_locations", company_id=company_id, is_active=True)
+
+
 def get_company_knowledge(company_id: int) -> List[Dict[str, Any]]:
     return _rows("knowledge_base", company_id=company_id, is_active=True)
 
@@ -129,6 +134,7 @@ def get_company_context(company_id: int) -> Dict[str, Any]:
             "domains": [],
             "capabilities": [],
             "services": [],
+            "locations": [],
             "knowledge": [],
         }
 
@@ -150,6 +156,7 @@ def get_company_context(company_id: int) -> Dict[str, Any]:
         "domains": get_company_domains(company_id),
         "capabilities": get_company_capabilities(company_id),
         "services": get_company_services(company_id),
+        "locations": get_company_locations(company_id),
         "knowledge": get_company_knowledge(company_id),
         "objectives": profile_data.get("objectives") or (business_profile or {}).get("objective") or [],
         "directives": {**(profile_data.get("behavior") or {}), **(profile_data.get("governance") or {})},
