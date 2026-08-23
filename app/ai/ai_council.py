@@ -26,15 +26,20 @@ RESPONSE CONTRACT
 BUSINESS PRIORITY
 The active company's context is authoritative for what the company is, what it offers and how it should serve customers. Generic knowledge must not override known company facts.
 
+PEOPLE AUTHORITY
+Only company people explicitly marked as AI-context authority are relevant to enterprise reasoning. Their roles describe organizational responsibility; they do not by themselves authorize tool actions, financial commitments or external contact. Never expose private contact details unless an authorized action specifically requires them.
+
+LOCATION AUTHORITY
+Use structured company locations as the source of truth for questions about where the company, workshop, store, branch or office is located. Never invent or guess an address, phone number, opening hours or map link. When a location is not present in the supplied context, state that it is unavailable and ask only for information that can resolve the request.
+
 CONVERSATION PRIORITY
 The current turn is interpreted together with recent conversation and explicit continuity state. A short follow-up inherits the active object, problem, topic and service whenever they are unambiguous.
 """.strip()
 
 # Deliberately compact. The full context is reconstructed once in the prompt;
 # providers must not receive a second copy of the same context in their payload.
-# This keeps the cognitive packet small enough for every configured provider.
 CONTEXT_BUDGET = {
-    "business_index": 2600,
+    "business_index": 3300,
     "contextual_state": 1200,
     "contextual_directive": 1000,
     "tool_context": 1200,
@@ -80,9 +85,58 @@ def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
             if value:
                 out.append(str(value))
         return out
+
+    people_context = {"company_people": [], "count": 0}
+    company_id = context.get("company_id")
+    if company_id is None and isinstance(context.get("company"), dict):
+        company_id = context["company"].get("id")
+    try:
+        if company_id is not None:
+            from app.services.company_people_service import build_company_people_context
+            raw_people = build_company_people_context(int(company_id)) or {}
+            people_context = {
+                "company_people": [
+                    person
+                    for person in (raw_people.get("company_people") or [])
+                    if bool(person.get("ai_context_authority"))
+                ],
+                "count": int(raw_people.get("count") or 0),
+            }
+    except Exception as exc:
+        print(f"[AI REASONING PEOPLE WARNING] error={type(exc).__name__}")
+
+    raw_locations = context.get("locations") or []
+    locations = []
+    for location in raw_locations:
+        if not isinstance(location, dict):
+            continue
+        locations.append({
+            "id": location.get("id"),
+            "name": location.get("name"),
+            "type": location.get("location_type"),
+            "street": location.get("street"),
+            "number": location.get("number"),
+            "complement": location.get("complement"),
+            "neighborhood": location.get("neighborhood"),
+            "city": location.get("city"),
+            "state": location.get("state"),
+            "postal_code": location.get("postal_code"),
+            "country": location.get("country"),
+            "latitude": location.get("latitude"),
+            "longitude": location.get("longitude"),
+            "maps_url": location.get("maps_url"),
+            "phone": location.get("phone"),
+            "whatsapp": location.get("whatsapp"),
+            "opening_hours": location.get("opening_hours") or {},
+            "appointment_required": bool(location.get("appointment_required")),
+            "is_primary": bool(location.get("is_primary")),
+        })
+
     return {
         "company": context.get("company") or {},
         "company_ai_profile": context.get("company_ai_profile") or {},
+        "people_authority": people_context,
+        "locations": locations,
         "profile": context.get("business_profile") or {},
         "domains": names(context.get("domains")),
         "services": names(context.get("services")),
@@ -119,9 +173,6 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
             f"Before answering, resolve the current message against the conversation state and recent turns. Then answer only the current need."
         )
         print(f"[AI REASONING] provider={spec.name} status=requested context_chars={len(prompt)}")
-        # The prompt already contains the bounded cognitive packet. Passing the
-        # full context again caused oversized requests (HTTP 413) and duplicated
-        # enterprise data for OpenAI-compatible providers. Send one packet only.
         answer = await spec.provider.generate(prompt)
         if not answer:
             return {"_error": {"category": "empty_response", "http_status": None}, "provider": spec.name}
