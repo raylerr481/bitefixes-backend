@@ -8,6 +8,7 @@ from app.services.decision_engine_v29 import decision_engine as ai_first_decisio
 from app.services.customer_service import get_or_create_customer
 from app.services.conversation_service import get_or_create_conversation
 from app.services.message_service import save_customer_message, save_bitey_message, get_conversation_history
+from app.services.website_diagnostic_service import extract_urls, fetch_website_context
 
 SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
 _INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
@@ -45,12 +46,7 @@ def _db_conversation_id(value: str | None) -> int | None:
 
 
 def _derive_conversation_state(history: list[dict[str, Any]], current_message: str) -> dict[str, Any]:
-    """Build a compact, relevance-oriented state from the existing conversation.
-
-    This is context reconstruction, not answer generation. It deliberately avoids
-    hard-coding a service catalog so the same mechanism works for BiteFixes and
-    future companies/channels. External AI remains responsible for reasoning.
-    """
+    """Build a compact, relevance-oriented state from the existing conversation."""
     recent = history[-12:]
     user_rows = [row for row in recent if str(row.get("sender_type") or "").lower() in {"customer", "user"}]
     texts = [str(row.get("message_content") or row.get("ai_response") or "").strip() for row in recent]
@@ -76,9 +72,6 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
     else:
         active_object = None
 
-    # Preserve the most recently established device/model. This is deliberately
-    # generic enough for the existing catalog and prevents follow-ups such as
-    # "quiero sustituirla" from losing the previously supplied model.
     model_patterns = [
         r"\b(redmi\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
         r"\b(xiaomi\s+[a-z0-9][a-z0-9 ._-]{0,24})\b",
@@ -114,8 +107,6 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
 
     active_action = "sustitución/reemplazo" if re.search(replace_terms, combined) else ("reparación" if re.search(repair_terms, combined) else None)
 
-    # Keep an explicit location when the user has supplied one. This is useful
-    # across channels without tying the gateway to one city or business.
     location_patterns = [
         r"\b(?:en|desde|estoy en|ubicado en|ubicada en)\s+([a-záéíóúñü][a-záéíóúñü0-9 .,'-]{2,80})",
         r"\b(esteio(?:\s+centro)?(?:\s*,?\s*porto\s+alegre)?(?:\s*,?\s*rio\s+grande\s+do\s+sul)?)\b",
@@ -136,19 +127,22 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
     active_service = next((row.get("service_id") for row in reversed(recent) if row.get("service_id") is not None), None)
     short_followup = len(current.split()) <= 18 and bool(active_object or active_model or active_topic or active_service or active_location)
 
-    # Confirmed user facts are compacted into a small list. These are facts
-    # inferred from what the user already said, not instructions to the model.
     confirmed_facts = []
-    for label, value in (
-        ("objeto", active_object),
-        ("modelo", active_model),
-        ("problema", active_problem),
-        ("acción", active_action),
-        ("ubicación", active_location),
-        ("servicio_id", active_service),
-    ):
+    for label, value in (("objeto", active_object), ("modelo", active_model), ("problema", active_problem), ("acción", active_action), ("ubicación", active_location), ("servicio_id", active_service)):
         if value not in (None, ""):
             confirmed_facts.append(f"{label}: {value}")
+
+    urls = []
+    for text in texts + [str(current_message or "")]:
+        for url in extract_urls(text):
+            if url not in urls:
+                urls.append(url)
+    active_url = urls[-1] if urls else None
+
+    website_followup_terms = r"\b(evalua|evalúa|evaluar|analiza|analizar|analízalo|analizalo|revísalo|revisalo|revisa|sitio|página|pagina|web|empresa|clientes|atraer clientes|marketing)\b"
+    website_diagnostic_requested = bool(active_url and re.search(website_followup_terms, current, flags=re.IGNORECASE))
+    if active_url and not current.strip():
+        website_diagnostic_requested = False
 
     return {
         "active_object": active_object,
@@ -162,7 +156,30 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
         "stage": "diagnosis" if active_topic or active_problem else "exploration",
         "is_follow_up": short_followup,
         "recent_turns": recent,
+        "active_url": active_url,
+        "website_diagnostic_requested": website_diagnostic_requested,
     }
+
+
+def _website_context(history: list[dict[str, Any]], message: str, state: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve a current or previously supplied URL into bounded diagnostic context."""
+    urls = extract_urls(message)
+    for row in reversed(history[-12:]):
+        urls.extend(extract_urls(str(row.get("message_content") or row.get("ai_response") or "")))
+    unique_urls = list(dict.fromkeys(urls))
+    if not unique_urls:
+        return None
+    target = unique_urls[-1]
+    requested = bool(state.get("website_diagnostic_requested"))
+    if not requested and not extract_urls(message):
+        # A bare URL establishes context; a later turn can explicitly request its analysis.
+        return {"reference_url": target, "diagnostic_requested": False}
+    try:
+        context = fetch_website_context(target)
+        context["diagnostic_requested"] = True
+        return context
+    except Exception as exc:
+        return {"reference_url": target, "diagnostic_requested": True, "fetch_error": type(exc).__name__}
 
 
 def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str,
@@ -179,6 +196,7 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
     cid = conversation.get("id") if isinstance(conversation, dict) else None
     history = get_conversation_history(company_id=company_id, customer_id=customer_id, conversation_id=cid) if cid else []
     state = _derive_conversation_state(history, message)
+    website_context = _website_context(history, message, state)
 
     memory = {
         "conversation_id": cid,
@@ -193,12 +211,19 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
         "active_problem": state.get("active_problem"),
         "active_action": state.get("active_action"),
         "active_location": state.get("active_location"),
+        "active_url": state.get("active_url"),
+        "website_diagnostic_requested": state.get("website_diagnostic_requested", False),
         "stage": state.get("stage", "exploration"),
         "is_follow_up": state.get("is_follow_up", False),
         "current_message": message,
     }
 
-    result = ai_first_decision(company_id=company_id, customer=customer, message=message, intent={}, knowledge=None, memory=memory, language=language, business_context={"channel": channel})
+    business_context = {"channel": channel}
+    if website_context:
+        business_context["website_context"] = website_context
+        business_context["website_diagnostic"] = bool(website_context.get("diagnostic_requested"))
+
+    result = ai_first_decision(company_id=company_id, customer=customer, message=message, intent={}, knowledge=None, memory=memory, language=language, business_context=business_context)
     if not isinstance(result, dict):
         return {"action": "conversation", "create_ticket": False, "response": "No fue posible completar la consulta en este momento."}
 
