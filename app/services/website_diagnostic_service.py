@@ -12,7 +12,7 @@ import ipaddress
 import re
 import socket
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _MAX_BYTES = 1_000_000
@@ -56,6 +56,13 @@ def _validate_url(url: str) -> str:
     return url
 
 
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        absolute = urljoin(req.full_url, newurl)
+        _validate_url(absolute)
+        return super().redirect_request(req, fp, code, msg, headers, absolute)
+
+
 def _visible_text(markup: str) -> str:
     cleaned = re.sub(r"<script\b[^>]*>.*?</script>", " ", markup, flags=re.I | re.S)
     cleaned = re.sub(r"<style\b[^>]*>.*?</style>", " ", cleaned, flags=re.I | re.S)
@@ -75,14 +82,15 @@ def _meta(markup: str, name: str) -> str:
 def fetch_website_context(url: str) -> dict:
     target = _validate_url(url)
     request = Request(target, headers={"User-Agent": "BiteyWebsiteDiagnostic/1.0", "Accept": "text/html,application/xhtml+xml"})
-    with urlopen(request, timeout=_TIMEOUT) as response:
+    opener = build_opener(_SafeRedirectHandler)
+    with opener.open(request, timeout=_TIMEOUT) as response:
         content_type = str(response.headers.get("Content-Type") or "").lower()
         if "text/html" not in content_type and "application/xhtml" not in content_type:
             raise ValueError("URL does not expose an HTML document")
         body = response.read(_MAX_BYTES + 1)
         if len(body) > _MAX_BYTES:
             raise ValueError("Website response exceeds the diagnostic size limit")
-        final_url = str(response.geturl() or target)
+        final_url = _validate_url(str(response.geturl() or target))
 
     markup = body.decode("utf-8", errors="ignore")
     title_match = re.search(r"<title[^>]*>(.*?)</title>", markup, flags=re.I | re.S)
