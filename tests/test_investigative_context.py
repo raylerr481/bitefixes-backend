@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.ai.contextual_message_resolver import resolve_contextual_message
 
 
-def test_followup_keeps_active_entity_and_goal():
+def test_followup_keeps_active_entity_goal_and_research_signal():
     result = resolve_contextual_message(
         "evalualo",
         history=[
@@ -17,11 +17,12 @@ def test_followup_keeps_active_entity_and_goal():
     assert "BiteFixes" in result["resolved_message"]
     assert "diagnostico de marketing para atraer clientes" in result["resolved_message"]
     assert result["needs_clarification"] is False
+    assert result["research_candidate"] is True
 
 
-def test_unknown_public_entity_is_researchable():
+def test_unknown_public_entity_is_researchable_even_when_lowercase():
     result = resolve_contextual_message(
-        "puedes decirme algo de Viezzer Supermercados",
+        "puedes decirme algo de viezzer supermercados",
         history=[],
         active_entity=None,
         active_goal=None,
