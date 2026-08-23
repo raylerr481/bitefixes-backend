@@ -20,7 +20,7 @@ _PUBLIC_ENTITY_MARKERS = (
 
 _RESEARCH_FOLLOWUP = re.compile(
     r"\b(?:evalua\w*|evalualo|evaluarlo|analiz\w*|analisa\w*|revis\w*|audit\w*|"
-    r"diagnost\w*|cuant\w*|quant\w*|pre[çc]o\w*|costo\w*|custa\w*|vale\w*|"
+    r"diagnost\w*|cu[aá]nt\w*|quant\w*|pre[çc]o\w*|costo\w*|custa\w*|vale\w*|"
     r"compar\w*|dime\w*|diz\w*|inform\w*|explica\w*|detalh\w*|m[aá]s)\b",
     re.IGNORECASE,
 )
