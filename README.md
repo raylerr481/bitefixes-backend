@@ -1,125 +1,76 @@
-# BiteFixes Backend / Bitey Core
+# BiteFixes Backend
 
-FastAPI backend and intelligence core for **Bitey AI**. BiteFixes is the first real company context in which Bitey is being developed and measured, while the platform is designed to evolve into a multi-tenant SaaS for branded enterprise AI assistants.
+FastAPI backend and **enterprise AI brain for BiteFixes.com**. This project remains dedicated to BiteFixes and its authorized channels. It is independent from the general Bitey IA supracerebro.
 
-## Canonical architecture: one brain, multiple channels
-
-`bitefixes-backend` is the authoritative intelligence repository. The platform separates communication channels from intelligence and evolution:
-
-- **Bitey Channel** — communication paths such as WordPress, the public Bitey web facade, mobile app, WhatsApp, voice/phone and API.
-- **Bitey IA** — the backend intelligence that interprets company context, conversation context and authorized knowledge and coordinates reasoning and tools.
-- **Bitey Evolution** — longitudinal observation, evaluation and controlled improvement.
+## Architectural boundary
 
 ```text
-User
-  |
-  +--> bitey-web --------+
-  +--> bitey-ai ---------+
-  +--> bitefixes-app ----+----> Bitey Backend
-  +--> future channels --+             |
-                                       +--> Company AI Profile
-                                       +--> context + memory
-                                       +--> knowledge
-                                       +--> intelligent web research
-                                       +--> intent/service/workflows
-                                       +--> external AI collaboration
-                                       +--> evolution/evaluation
-                                       |
-                                       +----> response
+BiteFixes.com
+  ├─ website / AI globe
+  ├─ WhatsApp
+  ├─ Telegram
+  ├─ BiteFixes App
+  └─ other authorized channels
+          ↓
+   BiteFixes Backend
+          ↓
+   BiteFixes enterprise brain
+          ├─ Company AI Profile
+          ├─ customer context + memory
+          ├─ company knowledge
+          ├─ intelligent web research
+          ├─ intent / service / workflows
+          ├─ tickets + customers
+          ├─ external AI collaboration
+          └─ tenant / permission controls
 ```
 
-See [`docs/PLATFORM-ARCHITECTURE.md`](docs/PLATFORM-ARCHITECTURE.md) for the canonical channel contract and research/evolution model.
+This repository is **not** the general Bitey IA web supracerebro. `bitey-web` is the separate Bitey IA project that provides the general web-based AI experience. The two projects must remain separate and must not be merged merely because they share architectural ideas.
 
-## Enterprise context acquisition
+## Bitey IA relationship
 
-Bitey may use authorized context available through the corresponding channel and company resources, including company web pages and approved web evidence, onboarding/company-provided text, supported-channel messages, authorized attachments/documents, conversation history, permitted customer identity signals, company services/capabilities and operational knowledge, and other explicitly authorized sources.
+The enterprise architecture developed in BiteFixes is an important reference for the broader Bitey IA model, but BiteFixes-specific business logic stays here.
 
-Context acquisition must respect tenant isolation, permissions, privacy and source authorization. Context is evidence for reasoning; it is not an instruction to expose secrets or private data.
+```text
+Bitey IA
+  = general supracerebro / web AI
+
+BiteFixes Backend
+  = specialized enterprise brain for BiteFixes.com
+```
+
+External AI models are collaborators. They do not become the identity or authority of BiteFixes. This backend controls authorized company context, business rules, provider selection, tenant isolation and operational workflows.
+
+## Enterprise context
+
+BiteFixes may use authorized context from the company website, onboarding information, approved documents, supported channels, conversation history, customer information, services/capabilities and operational knowledge. Context acquisition must respect authorization, privacy, retention and tenant isolation.
 
 ## Intelligent web research
 
-Web research is part of the dynamic interaction engine, not a separate chatbot feature. Bitey decides whether current authorized context is sufficient. If not, it can research public information, evaluate sources, extract relevant evidence and use that evidence in the current reasoning context.
+Research is part of the BiteFixes interaction engine. When existing authorized knowledge is insufficient, the system can investigate public information, evaluate evidence and use relevant results in the current response. Research evidence does not automatically become permanent company knowledge.
 
-```text
-interaction
-  ↓
-understand context + information need
-  ↓
-existing knowledge sufficient?
-  ├─ yes → reason
-  └─ no  → research → verify evidence → reason
-  ↓
-response
-  ↓
-post-response observation/evaluation
-  ↓
-controlled evolution
-```
+## Core responsibilities
 
-Research evidence does not automatically become permanent company knowledge. Persistence requires provenance, authorization, confidence and retention rules.
+- FastAPI API and BiteFixes enterprise runtime.
+- Supabase persistence.
+- Company AI Profile and business context.
+- Customer and conversation memory.
+- Knowledge and retrieval.
+- Intelligent web research.
+- Intent detection and service resolution.
+- Tickets, customers and operational workflows.
+- External AI provider collaboration.
+- Channel contracts for the website widget, WhatsApp, Telegram and other authorized channels.
+- Security, tenant isolation and provider credential protection.
+- Tests, observability and production deployment.
 
-## Bitey IA response model
+## Product ecosystem
 
-The response path remains direct:
+- `bitey-web` — **Bitey IA**, general web-based supracerebro and ChatGPT/Claude-like AI experience.
+- `bitey-ai` — **Bitey Plugin Web**, WordPress plugin/channel.
+- `bitefixes-backend` — **BiteFixes Backend**, this specialized enterprise brain.
+- `bitefixes-app` — **BiteFixes App**, mobile extension of BiteFixes.com.
 
-```text
-message
-  ↓
-resolve company + channel + conversation
-  ↓
-assemble relevant authorized context
-  ↓
-use knowledge / memory / research as needed
-  ↓
-Bitey IA / external cognitive provider
-  ↓
-response
-```
+## Important
 
-There must be no mandatory evaluator, score gate or approval chain between the user message and the response merely to measure quality. Safety and authorization controls remain mandatory where applicable. Quality evaluation belongs to the observation/evolution path.
-
-Conversational continuity is required: established facts must remain available to later turns instead of being repeatedly requested.
-
-## External AI relationship
-
-External models can provide reasoning, multimodal capabilities, research or evaluation. They do not become the business identity of Bitey. The backend controls which authorized context is supplied, provider selection and tenant isolation.
-
-## Core platform capabilities
-
-- FastAPI API and Bitey Core runtime.
-- Supabase persistence for companies, profiles, conversations, messages, customers, tickets, services, knowledge and evolution data.
-- AI provider routing and collaboration.
-- RAG/vector-store architecture with tenant isolation.
-- Intelligent web research and source verification.
-- Customer memory and operational context.
-- Intent detection, service resolution and business workflows.
-- Ticket and customer management.
-- Incident recording and remediation foundations.
-- Provider health and AI infrastructure diagnostics.
-- Automated tests and production observability.
-- Render deployment target.
-
-## Multi-tenant / white-label architecture
-
-Each tenant has an isolated business identity and can have its own assistant identity, language, tone, branding, knowledge, customers, conversations, workflows, permissions and enabled channels. Tenant isolation must be preserved in database queries, retrieval, memory, logs, tools and provider context.
-
-## Security
-
-Provider credentials remain server-side. Channels are untrusted clients and must authenticate/authorize requests. Company-private context must never cross tenant boundaries. Attachments, web evidence and channel-derived identity must be processed according to authorization and retention rules.
-
-## Repository responsibilities
-
-- `bitefixes-backend` — authoritative Bitey IA, business context, intelligence orchestration, research, memory and evolution.
-- `bitey-ai` — WordPress channel/plugin.
-- `bitey-web` — public web facade for a ChatGPT-like Bitey experience; no independent intelligence core.
-- `bitefixes-app` — mobile application for accessing BiteFixes and Bitey; no independent intelligence core.
-
-The old `bitey-search-core` reference has intentionally been removed from this canonical repository map until a real repository/service is identified and its ownership is confirmed.
-
-## Deployment
-
-Render is the current backend deployment platform. Production configuration uses Render secrets/environment variables. Changes should be validated through automated tests and end-to-end channel tests before promotion.
-
-## Status
-
-Active development toward **Bitey Platform v1 and an evolving Bitey IA**. This repository is the authoritative place for the backend architecture and longitudinal evolution model.
+This architectural clarification does not require changing the existing BiteFixes runtime. The purpose is to preserve the working backend while keeping the new Bitey IA supracerebro as a separate project.
