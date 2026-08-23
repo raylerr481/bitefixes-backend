@@ -1,77 +1,50 @@
-"""Bitey-owned web search gateway.
+"""Compatibility gateway for Bitey's canonical web intelligence engine.
 
-Primary: Bitey Search Core / self-hosted SearXNG-compatible endpoint.
-Secondary: Tavily only. Brave and Brave-like providers are intentionally unsupported.
+There must be one web-research implementation in Bitey.  Older callers import
+``app.services.web_search_service``; this module keeps that API stable while
+routing all work through ``app.ai.web_intelligence``.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
-import httpx
-
-from app.config import settings
-
-BLOCKED_PROVIDER_NAMES = {"brave", "bing", "google", "google_search", "brave_search"}
+from typing import Any, Dict
 
 
-def _normalize_items(items: List[Dict[str, Any]], provider: str) -> List[Dict[str, Any]]:
-    if provider.lower() in BLOCKED_PROVIDER_NAMES:
-        return []
-    normalized = []
-    for item in items:
-        url = item.get("url") or item.get("link")
-        if not url:
-            continue
-        normalized.append({
-            "url": url,
-            "title": item.get("title") or "",
-            "content": item.get("content") or item.get("snippet") or item.get("description") or "",
-            "snippet": item.get("snippet") or item.get("content") or "",
-            "published_at": item.get("published_at") or item.get("publishedDate"),
-            "source_domain": item.get("source_domain") or item.get("domain"),
-            "provider": provider,
-        })
-    return normalized
+def search_web(
+    query: str,
+    language: str = "en",
+    limit: int = 8,
+    *,
+    intent: str | None = None,
+    company_id: int | None = None,
+) -> Dict[str, Any]:
+    """Run governed web research through Bitey's canonical engine.
 
+    ``language`` is retained for compatibility with existing channel callers.
+    The canonical engine currently derives search language from its provider
+    configuration; preserving this argument avoids breaking those callers.
+    """
+    from app.ai.web_intelligence import search_web as governed_search_web
 
-def _search_bitey_core(query: str, language: str = "en", limit: int = 8) -> List[Dict[str, Any]]:
-    url = getattr(settings, "BITEY_SEARCH_PRIMARY_URL", None) or getattr(settings, "BITEY_WEB_SEARCH_URL", None)
-    if not url:
-        return []
-    try:
-        with httpx.Client(timeout=getattr(settings, "BITEY_WEB_SEARCH_TIMEOUT", 8.0)) as client:
-            response = client.get(url.rstrip("/") + "/search", params={"q": query, "format": "json", "language": language, "safesearch": 1})
-            response.raise_for_status()
-            data = response.json()
-        return _normalize_items((data.get("results") or [])[:limit], "bitey_search_core")
-    except Exception as error:
-        print("[BITEY SEARCH WARNING]", error)
-        return []
+    result = governed_search_web(
+        query,
+        intent=intent,
+        limit=limit,
+        company_id=company_id,
+    )
 
-
-def _search_tavily(query: str, limit: int = 8) -> List[Dict[str, Any]]:
-    key = getattr(settings, "TAVILY_API_KEY", None)
-    if not key:
-        return []
-    try:
-        with httpx.Client(timeout=getattr(settings, "BITEY_WEB_SEARCH_TIMEOUT", 8.0)) as client:
-            response = client.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {key}"},
-                json={"query": query, "search_depth": "basic", "max_results": limit, "include_answer": False},
-            )
-            response.raise_for_status()
-            data = response.json()
-        return _normalize_items((data.get("results") or [])[:limit], "tavily")
-    except Exception as error:
-        print("[TAVILY FALLBACK WARNING]", error)
-        return []
-
-
-def search_web(query: str, language: str = "en", limit: int = 8) -> Dict[str, Any]:
-    primary = _search_bitey_core(query, language, limit)
-    if primary:
-        return {"provider": "bitey_search_core", "results": primary, "fallback_used": False}
-    secondary = _search_tavily(query, limit)
-    if secondary:
-        return {"provider": "tavily", "results": secondary, "fallback_used": True}
-    return {"provider": None, "results": [], "fallback_used": False}
+    # Preserve the legacy response fields expected by existing consumers.
+    return {
+        "provider": (result.get("providers") or [None])[0],
+        "results": result.get("results") or [],
+        "fallback_used": bool(
+            result.get("providers")
+            and result.get("providers")[0] == "tavily"
+        ),
+        "verified": bool(result.get("verification", {}).get("verified")),
+        "verification": result.get("verification") or {},
+        "grounding_status": result.get("grounding_status"),
+        "memory_hit": bool(result.get("memory_hit")),
+        "cache_hit": bool(result.get("cache_hit")),
+        "queries": result.get("queries") or [query],
+        "context": result.get("context") or "",
+    }
