@@ -13,6 +13,11 @@ on:
 jobs:
   contextual-research:
     runs-on: ubuntu-latest
+    env:
+      # Unit tests must be able to import the application without using
+      # production credentials. No network/database operation is performed.
+      SUPABASE_URL: "https://unit-test.supabase.local"
+      SUPABASE_KEY: "unit-test-key"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
