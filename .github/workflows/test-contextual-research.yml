@@ -7,16 +7,7 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - "app/ai/consultation_service.py"
-      - "app/ai/web_intelligence.py"
-      - "app/services/memory_service.py"
-      - "app/ai/contextual_resolution.py"
-      - "app/ai/contextual_message_resolver.py"
-      - "tests/test_web_intelligence.py"
-      - "tests/test_contextual_research.py"
-      - "tests/test_investigative_context.py"
-      - ".github/workflows/test-contextual-research.yml"
+  workflow_dispatch:
 
 jobs:
   contextual-research:
