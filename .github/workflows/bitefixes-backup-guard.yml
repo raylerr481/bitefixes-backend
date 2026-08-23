@@ -1,0 +1,103 @@
+name: BiteFixes Backup Guard
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'requirements*.txt'
+      - 'render.yaml'
+      - 'Dockerfile*'
+      - '.github/workflows/**'
+      - 'supabase/**'
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'requirements*.txt'
+      - 'render.yaml'
+      - 'Dockerfile*'
+      - '.github/workflows/**'
+      - 'supabase/**'
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backup-before-change:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create pre-change recovery marker at PR base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          name="backup/pr-${PR_NUMBER}-base"
+          git init backup-repo >/dev/null
+          cd backup-repo
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin "${BASE_SHA}"
+          git checkout --detach "${BASE_SHA}"
+          git push --force origin "HEAD:refs/heads/${name}"
+          echo "Recovery marker created: ${name} -> ${BASE_SHA}"
+
+  backup-after-direct-change:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect significant change and preserve previous main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git init repo >/dev/null
+          cd repo
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin "${BEFORE_SHA}" "${AFTER_SHA}"
+          changed="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}")"
+          echo "$changed"
+          if ! printf '%s\n' "$changed" | grep -Eq '^(app/|requirements|render\.yaml|Dockerfile|\.github/workflows/|supabase/)'; then
+            echo 'No significant path changed; no recovery marker needed.'
+            exit 0
+          fi
+          name="backup/pre-change-${AFTER_SHA:0:12}"
+          git checkout --detach "${BEFORE_SHA}"
+          git push --force origin "HEAD:refs/heads/${name}"
+          echo "Recovery marker created: ${name} -> ${BEFORE_SHA}"
+
+  weekly-audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit current main state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --no-tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git fetch --no-tags origin 'refs/heads/backup/*:refs/remotes/origin/backup/*' || true
+          latest="$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/remotes/origin/backup/ | head -n1 || true)"
+          if [ -z "$latest" ]; then
+            echo 'No previous recovery marker found; create one at current main.'
+            name="backup/audit-${GITHUB_SHA:0:12}"
+            git push --force origin "HEAD:refs/heads/${name}"
+            exit 0
+          fi
+          base="${latest#origin/}"
+          changed="$(git diff --name-only "origin/${base}" origin/main || true)"
+          if printf '%s\n' "$changed" | grep -Eq '^(app/|requirements|render\.yaml|Dockerfile|\.github/workflows/|supabase/)'; then
+            name="backup/audit-${GITHUB_SHA:0:12}"
+            git push --force origin "origin/main:refs/heads/${name}"
+            echo "Significant changes since ${base}; marker ${name} created."
+          else
+            echo 'No significant changes since latest recovery marker.'
+          fi
