@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.ai.contextual_resolution import resolve_contextual_message
+from app.ai.contextual_message_resolver import resolve_contextual_message
 
 
 def test_followup_keeps_active_entity_and_goal():
@@ -15,7 +15,7 @@ def test_followup_keeps_active_entity_and_goal():
     )
     assert result["resolved_message"]
     assert "BiteFixes" in result["resolved_message"]
-    assert "bitefixes.com" in result["resolved_message"]
+    assert "diagnostico de marketing para atraer clientes" in result["resolved_message"]
     assert result["needs_clarification"] is False
 
 
