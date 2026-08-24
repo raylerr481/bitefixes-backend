@@ -1,14 +1,14 @@
 # BiteFixes Backend
 
-`bitefixes-backend` is the **FastAPI backend and specialized enterprise AI brain for BiteFixes.com**.
+`bitefixes-backend` is the **specialized enterprise backend and AI system for BiteFixes.com**.
 
-It serves BiteFixes.com and its authorized channels. It remains independent from the general Bitey IA web application.
+Its purpose is to operate BiteFixes business intelligence, customer context, company knowledge, services, tickets, workflows and authorized AI capabilities. It is a specialized system within the broader Bitey ecosystem, not the general Bitey AI application.
 
-## Product identity
+## Product purpose
 
-**BiteFixes Backend** = specialized enterprise brain for BiteFixes.com.
+**BiteFixes Backend** = the operational intelligence and API layer for BiteFixes.com.
 
-It is not the general Bitey IA brain and must not be merged with `bitey-web` simply because both projects use similar AI architecture.
+It provides the authoritative server-side environment for BiteFixes business data and workflows while exposing controlled APIs to authorized channels.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ BiteFixes.com
           ↓
    BiteFixes Backend
           ↓
-   BiteFixes enterprise brain
+   BiteFixes enterprise intelligence
       ├─ Company AI Profile
       ├─ customer context + memory
       ├─ company knowledge
@@ -43,24 +43,33 @@ BiteFixes.com
 - Intelligent web research.
 - Intent detection and service resolution.
 - Tickets, customers and operational workflows.
-- External AI provider collaboration.
-- Authorized channel contracts.
+- Authorized external AI provider collaboration.
+- Channel contracts for website, mobile and other approved interfaces.
 - Security, tenant isolation and provider credential protection.
 - Tests, observability and production deployment.
 
-## Relationship with Bitey IA
+## Relationship with Bitey AI
 
 ```text
-Bitey IA (`bitey-web`)
-= general web AI experience / reusable intelligence foundation
+Bitey AI
+= independent general AI product and intelligence layer
 
-BiteFixes Backend (`bitefixes-backend`)
-= specialized enterprise brain for BiteFixes.com
+BiteFixes Backend
+= specialized enterprise intelligence and operational backend for BiteFixes.com
 ```
 
-BiteFixes-specific business rules, services, tickets, customers and workflows stay here. They should not be copied into the general Bitey IA project.
+Bitey AI may use BiteFixes capabilities through explicit, authorized APIs/contracts. BiteFixes-specific business rules, customers, services, tickets and workflows remain here.
 
-Bitey IA may consume authorized enterprise capabilities through explicit APIs/contracts. The existence of a shared ecosystem does not grant automatic access to private BiteFixes data.
+BiteFixes data is never automatically exposed to the general Bitey AI product. Authorization, tenant boundaries and privacy controls remain mandatory.
+
+## Relationship with client applications
+
+- `bitefixes-app` is a mobile client/channel for BiteFixes.
+- `bitey-ai-app` will be the independent mobile client/channel for general Bitey AI.
+- `bitey-web` is the main web application for general Bitey AI.
+- `bitey-ai` is the WordPress enterprise plugin/channel.
+
+Clients do not contain the authoritative business intelligence or provider credentials.
 
 ## Enterprise context and tenant isolation
 
@@ -85,10 +94,11 @@ External AI models are collaborators selected by the backend. They do not become
 
 | Repository | Product | Role |
 |---|---|---|
-| `bitey-web` | **Bitey IA** | General web AI experience + intelligence foundation |
+| `bitey-web` | **Bitey AI Web** | General Bitey AI web application on Cloudflare |
+| `bitey-ai-app` | **Bitey AI App** | General Bitey AI Android application |
 | `bitey-ai` | **Bitey AI Enterprise WordPress Plugin** | Global WordPress enterprise channel |
-| `bitefixes-backend` | **BiteFixes Backend** | Specialized BiteFixes enterprise brain |
-| `bitefixes-app` | **BiteFixes App** | Mobile BiteFixes channel |
+| `bitefixes-backend` | **BiteFixes Backend** | Specialized BiteFixes enterprise intelligence/backend |
+| `bitefixes-app` | **BiteFixes App** | BiteFixes mobile channel |
 
 ## Engineering rules
 
@@ -98,10 +108,10 @@ External AI models are collaborators selected by the backend. They do not become
 4. Enforce tenant and permission boundaries at the backend.
 5. Keep channel contracts explicit and backward compatible where possible.
 6. Do not make external AI providers the source of truth.
-7. Do not copy this business brain into `bitey-web` or a WordPress plugin.
+7. Do not copy the BiteFixes business brain into client applications or the general Bitey AI web application.
 8. Add tests for API, security, memory, workflows and integrations.
 9. Validate production behavior with logs and observability.
 
 ## Production principle
 
-Changes must preserve the existing authorized BiteFixes channels and avoid breaking the website widget, WhatsApp, Telegram or mobile contracts.
+Changes must preserve authorized BiteFixes channels and avoid breaking the website widget, WhatsApp, Telegram or mobile contracts.
