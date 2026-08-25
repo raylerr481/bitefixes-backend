@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile
+from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 
@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     print(f"AI Free-Only : {'ENABLED' if FREE_ONLY else 'DISABLED'}")
     print("Web Intelligence : ENABLED")
     print("Bitey Gateway : ENABLED")
+    print("Bitey Trainer : ENABLED")
     yield
     print("BiteFixes Backend shutting down...")
 
@@ -45,22 +46,23 @@ app.include_router(business_context.router)
 app.include_router(ai.router)
 app.include_router(webhooks.router)
 app.include_router(company_profile.router)
+app.include_router(bitey_trainer.router)
 
 @app.get("/")
 def root():
-    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers"}
+    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer"}
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud"}
+    return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud", "bitey_trainer": "ready"}
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "status": "running"}
+    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "status": "running"}
 
 @app.get("/gateway/status")
 def gateway_status():
-    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "identity": "centralized-customer-conversation-memory"}
+    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "identity": "centralized-customer-conversation-memory"}
 
 @app.get("/ai/status")
 def ai_status():
