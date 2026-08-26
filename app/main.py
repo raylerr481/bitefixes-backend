@@ -12,6 +12,7 @@ from app.database.supabase import supabase_manager
 from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
+from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -76,3 +77,14 @@ def ai_status():
 def test_supabase():
     connected = supabase_manager.check_connection()
     return {"status": "ok" if connected else "error", "database": "Supabase connected" if connected else "Connection failed"}
+
+@app.get("/test-woocommerce")
+def test_woocommerce():
+    """Read-only WooCommerce connectivity test; never exposes credentials."""
+    try:
+        return check_woocommerce_connection()
+    except WooCommerceConfigurationError:
+        return JSONResponse(status_code=503, content={"status": "error", "message": "WooCommerce credentials are not configured"})
+    except Exception as exc:
+        print("[WOOCOMMERCE TEST ERROR]", type(exc).__name__)
+        return JSONResponse(status_code=502, content={"status": "error", "message": "WooCommerce connectivity test failed"})
