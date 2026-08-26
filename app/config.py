@@ -32,8 +32,6 @@ class Settings:
     DEFAULT_LANGUAGE = "pt-BR"
     CONFIDENCE_MIN = 0.70
 
-    # External AI providers. Bitey transports context/memory; external models
-    # remain the cognitive authority. Empty keys simply disable a provider.
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -45,8 +43,6 @@ class Settings:
     AI_REQUEST_TIMEOUT = float(os.getenv("AI_REQUEST_TIMEOUT", "45"))
     AI_MAX_OUTPUT_TOKENS = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "1024"))
 
-    # Bitey Web Intelligence. Primary is Bitey-owned Search Core/SearXNG.
-    # Tavily is an optional secondary fallback. Brave and similar providers are not supported.
     BITEY_SEARCH_PRIMARY_URL = os.getenv("BITEY_SEARCH_PRIMARY_URL")
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     BITEY_WEB_SEARCH_TIMEOUT = float(os.getenv("BITEY_WEB_SEARCH_TIMEOUT", "8"))
@@ -56,6 +52,11 @@ class Settings:
     BITEY_WEB_VERIFY_SCORE = float(os.getenv("BITEY_WEB_VERIFY_SCORE", "0.72"))
     BITEY_WEB_MEMORY_TTL = int(os.getenv("BITEY_WEB_MEMORY_TTL", "2592000"))
     BITEY_WEB_MEMORY_MAX_RESULTS = int(os.getenv("BITEY_WEB_MEMORY_MAX_RESULTS", "5"))
+
+    # WooCommerce REST API credentials are supplied only by environment variables.
+    WOOCOMMERCE_URL = os.getenv("WOOCOMMERCE_URL")
+    WOOCOMMERCE_CONSUMER_KEY = os.getenv("WOOCOMMERCE_CONSUMER_KEY")
+    WOOCOMMERCE_CONSUMER_SECRET = os.getenv("WOOCOMMERCE_CONSUMER_SECRET")
 
 
 settings = Settings()
