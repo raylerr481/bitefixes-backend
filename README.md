@@ -2,35 +2,41 @@
 
 `bitefixes-backend` is the **specialized enterprise backend and intelligence system for BiteFixes.com**.
 
-Its purpose is to operate BiteFixes business intelligence, customer context, company knowledge, services, tickets, workflows and authorized AI capabilities. It is a specialized BiteFixes system, not the general Bitey IA supracerebro.
+It powers BiteFixes CRM SaaS and its authorized business workflows. It is not the general Bitey IA Supracerebro.
 
-## Product purpose
+## Bitey IA Empresarial
 
-**BiteFixes Backend** = the authoritative operational intelligence and API layer for BiteFixes.com.
-
-It provides the server-side environment for BiteFixes business data and workflows while exposing controlled APIs to authorized channels.
-
-## Architecture
+BiteFixes uses **Bitey IA Empresarial**, the contextual enterprise manifestation of Bitey IA. It maintains Bitey IA's architecture, capabilities and general intelligence while operating with authorized BiteFixes business context.
 
 ```text
-BiteFixes.com
-  ├─ BiteFixes Web
-  ├─ BiteFixes App
-  ├─ Bitey IA enterprise plugin/channel
-  └─ other authorized channels
-          ↓
-   BiteFixes Backend
-          ↓
-   BiteFixes enterprise intelligence
-      ├─ Company AI Profile
-      ├─ customer context + memory
-      ├─ company knowledge
-      ├─ intelligent web research
-      ├─ intent / service / workflow engine
-      ├─ tickets + customers
-      ├─ external AI collaboration
-      └─ tenant / permission controls
+BITEY IA
+Supracerebro
+     │
+     ▼
+BITEY IA EMPRESARIAL
+     │
+     ▼
+BiteFixes Backend
+     │
+     ├── CRM
+     ├── Customers
+     ├── Tickets
+     ├── Services
+     ├── Company knowledge
+     ├── Conversations/memory
+     ├── Workflows
+     └── authorized AI capabilities
 ```
+
+The Bitey IA Empresarial context is used within authorized BiteFixes channels. It does not restrict or replace the general Bitey IA product.
+
+## Channels
+
+- `bitefixes-web` — BiteFixes.com website/frontend and contextual AI entry point.
+- `bitefixes-app` — BiteFixes mobile channel.
+- `bitey-ai` — WordPress enterprise integration channel.
+
+The floating assistant on BiteFixes Web/App is **Bitey IA Empresarial** and uses the authorized BiteFixes CRM/business context.
 
 ## Core responsibilities
 
@@ -41,79 +47,39 @@ BiteFixes.com
 - Company knowledge and retrieval.
 - Intelligent web research.
 - Intent detection and service resolution.
-- Tickets, customers and operational workflows.
-- Authorized external AI provider collaboration.
-- Channel contracts for website, mobile and other approved interfaces.
-- Security, tenant isolation and provider credential protection.
-- Tests, observability and production deployment.
+- Tickets, customers, services and workflows.
+- Authorized external AI collaboration.
+- Tenant isolation and permissions.
+- Observability and production deployment.
+
+## Context boundary
+
+BiteFixes context includes authorized company/site information, CRM records, customers, tickets, services, conversations, approved documents, knowledge and workflows.
+
+This context is **scoped to BiteFixes**. Private customer/company data must never become unrestricted general Bitey IA memory or leak across tenants.
+
+Authorized, privacy-safe/generalizable knowledge or capabilities may enrich the wider Bitey IA ecosystem without exposing private operational data.
 
 ## Relationship with Bitey IA
 
 ```text
 Bitey IA
-= independent general AI product
-= Bitey Web supracerebro + Bitey IA App client
+= general AI / Supracerebro
+
+Bitey IA Empresarial
+= same Bitey IA architecture/capabilities + authorized enterprise context
 
 BiteFixes Backend
-= specialized enterprise intelligence/backend for BiteFixes.com
+= authoritative BiteFixes CRM/business backend and enterprise intelligence layer
 ```
 
-Bitey IA may use BiteFixes capabilities through explicit, authorized APIs/contracts. BiteFixes-specific business rules, customers, services, tickets and workflows remain here.
+The systems relate and can enrich one another through explicit APIs/contracts, but BiteFixes does not replace or limit the general Bitey IA Supracerebro.
 
-BiteFixes data is never automatically exposed to the general Bitey IA product. Authorization, tenant boundaries and privacy controls remain mandatory.
+## Security
 
-## Relationship with channels
-
-- `bitefixes-web` is the BiteFixes website/frontend.
-- `bitefixes-app` is the BiteFixes mobile channel.
-- `bitey-ai` is the Bitey IA enterprise WordPress channel.
-- `bitey-web` is the general Bitey IA supracerebro and web application.
-- `bitey-ia-app` is the general Bitey IA Android client.
-
-Client applications do not contain authoritative business intelligence or provider credentials.
-
-## Enterprise context and tenant isolation
-
-Company context can include authorized website information, onboarding data, approved documents, conversation history, customer information, services, operational knowledge and Company AI Profile settings.
-
-All context must respect:
-
-- authorization;
-- privacy;
-- retention policies;
-- tenant isolation;
-- least privilege;
-- provider credential protection.
-
-A research result does not automatically become permanent company knowledge.
-
-## External AI providers
-
-External AI models are collaborators selected by the backend. They do not become the identity or authority of BiteFixes. Provider selection, context authorization, business rules and operational decisions remain controlled by this backend.
-
-## Ecosystem
-
-| Repository | Product | Role |
-|---|---|---|
-| `bitey-web` | **Bitey IA Web** | General Bitey IA supracerebro and Cloudflare web application |
-| `bitey-ia-app` | **Bitey IA App** | General Bitey IA Android client |
-| `bitey-ai` | **Bitey IA Enterprise WordPress Plugin** | Enterprise WordPress channel |
-| `bitefixes-web` | **BiteFixes Web** | BiteFixes.com website/frontend |
-| `bitefixes-backend` | **BiteFixes Backend** | This specialized enterprise intelligence/backend |
-| `bitefixes-app` | **BiteFixes App** | BiteFixes mobile channel |
-
-## Engineering rules
-
-1. Preserve the working FastAPI/Supabase architecture.
-2. Keep BiteFixes business logic here.
-3. Never expose provider credentials to clients.
-4. Enforce tenant and permission boundaries at the backend.
-5. Keep channel contracts explicit and backward compatible where possible.
-6. Do not make external AI providers the source of truth.
-7. Do not copy the BiteFixes business brain into client applications or the general Bitey IA product.
-8. Add tests for API, security, memory, workflows and integrations.
-9. Validate production behavior with logs and observability.
-
-## Production principle
-
-Changes must preserve authorized BiteFixes channels and avoid breaking website, mobile, WordPress or other approved integrations.
+- Provider credentials remain server-side.
+- Tenant and permission boundaries are mandatory.
+- Client applications never hold authoritative business intelligence.
+- External providers are collaborators, not the source of truth.
+- Business-critical decisions remain controlled by the backend.
+- Tests must cover API, security, memory, workflows and integrations.
