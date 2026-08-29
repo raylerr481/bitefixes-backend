@@ -1,8 +1,9 @@
-"""Bitey Problem Identity Engine V4.
+"""Bitey Problem Identity Engine V5.
 
-Uses evidence and conversational coherence to distinguish a new problem from
-follow-up information. Device-only replies such as "Redmi 9A" enrich the
-active problem instead of resetting it or trusting a stale generic intent.
+Determines whether each turn continues, updates, relates to, or replaces an
+active problem. A semantic model is used when available; deterministic signals
+remain a safe fallback. The engine never depends on a growing list of special
+case phrases.
 """
 from __future__ import annotations
 from hashlib import sha256
@@ -10,6 +11,11 @@ import re
 import unicodedata
 from typing import Any, Dict, Optional
 from app.database.supabase import database
+
+try:
+    from app.ai.llm_gateway import understand as llm_understand
+except Exception:
+    llm_understand = None
 
 STATES = {"NEW_PROBLEM", "CONTINUATION", "REOPENED_PROBLEM", "RELATED_PROBLEM", "NEEDS_CLARIFICATION"}
 PLATFORM_WORDS = {"android": "android", "ios": "ios", "iphone": "ios", "windows": "windows", "macos": "macos", "linux": "linux", "ipad": "ios"}
@@ -78,7 +84,25 @@ def _looks_like_device_only(text: str, device: Dict[str, Optional[str]]) -> bool
     return not bool(tokens & problem_tokens) and len(tokens) <= 8
 
 
-def analyze_problem(message: str, current_intent: Optional[str] = None, active_intent: Optional[str] = None, active_problem: Optional[str] = None, active_device: Optional[str] = None) -> Dict[str, Any]:
+def _semantic_coherence(message: str, active_problem: Optional[str], active_intent: Optional[str], active_device: Optional[str], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not llm_understand or not active_problem:
+        return {}
+    try:
+        result = llm_understand(message=message, language=(context or {}).get("language", "es"), context={
+            **(context or {}),
+            "last_problem": active_problem,
+            "active_problem": active_problem,
+            "last_intent": active_intent,
+            "active_device": active_device,
+        }) or {}
+        coherence = result.get("coherence") if isinstance(result, dict) else None
+        return coherence if isinstance(coherence, dict) else {}
+    except Exception as error:
+        print("[SEMANTIC COHERENCE WARNING]", error)
+        return {}
+
+
+def analyze_problem(message: str, current_intent: Optional[str] = None, active_intent: Optional[str] = None, active_problem: Optional[str] = None, active_device: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     text = _norm(message)
     tokens = _tokens(message)
     device = extract_device(message)
@@ -93,30 +117,34 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
                 matched.append(phrase)
     category = max(category_scores, key=category_scores.get) if category_scores else None
 
-    # Coherence model: when the user supplies only a device/model, it is
-    # evidence about the active problem, not a new request. A detector result
-    # that conflicts with the active mobile context is treated as stale noise.
     device_only = _looks_like_device_only(text, device)
-    coherent_active_intent = active_intent
-    if device_only and active_kind == "mobile":
-        coherent_active_intent = "mobile_repair" if active_intent in {None, "", "computer_repair", "technical_support", "general_support"} else active_intent
+    semantic = _semantic_coherence(message, active_problem, active_intent, active_device, context)
+    relation = str(semantic.get("relation") or "").upper()
+    semantic_confidence = float(semantic.get("confidence", 0) or 0)
+    preserve_active = bool(semantic.get("preserve_active_problem"))
+    updated_entities = semantic.get("updated_entities") if isinstance(semantic.get("updated_entities"), dict) else {}
+
+    # Semantic model has priority for conversational relationship. Lexical
+    # detection is retained only as a deterministic safety fallback.
+    if preserve_active and active_problem:
+        coherent_active_intent = active_intent
+    else:
+        coherent_active_intent = active_intent
+
     intent = current_intent or coherent_active_intent
+    if category == "malware" and not active_problem:
+        if current_kind == "mobile": intent = "mobile_repair"
+        elif current_kind == "computer": intent = "computer_repair"
+    elif active_problem and (device_only or preserve_active) and active_intent:
+        # Never replace an active specific problem with generic device repair
+        # merely because the new turn names a device.
+        intent = active_intent
 
-    if category == "malware":
-        if current_kind == "mobile" or active_kind == "mobile":
-            intent = "mobile_repair"
-        elif current_kind == "computer" or active_kind == "computer":
-            intent = "computer_repair"
-    elif device_only and active_problem:
-        # Preserve the active problem intent when this turn only supplies
-        # identifying information about the device.
-        intent = coherent_active_intent or ("mobile_repair" if current_kind == "mobile" else current_intent or active_intent)
-
-    effective_device = device["label"] or active_device
-    effective_kind = current_kind or active_kind
-    effective_platform = device["platform"]
+    effective_device = device["label"] or updated_entities.get("device") or active_device
+    effective_platform = device["platform"] or updated_entities.get("platform")
     if not effective_platform and active_device and "android" in _norm(active_device):
         effective_platform = "android"
+    effective_kind = current_kind or active_kind
 
     active_tokens = _tokens(active_problem)
     overlap = len(tokens & active_tokens) if active_tokens else 0
@@ -126,28 +154,21 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
     explicit_continuation = any(marker in text for marker in CONTINUATION_MARKERS)
     same_problem_domain = bool(category and active_problem and category in active_tokens)
 
-    fingerprint_parts = [category or active_problem or "unknown", intent or active_intent or "unknown", _norm(effective_device or effective_platform or "unknown")]
-    fingerprint = sha256("|".join(fingerprint_parts).encode("utf-8")).hexdigest()[:32]
-
-    confidence = 0.35
-    if category or active_problem:
-        confidence += 0.25
-    if effective_device or effective_platform:
-        confidence += 0.20
-    if intent:
-        confidence += 0.15
-    confidence = min(0.99, confidence)
-
-    # A coherent device-only turn continues the active problem even when the
-    # generic intent detector produced a conflicting label.
-    intent_conflict = bool(active_intent and intent and intent != active_intent and not device_only)
-    if intent_conflict:
+    if relation in {"CONTINUATION", "ENTITY_UPDATE", "ANSWER_TO_QUESTION"} and semantic_confidence >= 0.65 and active_problem:
+        state = "CONTINUATION"
+    elif relation == "RELATED_PROBLEM" and semantic_confidence >= 0.70 and active_problem:
+        state = "RELATED_PROBLEM"
+    elif relation == "NEW_PROBLEM" and semantic_confidence >= 0.70:
         state = "NEW_PROBLEM"
-    elif device_changed:
+    elif relation == "NEEDS_CLARIFICATION" and semantic_confidence >= 0.70:
+        state = "NEEDS_CLARIFICATION"
+    elif device_only and active_problem:
+        state = "CONTINUATION"
+    elif device_changed and not preserve_active:
         state = "NEW_PROBLEM"
     elif explicit_reopen and (same_device or not active_device):
         state = "REOPENED_PROBLEM"
-    elif active_problem and (device_only or same_device or not active_device) and (overlap >= 1 or explicit_continuation or same_problem_domain or device_only or (category == "malware" and active_kind == "mobile")):
+    elif active_problem and (same_device or not active_device) and (overlap >= 1 or explicit_continuation or same_problem_domain):
         state = "CONTINUATION"
     elif active_problem and category and overlap >= 1:
         state = "RELATED_PROBLEM"
@@ -156,6 +177,16 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
     else:
         state = "NEW_PROBLEM"
 
+    fingerprint_parts = [category or active_problem or "unknown", intent or active_intent or "unknown", _norm(effective_device or effective_platform or "unknown")]
+    fingerprint = sha256("|".join(fingerprint_parts).encode("utf-8")).hexdigest()[:32]
+
+    confidence = 0.35
+    if category or active_problem: confidence += 0.25
+    if effective_device or effective_platform: confidence += 0.20
+    if intent: confidence += 0.15
+    if semantic_confidence >= 0.65: confidence = max(confidence, 0.65 + min(0.34, semantic_confidence * 0.34))
+    confidence = min(0.99, confidence)
+
     return {
         "state": state,
         "is_new": state == "NEW_PROBLEM",
@@ -163,7 +194,7 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
         "is_reopened": state == "REOPENED_PROBLEM",
         "is_related": state == "RELATED_PROBLEM",
         "confidence": round(confidence, 3),
-        "category": category or (active_problem if device_only else None),
+        "category": category or (active_problem if (device_only or preserve_active) else None),
         "intent": intent,
         "device": effective_device,
         "device_kind": effective_kind,
@@ -171,20 +202,25 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
         "matched_signals": sorted(set(matched)),
         "overlap_tokens": overlap,
         "fingerprint": fingerprint,
-        "coherence": {"device_only": device_only, "active_problem_preserved": bool(device_only and active_problem), "intent_conflict_ignored": bool(device_only and active_intent and current_intent and current_intent != active_intent)},
-        "analysis_version": "problem-identity-v4",
+        "coherence": {
+            "device_only": device_only,
+            "active_problem_preserved": bool((device_only or preserve_active) and active_problem),
+            "semantic_relation": relation or None,
+            "semantic_confidence": semantic_confidence,
+            "updated_entities": updated_entities,
+        },
+        "analysis_version": "problem-identity-v5-semantic-coherence",
     }
 
 
-def classify_problem(message: str, current_intent: Optional[str] = None, active_intent: Optional[str] = None, active_problem: Optional[str] = None, active_device: Optional[str] = None) -> Dict[str, Any]:
-    return analyze_problem(message, current_intent, active_intent, active_problem, active_device)
+def classify_problem(message: str, current_intent: Optional[str] = None, active_intent: Optional[str] = None, active_problem: Optional[str] = None, active_device: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return analyze_problem(message, current_intent, active_intent, active_problem, active_device, context=context)
 
 
 def find_customer_problems(customer_id: int, company_id: Optional[int] = None, limit: int = 20) -> list[dict]:
     try:
         query = database.table("bitey_problems").select("*").eq("customer_id", customer_id).order("last_seen_at", desc=True).limit(limit)
-        if company_id is not None:
-            query = query.eq("company_id", company_id)
+        if company_id is not None: query = query.eq("company_id", company_id)
         result = query.execute()
         return result.data or []
     except Exception as error:
@@ -194,21 +230,12 @@ def find_customer_problems(customer_id: int, company_id: Optional[int] = None, l
 
 def persist_problem(*, company_id: int, customer_id: int, conversation_id: Optional[int], ticket_id: Optional[int], analysis: Dict[str, Any], summary: str) -> Optional[dict]:
     fingerprint = analysis.get("fingerprint")
-    if not fingerprint:
-        return None
+    if not fingerprint: return None
     payload = {
-        "company_id": company_id,
-        "customer_id": customer_id,
-        "conversation_id": conversation_id,
-        "ticket_id": ticket_id,
-        "fingerprint": fingerprint,
-        "state": analysis.get("state", "NEW_PROBLEM"),
-        "category": analysis.get("category"),
-        "intent": analysis.get("intent"),
-        "device_label": analysis.get("device"),
-        "device_platform": analysis.get("platform"),
-        "problem_summary": summary[:1000],
-        "symptoms": analysis.get("matched_signals", []),
+        "company_id": company_id, "customer_id": customer_id, "conversation_id": conversation_id, "ticket_id": ticket_id,
+        "fingerprint": fingerprint, "state": analysis.get("state", "NEW_PROBLEM"), "category": analysis.get("category"),
+        "intent": analysis.get("intent"), "device_label": analysis.get("device"), "device_platform": analysis.get("platform"),
+        "problem_summary": summary[:1000], "symptoms": analysis.get("matched_signals", []),
         "evidence": {"confidence": analysis.get("confidence"), "overlap_tokens": analysis.get("overlap_tokens", 0), "coherence": analysis.get("coherence", {}), "analysis_version": analysis.get("analysis_version")},
         "confidence": analysis.get("confidence", 0),
     }
