@@ -52,15 +52,19 @@ def get_customer_by_channel(channel: str, value: str, company_id: int = 1):
     return None
 
 
-def create_customer(company_id: int, phone: str, email: str = "", name: str = "Customer", channel: str = "website", external_id: str = ""):
+def create_customer(company_id: int, phone: str, email: str = "", name: str = "Customer", channel: str = "website", external_id: str = "", last_name: str = ""):
     try:
         phone = _clean(phone)
+        email = _clean(email).lower()
         external_id = _clean(external_id)
+        first_name = _clean(name) or "Customer"
+        surname = _clean(last_name)
+        full_name = " ".join(part for part in [first_name, surname] if part)
         customer = {
             "company_id": company_id,
-            "full_name": _clean(name) or "Customer",
+            "full_name": full_name,
             "phone": phone,
-            "email": _clean(email),
+            "email": email,
             "preferred_language": "pt-BR",
             "customer_type": "individual",
             "is_active": True,
@@ -78,15 +82,19 @@ def create_customer(company_id: int, phone: str, email: str = "", name: str = "C
         return None
 
 
-def update_customer_from_chat(customer: dict, name: str = "", phone: str = "", email: str = "", channel: str = "", external_id: str = ""):
+def update_customer_from_chat(customer: dict, name: str = "", last_name: str = "", phone: str = "", email: str = "", channel: str = "", external_id: str = ""):
     if not customer or not customer.get("id"):
         return customer
-    supplied_name, supplied_phone, supplied_email = _clean(name), _clean(phone), _clean(email)
+    supplied_name = _clean(name)
+    supplied_last_name = _clean(last_name)
+    supplied_phone, supplied_email = _clean(phone), _clean(email).lower()
     external_id = _clean(external_id)
     current_name, current_phone, current_email = _clean(customer.get("full_name")), _clean(customer.get("phone")), _clean(customer.get("email"))
     updates = {"last_access": datetime.now(timezone.utc).isoformat()}
-    if supplied_name and supplied_name.lower() not in {"customer", "cliente", "customer name"} and supplied_name != current_name:
-        updates["full_name"] = supplied_name
+    if supplied_name and supplied_name.lower() not in {"customer", "cliente", "customer name"}:
+        candidate = " ".join(part for part in [supplied_name, supplied_last_name] if part)
+        if candidate and candidate != current_name:
+            updates["full_name"] = candidate
     if supplied_phone and supplied_phone.lower() not in {"web", "unknown"} and supplied_phone != current_phone:
         updates["phone"] = supplied_phone
     if supplied_email and supplied_email != current_email:
@@ -102,17 +110,25 @@ def update_customer_from_chat(customer: dict, name: str = "", phone: str = "", e
         return {**customer, **updates}
 
 
-def get_or_create_customer(company_id: int, phone: str, email: str = "", name: str = "Customer", channel: str = "", external_id: str = ""):
-    """Resolve identity by channel first, then fall back to legacy phone identity."""
+def get_or_create_customer(company_id: int, phone: str, email: str = "", name: str = "Customer", last_name: str = "", channel: str = "", external_id: str = ""):
+    """Resolve identity by stable channel identifier first, then phone/email."""
     channel = _clean(channel).lower()
     external_id = _clean(external_id)
-    identity = external_id or _clean(phone)
+    phone = _clean(phone)
+    email = _clean(email).lower()
+    identity = external_id or phone
     customer = get_customer_by_channel(channel, identity, company_id) if channel and identity else None
-    if not customer and _clean(phone):
+    if not customer and phone:
         customer = get_customer_by_phone(phone, company_id)
+    if not customer and email:
+        try:
+            result = database.table("customers").select("*").eq("company_id", company_id).eq("email", email).limit(1).execute()
+            customer = result.data[0] if result.data else None
+        except Exception as error:
+            print("[CUSTOMER EMAIL LOOKUP WARNING]", type(error).__name__)
     if customer:
-        return update_customer_from_chat(customer, name=name, phone=phone, email=email, channel=channel, external_id=external_id)
-    return create_customer(company_id, phone, email, name, channel=channel, external_id=external_id)
+        return update_customer_from_chat(customer, name=name, last_name=last_name, phone=phone, email=email, channel=channel, external_id=external_id)
+    return create_customer(company_id, phone, email, name, channel=channel, external_id=external_id, last_name=last_name)
 
 
 def get_customer_by_whatsapp(whatsapp: str, company_id: int = 1):
