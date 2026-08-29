@@ -1,15 +1,14 @@
-"""Bitey Problem Identity Engine V3.
+"""Bitey Problem Identity Engine V4.
 
-Separates customer identity from problem identity, analyzes evidence before
-intent inheritance, and persists independent incidents for each customer.
+Uses evidence and conversational coherence to distinguish a new problem from
+follow-up information. Device-only replies such as "Redmi 9A" enrich the
+active problem instead of resetting it or trusting a stale generic intent.
 """
 from __future__ import annotations
-
 from hashlib import sha256
 import re
 import unicodedata
 from typing import Any, Dict, Optional
-
 from app.database.supabase import database
 
 STATES = {"NEW_PROBLEM", "CONTINUATION", "REOPENED_PROBLEM", "RELATED_PROBLEM", "NEEDS_CLARIFICATION"}
@@ -48,7 +47,8 @@ def _tokens(value: Any) -> set[str]:
 
 
 def extract_device(message: str) -> Dict[str, Optional[str]]:
-    text = _norm(message)
+    raw = str(message or "")
+    text = _norm(raw)
     for pattern, kind in DEVICE_PATTERNS:
         match = re.search(pattern, text)
         if match:
@@ -62,12 +62,20 @@ def extract_device(message: str) -> Dict[str, Optional[str]]:
 
 
 def _device_kind(value: Any) -> Optional[str]:
-    text = _norm(value)
-    if any(word in _tokens(text) for word in MOBILE_WORDS):
+    tokens = _tokens(value)
+    if tokens & MOBILE_WORDS:
         return "mobile"
-    if any(word in _tokens(text) for word in COMPUTER_WORDS):
+    if tokens & COMPUTER_WORDS:
         return "computer"
     return None
+
+
+def _looks_like_device_only(text: str, device: Dict[str, Optional[str]]) -> bool:
+    if not device.get("label"):
+        return False
+    problem_tokens = set().union(*(_tokens(p) for values in PROBLEM_PATTERNS.values() for p in values))
+    tokens = _tokens(text)
+    return not bool(tokens & problem_tokens) and len(tokens) <= 8
 
 
 def analyze_problem(message: str, current_intent: Optional[str] = None, active_intent: Optional[str] = None, active_problem: Optional[str] = None, active_device: Optional[str] = None) -> Dict[str, Any]:
@@ -85,13 +93,24 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
                 matched.append(phrase)
     category = max(category_scores, key=category_scores.get) if category_scores else None
 
-    # Resolve intent from concrete device evidence before trusting a generic/stale intent.
-    intent = current_intent or active_intent
+    # Coherence model: when the user supplies only a device/model, it is
+    # evidence about the active problem, not a new request. A detector result
+    # that conflicts with the active mobile context is treated as stale noise.
+    device_only = _looks_like_device_only(text, device)
+    coherent_active_intent = active_intent
+    if device_only and active_kind == "mobile":
+        coherent_active_intent = "mobile_repair" if active_intent in {None, "", "computer_repair", "technical_support", "general_support"} else active_intent
+    intent = current_intent or coherent_active_intent
+
     if category == "malware":
         if current_kind == "mobile" or active_kind == "mobile":
             intent = "mobile_repair"
         elif current_kind == "computer" or active_kind == "computer":
             intent = "computer_repair"
+    elif device_only and active_problem:
+        # Preserve the active problem intent when this turn only supplies
+        # identifying information about the device.
+        intent = coherent_active_intent or ("mobile_repair" if current_kind == "mobile" else current_intent or active_intent)
 
     effective_device = device["label"] or active_device
     effective_kind = current_kind or active_kind
@@ -105,12 +124,13 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
     device_changed = bool(active_device and device["label"] and not same_device)
     explicit_reopen = any(marker in text for marker in REOPEN_MARKERS)
     explicit_continuation = any(marker in text for marker in CONTINUATION_MARKERS)
+    same_problem_domain = bool(category and active_problem and category in active_tokens)
 
-    fingerprint_parts = [category or "unknown", intent or "unknown", _norm(effective_device or effective_platform or "unknown")]
+    fingerprint_parts = [category or active_problem or "unknown", intent or active_intent or "unknown", _norm(effective_device or effective_platform or "unknown")]
     fingerprint = sha256("|".join(fingerprint_parts).encode("utf-8")).hexdigest()[:32]
 
     confidence = 0.35
-    if category:
+    if category or active_problem:
         confidence += 0.25
     if effective_device or effective_platform:
         confidence += 0.20
@@ -118,16 +138,16 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
         confidence += 0.15
     confidence = min(0.99, confidence)
 
-    # A stale detector saying computer_repair must not turn an Android-virus
-    # follow-up into a new incident when the customer's active device is mobile.
-    same_problem_domain = bool(category and active_problem and category in _tokens(active_problem))
-    if active_intent and intent and intent != active_intent:
+    # A coherent device-only turn continues the active problem even when the
+    # generic intent detector produced a conflicting label.
+    intent_conflict = bool(active_intent and intent and intent != active_intent and not device_only)
+    if intent_conflict:
         state = "NEW_PROBLEM"
     elif device_changed:
         state = "NEW_PROBLEM"
     elif explicit_reopen and (same_device or not active_device):
         state = "REOPENED_PROBLEM"
-    elif active_problem and (same_device or not active_device) and (overlap >= 1 or explicit_continuation or same_problem_domain or (category == "malware" and active_kind == "mobile")):
+    elif active_problem and (device_only or same_device or not active_device) and (overlap >= 1 or explicit_continuation or same_problem_domain or device_only or (category == "malware" and active_kind == "mobile")):
         state = "CONTINUATION"
     elif active_problem and category and overlap >= 1:
         state = "RELATED_PROBLEM"
@@ -143,7 +163,7 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
         "is_reopened": state == "REOPENED_PROBLEM",
         "is_related": state == "RELATED_PROBLEM",
         "confidence": round(confidence, 3),
-        "category": category,
+        "category": category or (active_problem if device_only else None),
         "intent": intent,
         "device": effective_device,
         "device_kind": effective_kind,
@@ -151,7 +171,8 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
         "matched_signals": sorted(set(matched)),
         "overlap_tokens": overlap,
         "fingerprint": fingerprint,
-        "analysis_version": "problem-identity-v3",
+        "coherence": {"device_only": device_only, "active_problem_preserved": bool(device_only and active_problem), "intent_conflict_ignored": bool(device_only and active_intent and current_intent and current_intent != active_intent)},
+        "analysis_version": "problem-identity-v4",
     }
 
 
@@ -188,7 +209,7 @@ def persist_problem(*, company_id: int, customer_id: int, conversation_id: Optio
         "device_platform": analysis.get("platform"),
         "problem_summary": summary[:1000],
         "symptoms": analysis.get("matched_signals", []),
-        "evidence": {"confidence": analysis.get("confidence"), "overlap_tokens": analysis.get("overlap_tokens", 0), "analysis_version": analysis.get("analysis_version")},
+        "evidence": {"confidence": analysis.get("confidence"), "overlap_tokens": analysis.get("overlap_tokens", 0), "coherence": analysis.get("coherence", {}), "analysis_version": analysis.get("analysis_version")},
         "confidence": analysis.get("confidence", 0),
     }
     try:
