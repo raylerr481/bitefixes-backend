@@ -1,9 +1,10 @@
-"""Bitey Problem Identity Engine V5.
+"""Bitey Problem Identity Engine V6.
 
-Determines whether each turn continues, updates, relates to, or replaces an
-active problem. A semantic model is used when available; deterministic signals
-remain a safe fallback. The engine never depends on a growing list of special
-case phrases.
+Maintains a general, evolving problem state. The active problem is a semantic
+object rather than a keyword label: each turn may add entities, observations,
+hypotheses, goals or evidence, continue the same problem, or create another one.
+The language model is consulted when available; deterministic signals remain a
+safe fallback and are never allowed to erase a stronger active problem.
 """
 from __future__ import annotations
 from hashlib import sha256
@@ -69,36 +70,27 @@ def extract_device(message: str) -> Dict[str, Optional[str]]:
 
 def _device_kind(value: Any) -> Optional[str]:
     tokens = _tokens(value)
-    if tokens & MOBILE_WORDS:
-        return "mobile"
-    if tokens & COMPUTER_WORDS:
-        return "computer"
+    if tokens & MOBILE_WORDS: return "mobile"
+    if tokens & COMPUTER_WORDS: return "computer"
     return None
 
 
 def _looks_like_device_only(text: str, device: Dict[str, Optional[str]]) -> bool:
-    if not device.get("label"):
-        return False
+    if not device.get("label"): return False
     problem_tokens = set().union(*(_tokens(p) for values in PROBLEM_PATTERNS.values() for p in values))
-    tokens = _tokens(text)
-    return not bool(tokens & problem_tokens) and len(tokens) <= 8
+    return not bool(_tokens(text) & problem_tokens) and len(_tokens(text)) <= 8
 
 
-def _semantic_coherence(message: str, active_problem: Optional[str], active_intent: Optional[str], active_device: Optional[str], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    if not llm_understand or not active_problem:
-        return {}
+def _semantic_understanding(message: str, active_problem: Optional[str], active_intent: Optional[str], active_device: Optional[str], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not llm_understand: return {}
     try:
         result = llm_understand(message=message, language=(context or {}).get("language", "es"), context={
-            **(context or {}),
-            "last_problem": active_problem,
-            "active_problem": active_problem,
-            "last_intent": active_intent,
-            "active_device": active_device,
+            **(context or {}), "last_problem": active_problem, "active_problem": active_problem,
+            "last_intent": active_intent, "active_device": active_device,
         }) or {}
-        coherence = result.get("coherence") if isinstance(result, dict) else None
-        return coherence if isinstance(coherence, dict) else {}
+        return result if isinstance(result, dict) else {}
     except Exception as error:
-        print("[SEMANTIC COHERENCE WARNING]", error)
+        print("[SEMANTIC UNDERSTANDING WARNING]", error)
         return {}
 
 
@@ -115,35 +107,33 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
             if _norm(phrase) in text:
                 category_scores[category] = category_scores.get(category, 0) + (3 if len(phrase.split()) > 1 else 2)
                 matched.append(phrase)
-    category = max(category_scores, key=category_scores.get) if category_scores else None
+    lexical_category = max(category_scores, key=category_scores.get) if category_scores else None
+
+    semantic = _semantic_understanding(message, active_problem, active_intent, active_device, context)
+    coherence = semantic.get("coherence") if isinstance(semantic.get("coherence"), dict) else {}
+    relation = str(coherence.get("relation") or "").upper()
+    semantic_confidence = float(coherence.get("confidence", semantic.get("confidence", 0)) or 0)
+    preserve_active = bool(coherence.get("preserve_active_problem"))
+    updated_entities = coherence.get("updated_entities") if isinstance(coherence.get("updated_entities"), dict) else {}
+    semantic_category = semantic.get("problem_category") or semantic.get("problem_type")
+    semantic_summary = semantic.get("problem_summary")
+    hypotheses = semantic.get("hypotheses") if isinstance(semantic.get("hypotheses"), list) else []
+    semantic_symptoms = semantic.get("symptoms") if isinstance(semantic.get("symptoms"), list) else []
+    semantic_entities = semantic.get("entities") if isinstance(semantic.get("entities"), dict) else {}
 
     device_only = _looks_like_device_only(text, device)
-    semantic = _semantic_coherence(message, active_problem, active_intent, active_device, context)
-    relation = str(semantic.get("relation") or "").upper()
-    semantic_confidence = float(semantic.get("confidence", 0) or 0)
-    preserve_active = bool(semantic.get("preserve_active_problem"))
-    updated_entities = semantic.get("updated_entities") if isinstance(semantic.get("updated_entities"), dict) else {}
+    # The semantic result can classify a standalone message. This is the key
+    # generalization: device type and problem type are separate dimensions.
+    category = str(semantic_category or lexical_category or "").strip() or None
+    intent = str(semantic.get("intent") or current_intent or active_intent or "").strip() or None
 
-    # Semantic model has priority for conversational relationship. Lexical
-    # detection is retained only as a deterministic safety fallback.
-    if preserve_active and active_problem:
-        coherent_active_intent = active_intent
-    else:
-        coherent_active_intent = active_intent
+    if active_problem and (device_only or preserve_active or relation in {"CONTINUATION", "ENTITY_UPDATE", "ANSWER_TO_QUESTION"}):
+        if active_intent: intent = active_intent
+        if not category: category = active_problem
 
-    intent = current_intent or coherent_active_intent
-    if category == "malware" and not active_problem:
-        if current_kind == "mobile": intent = "mobile_repair"
-        elif current_kind == "computer": intent = "computer_repair"
-    elif active_problem and (device_only or preserve_active) and active_intent:
-        # Never replace an active specific problem with generic device repair
-        # merely because the new turn names a device.
-        intent = active_intent
-
-    effective_device = device["label"] or updated_entities.get("device") or active_device
-    effective_platform = device["platform"] or updated_entities.get("platform")
-    if not effective_platform and active_device and "android" in _norm(active_device):
-        effective_platform = "android"
+    effective_device = device["label"] or semantic_entities.get("device") or updated_entities.get("device") or active_device
+    effective_platform = device["platform"] or semantic_entities.get("platform") or updated_entities.get("platform")
+    if not effective_platform and active_device and "android" in _norm(active_device): effective_platform = "android"
     effective_kind = current_kind or active_kind
 
     active_tokens = _tokens(active_problem)
@@ -154,7 +144,7 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
     explicit_continuation = any(marker in text for marker in CONTINUATION_MARKERS)
     same_problem_domain = bool(category and active_problem and category in active_tokens)
 
-    if relation in {"CONTINUATION", "ENTITY_UPDATE", "ANSWER_TO_QUESTION"} and semantic_confidence >= 0.65 and active_problem:
+    if relation in {"CONTINUATION", "ENTITY_UPDATE", "ANSWER_TO_QUESTION"} and semantic_confidence >= 0.60 and active_problem:
         state = "CONTINUATION"
     elif relation == "RELATED_PROBLEM" and semantic_confidence >= 0.70 and active_problem:
         state = "RELATED_PROBLEM"
@@ -177,39 +167,29 @@ def analyze_problem(message: str, current_intent: Optional[str] = None, active_i
     else:
         state = "NEW_PROBLEM"
 
-    fingerprint_parts = [category or active_problem or "unknown", intent or active_intent or "unknown", _norm(effective_device or effective_platform or "unknown")]
+    # If a semantic model says this is a continuation, never downgrade it to a
+    # generic device service. Business service resolution remains a later step.
+    fingerprint_parts = [category or active_problem or "unknown", _norm(effective_device or effective_platform or "unknown"), _norm(intent or "unknown")]
     fingerprint = sha256("|".join(fingerprint_parts).encode("utf-8")).hexdigest()[:32]
 
-    confidence = 0.35
-    if category or active_problem: confidence += 0.25
-    if effective_device or effective_platform: confidence += 0.20
-    if intent: confidence += 0.15
-    if semantic_confidence >= 0.65: confidence = max(confidence, 0.65 + min(0.34, semantic_confidence * 0.34))
-    confidence = min(0.99, confidence)
+    confidence = max(0.35, min(0.95, 0.35 + (0.25 if category else 0) + (0.15 if effective_device else 0) + (0.10 if intent else 0) + (0.15 if semantic_confidence >= 0.60 else 0)))
+    if semantic_confidence > 0: confidence = max(confidence, min(0.99, semantic_confidence))
 
     return {
-        "state": state,
-        "is_new": state == "NEW_PROBLEM",
-        "is_continuation": state == "CONTINUATION",
-        "is_reopened": state == "REOPENED_PROBLEM",
-        "is_related": state == "RELATED_PROBLEM",
-        "confidence": round(confidence, 3),
-        "category": category or (active_problem if (device_only or preserve_active) else None),
-        "intent": intent,
-        "device": effective_device,
-        "device_kind": effective_kind,
-        "platform": effective_platform,
-        "matched_signals": sorted(set(matched)),
-        "overlap_tokens": overlap,
-        "fingerprint": fingerprint,
+        "state": state, "is_new": state == "NEW_PROBLEM", "is_continuation": state == "CONTINUATION",
+        "is_reopened": state == "REOPENED_PROBLEM", "is_related": state == "RELATED_PROBLEM",
+        "confidence": round(confidence, 3), "category": category, "intent": intent,
+        "problem_summary": semantic_summary or category, "hypotheses": hypotheses,
+        "symptoms": list(dict.fromkeys(matched + [str(x) for x in semantic_symptoms]))[:30],
+        "entities": {**semantic_entities, **updated_entities, "device": effective_device, "platform": effective_platform},
+        "device": effective_device, "device_kind": effective_kind, "platform": effective_platform,
+        "matched_signals": sorted(set(matched)), "overlap_tokens": overlap, "fingerprint": fingerprint,
         "coherence": {
-            "device_only": device_only,
-            "active_problem_preserved": bool((device_only or preserve_active) and active_problem),
-            "semantic_relation": relation or None,
-            "semantic_confidence": semantic_confidence,
+            "device_only": device_only, "active_problem_preserved": bool((device_only or preserve_active) and active_problem),
+            "semantic_relation": relation or None, "semantic_confidence": semantic_confidence,
             "updated_entities": updated_entities,
         },
-        "analysis_version": "problem-identity-v5-semantic-coherence",
+        "analysis_version": "problem-identity-v6-general-semantic-state",
     }
 
 
@@ -235,8 +215,9 @@ def persist_problem(*, company_id: int, customer_id: int, conversation_id: Optio
         "company_id": company_id, "customer_id": customer_id, "conversation_id": conversation_id, "ticket_id": ticket_id,
         "fingerprint": fingerprint, "state": analysis.get("state", "NEW_PROBLEM"), "category": analysis.get("category"),
         "intent": analysis.get("intent"), "device_label": analysis.get("device"), "device_platform": analysis.get("platform"),
-        "problem_summary": summary[:1000], "symptoms": analysis.get("matched_signals", []),
-        "evidence": {"confidence": analysis.get("confidence"), "overlap_tokens": analysis.get("overlap_tokens", 0), "coherence": analysis.get("coherence", {}), "analysis_version": analysis.get("analysis_version")},
+        "problem_summary": (analysis.get("problem_summary") or summary)[:1000],
+        "symptoms": analysis.get("symptoms") or analysis.get("matched_signals", []),
+        "evidence": {"confidence": analysis.get("confidence"), "overlap_tokens": analysis.get("overlap_tokens", 0), "coherence": analysis.get("coherence", {}), "hypotheses": analysis.get("hypotheses", []), "entities": analysis.get("entities", {}), "analysis_version": analysis.get("analysis_version")},
         "confidence": analysis.get("confidence", 0),
     }
     try:
