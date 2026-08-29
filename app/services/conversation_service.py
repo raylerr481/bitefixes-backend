@@ -5,12 +5,29 @@ from app.database.supabase import database
 
 def _now()->str:return datetime.now(timezone.utc).isoformat()
 
+def _db_conversation_id(value:Any):
+    """Return a database conversation id only when the supplied value is numeric."""
+    try:
+        text=str(value or "").strip()
+        return int(text) if text.isdigit() else None
+    except (TypeError,ValueError):
+        return None
+
 def get_or_create_conversation(customer_id:int,channel:str="website",conversation_id:Any=None):
-    """Resolve the active conversation for this customer and channel."""
+    """Resolve the active conversation for this customer and channel.
+
+    Channel adapters may provide an external conversation identifier (for
+    example a WhatsApp conversation id). The Supabase conversations.id column
+    is a bigint, so non-numeric external identifiers must never be used as the
+    database id filter. In that case the active customer/channel conversation
+    is resolved instead.
+    """
     try:
         channel=str(channel or "website").strip().lower()
         query=database.table("conversations").select("*").eq("customer_id",customer_id).eq("channel",channel).eq("status","active")
-        if conversation_id not in (None,""):query=query.eq("id",conversation_id)
+        db_cid=_db_conversation_id(conversation_id)
+        if db_cid is not None:
+            query=query.eq("id",db_cid)
         result=query.order("updated_at",desc=True).limit(1).execute()
         if result.data:return result.data[0]
         conversation={"customer_id":customer_id,"channel":channel,"status":"active","agent":"bitey","handled_by_ai":True,"requires_human":False,"created_at":_now(),"updated_at":_now()}
