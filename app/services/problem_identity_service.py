@@ -1,8 +1,11 @@
-"""Bitey Problem Identity Engine V7.
+"""Bitey Problem Identity Engine V8.
 
 General evolving problem state. A device/model is an entity update, not a new
 problem. Problem identity stays stable while symptoms, evidence, hypotheses,
 goals and entities evolve across a conversation.
+
+V8 adds ticket continuity safety: an existing problem's ticket association is
+never erased by a continuation turn that did not create a new ticket.
 """
 from __future__ import annotations
 from hashlib import sha256
@@ -107,12 +110,11 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     elif active_problem and category and overlap>=1:state="RELATED_PROBLEM"
     elif active_problem and not category and not device["label"]:state="NEEDS_CLARIFICATION"
     else:state="NEW_PROBLEM"
-    # Stable identity uses problem semantics, intent and platform, never the model/device label.
     identity_category=category or active_problem or "unknown";identity_intent=intent or active_intent or "unknown";identity_platform=effective_platform or ("mobile" if effective_kind=="mobile" else effective_kind) or "unknown"
     fingerprint=sha256("|".join([_norm(identity_category),_norm(identity_intent),_norm(identity_platform)]).encode()).hexdigest()[:32]
     confidence=max(0.35,min(0.95,0.35+(0.25 if category else 0)+(0.15 if effective_device else 0)+(0.10 if intent else 0)+(0.15 if semantic_confidence>=0.60 else 0)))
     if semantic_confidence>0:confidence=max(confidence,min(0.99,semantic_confidence))
-    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":{**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform},"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"active_problem_preserved":bool(active_problem and (device_only or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities},"analysis_version":"problem-identity-v7-general-semantic-state-stable-identity"}
+    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":{**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform},"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"active_problem_preserved":bool(active_problem and (device_only or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities},"analysis_version":"problem-identity-v8-ticket-continuity-stable-identity"}
 
 def classify_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[str]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:return analyze_problem(message,current_intent,active_intent,active_problem,active_device,context=context)
 
@@ -126,11 +128,18 @@ def find_customer_problems(customer_id:int,company_id:Optional[int]=None,limit:i
 def persist_problem(*,company_id:int,customer_id:int,conversation_id:Optional[int],ticket_id:Optional[int],analysis:Dict[str,Any],summary:str)->Optional[dict]:
     fingerprint=analysis.get("fingerprint")
     if not fingerprint:return None
-    payload={"company_id":company_id,"customer_id":customer_id,"conversation_id":conversation_id,"ticket_id":ticket_id,"fingerprint":fingerprint,"state":analysis.get("state","NEW_PROBLEM"),"category":analysis.get("category"),"intent":analysis.get("intent"),"device_label":analysis.get("device"),"device_platform":analysis.get("platform"),"problem_summary":(analysis.get("problem_summary") or summary)[:1000],"symptoms":analysis.get("symptoms") or analysis.get("matched_signals",[]),"evidence":{"confidence":analysis.get("confidence"),"overlap_tokens":analysis.get("overlap_tokens",0),"coherence":analysis.get("coherence",{}),"hypotheses":analysis.get("hypotheses",[]),"entities":analysis.get("entities",{}),"analysis_version":analysis.get("analysis_version")},"confidence":analysis.get("confidence",0)}
     try:
-        existing=database.table("bitey_problems").select("*").eq("customer_id",customer_id).eq("fingerprint",fingerprint).limit(1).execute()
-        if existing.data:
-            row_id=existing.data[0]["id"];updates={k:v for k,v in payload.items() if k not in {"company_id","customer_id","fingerprint"}}
-            updated=database.table("bitey_problems").update(updates).eq("id",row_id).execute();return updated.data[0] if updated.data else existing.data[0]
-        created=database.table("bitey_problems").insert(payload).execute();return created.data[0] if created.data else None
+        existing_result=database.table("bitey_problems").select("*").eq("customer_id",customer_id).eq("company_id",company_id).eq("fingerprint",fingerprint).limit(1).execute()
+        existing=(existing_result.data or [None])[0]
+        # Critical invariant: a continuation without a newly created ticket must
+        # retain the ticket already associated with this stable problem identity.
+        effective_ticket_id=ticket_id if ticket_id is not None else (existing.get("ticket_id") if existing else None)
+        payload={"company_id":company_id,"customer_id":customer_id,"conversation_id":conversation_id,"ticket_id":effective_ticket_id,"fingerprint":fingerprint,"state":analysis.get("state","NEW_PROBLEM"),"category":analysis.get("category"),"intent":analysis.get("intent"),"device_label":analysis.get("device"),"device_platform":analysis.get("platform"),"problem_summary":(analysis.get("problem_summary") or summary)[:1000],"symptoms":analysis.get("symptoms") or analysis.get("matched_signals",[]),"evidence":{"confidence":analysis.get("confidence"),"overlap_tokens":analysis.get("overlap_tokens",0),"coherence":analysis.get("coherence",{}),"hypotheses":analysis.get("hypotheses",[]),"entities":analysis.get("entities",{}),"analysis_version":analysis.get("analysis_version")},"confidence":analysis.get("confidence",0)}
+        if existing:
+            row_id=existing["id"]
+            updates={k:v for k,v in payload.items() if k not in {"company_id","customer_id","fingerprint"}}
+            updated=database.table("bitey_problems").update(updates).eq("id",row_id).execute()
+            return updated.data[0] if updated.data else existing
+        created=database.table("bitey_problems").insert(payload).execute()
+        return created.data[0] if created.data else None
     except Exception as error:print("[PROBLEM PERSISTENCE WARNING]",error);return None
