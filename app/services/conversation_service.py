@@ -11,24 +11,28 @@ def _now() -> str:
 
 
 def get_or_create_conversation(customer_id: int, channel: str = "website", conversation_id: Any = None):
-    """Resolve an active conversation, scoped to the authenticated customer."""
+    """Resolve the active conversation for this customer and channel."""
     try:
-        query = database.table("conversations").select("*").eq("customer_id", customer_id).eq("status", "active")
+        channel = str(channel or "website").strip().lower()
+        query = (database.table("conversations").select("*")
+                 .eq("customer_id", customer_id)
+                 .eq("channel", channel)
+                 .eq("status", "active"))
         if conversation_id not in (None, ""):
             query = query.eq("id", conversation_id)
-        result = query.limit(1).execute()
+        result = query.order("updated_at", desc=True).limit(1).execute()
         if result.data:
             return result.data[0]
 
-        # Never fall back to another conversation when an explicit ID is supplied.
         conversation = {
             "customer_id": customer_id,
-            "channel": channel or "website",
+            "channel": channel,
             "status": "active",
             "agent": "bitey",
             "handled_by_ai": True,
             "requires_human": False,
             "created_at": _now(),
+            "updated_at": _now(),
         }
         result = database.table("conversations").insert(conversation).execute()
         return result.data[0] if result.data else None
