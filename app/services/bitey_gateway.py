@@ -6,7 +6,7 @@ from typing import Any
 
 from app.services.decision_engine_v29 import decision_engine as ai_first_decision
 from app.services.customer_service import get_or_create_customer
-from app.services.conversation_service import get_or_create_conversation
+from app.services.conversation_service import get_or_create_conversation, update_conversation_context
 from app.services.message_service import save_customer_message, save_bitey_message, get_conversation_history
 from app.services.website_diagnostic_service import extract_urls, fetch_website_context
 
@@ -43,6 +43,27 @@ def _db_conversation_id(value: str | None) -> int | None:
     except (TypeError, ValueError):
         pass
     return None
+
+
+def _channel_identity(channel: str, phone: str, conversation_id: str | None) -> tuple[str, str]:
+    """Return a stable customer identity without confusing channels."""
+    supplied = str(phone or "").strip()
+    external = str(conversation_id or "").strip()
+    if channel == "website":
+        # The website widget should send its stable session/conversation id.
+        # Keep it in website_session so every turn resolves to the same customer.
+        stable = external or supplied
+        if stable and stable.lower() not in {"web", "unknown", "anonymous"}:
+            return f"web:{stable}", stable
+        return "web:anonymous", ""
+    if channel in {"telegram", "messenger", "instagram"}:
+        stable = supplied or external
+        return f"{channel}:{stable}" if stable else f"{channel}:anonymous", stable
+    if channel in {"whatsapp", "phone"}:
+        stable = supplied or external
+        return stable, stable
+    stable = supplied or external
+    return stable or f"{channel}:anonymous", stable
 
 
 def _derive_conversation_state(history: list[dict[str, Any]], current_message: str) -> dict[str, Any]:
@@ -162,7 +183,6 @@ def _derive_conversation_state(history: list[dict[str, Any]], current_message: s
 
 
 def _website_context(history: list[dict[str, Any]], message: str, state: dict[str, Any]) -> dict[str, Any] | None:
-    """Resolve a current or previously supplied URL into bounded diagnostic context."""
     urls = extract_urls(message)
     for row in reversed(history[-12:]):
         urls.extend(extract_urls(str(row.get("message_content") or row.get("ai_response") or "")))
@@ -172,7 +192,6 @@ def _website_context(history: list[dict[str, Any]], message: str, state: dict[st
     target = unique_urls[-1]
     requested = bool(state.get("website_diagnostic_requested"))
     if not requested and not extract_urls(message):
-        # A bare URL establishes context; a later turn can explicitly request its analysis.
         return {"reference_url": target, "diagnostic_requested": False}
     try:
         context = fetch_website_context(target)
@@ -185,8 +204,15 @@ def _website_context(history: list[dict[str, Any]], message: str, state: dict[st
 def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str,
                      customer_name: str, last_name: str, conversation_id: str | None, language: str,
                      preferred_contact_channel: str | None) -> dict[str, Any]:
-    identity_phone = str(phone or "").strip() or _conversation_key(channel, conversation_id)
-    customer = get_or_create_customer(company_id=company_id, phone=identity_phone, email=str(email or "").strip(), name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer")
+    identity_phone, external_identity = _channel_identity(channel, phone, conversation_id)
+    customer = get_or_create_customer(
+        company_id=company_id,
+        phone=identity_phone,
+        email=str(email or "").strip(),
+        name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer",
+        channel=channel,
+        external_id=external_identity,
+    )
     customer_id = customer.get("id") if isinstance(customer, dict) else None
     if not customer_id:
         return {"action": "conversation", "create_ticket": False, "response": "No fue posible establecer la identidad de la conversación en este momento."}
@@ -229,10 +255,12 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
 
     response = str(result.get("response") or "").strip()
     result_service_id = result.get("service_id") or state.get("active_service")
+    result_intent = result.get("intent")
     if cid:
         save_customer_message(company_id=company_id, customer_id=customer_id, conversation_id=cid, message=message, channel=channel, service_id=result_service_id)
         if response:
             save_bitey_message(company_id=company_id, customer_id=customer_id, conversation_id=cid, response=response, channel=channel, service_id=result_service_id)
+        update_conversation_context(cid, intent=result_intent, response=response, service_id=result_service_id, language=language)
 
     result["conversation_id"] = cid
     result["external_conversation_id"] = conversation_id
