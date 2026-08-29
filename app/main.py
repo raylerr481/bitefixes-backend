@@ -1,7 +1,11 @@
 """BiteFixes SaaS Backend entrypoint."""
 
+import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
+from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +17,47 @@ from app.routers import business_context, chat, customers, tickets, ai, webhooks
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
+
+
+async def _register_telegram_webhook() -> None:
+    """Register Telegram's webhook automatically from Render environment secrets."""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    secret = os.getenv("TELEGRAM_WEBHOOK_TOKEN", "").strip()
+    if not bot_token or not secret:
+        print("Telegram Webhook : NOT CONFIGURED (missing environment secret)")
+        return
+
+    webhook_url = os.getenv(
+        "TELEGRAM_WEBHOOK_URL",
+        "https://bitefixes-backend.onrender.com/webhooks/telegram",
+    ).strip()
+    api_url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
+    data = urlencode({
+        "url": webhook_url,
+        "secret_token": secret,
+        "drop_pending_updates": "true",
+    }).encode("utf-8")
+
+    def _request() -> tuple[bool, str]:
+        try:
+            request = UrlRequest(
+                api_url,
+                data=data,
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return bool(payload.get("ok")), str(payload.get("description", ""))
+        except Exception as exc:
+            return False, type(exc).__name__
+
+    ok, detail = await asyncio.to_thread(_request)
+    if ok:
+        print(f"Telegram Webhook : REGISTERED -> {webhook_url}")
+    else:
+        print(f"Telegram Webhook : REGISTRATION FAILED ({detail})")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,16 +74,20 @@ async def lifespan(app: FastAPI):
     print("Web Intelligence : ENABLED")
     print("Bitey Gateway : ENABLED")
     print("Bitey Trainer : ENABLED")
+    await _register_telegram_webhook()
     yield
     print("BiteFixes Backend shutting down...")
 
+
 app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, description="BiteFixes SaaS Backend powered by Bitey AI Engine and unified cloud gateway", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "Accept", "Origin"])
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print("[GLOBAL ERROR]", exc if settings.DEBUG else type(exc).__name__)
     return JSONResponse(status_code=500, content={"status": "error", "message": "Internal server error"})
+
 
 app.include_router(chat.router)
 app.include_router(customers.router)
@@ -49,21 +98,26 @@ app.include_router(webhooks.router)
 app.include_router(company_profile.router)
 app.include_router(bitey_trainer.router)
 
+
 @app.get("/")
 def root():
     return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer"}
+
 
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud", "bitey_trainer": "ready"}
 
+
 @app.get("/info")
 def info():
     return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "status": "running"}
 
+
 @app.get("/gateway/status")
 def gateway_status():
     return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "identity": "centralized-customer-conversation-memory"}
+
 
 @app.get("/ai/status")
 def ai_status():
@@ -73,10 +127,12 @@ def ai_status():
         providers.append({"name": spec.name, "enabled": bool(spec.enabled and spec.provider), "cost_class": spec.cost_class, "eligible": bool(spec.enabled and spec.provider and spec.cost_class == "free"), "capabilities": list(spec.capabilities)})
     return {"engine": "Bitey", "status": "ready", "gateway": "ready", "supabase": bool(supabase_manager.check_connection()), "web_intelligence": {"enabled": True, "service": "bitey-search-core"}, "external_ai": {"providers": providers, "available_general_reasoning": [p["name"] for p in providers if p["eligible"] and "general_reasoning" in p["capabilities"]]}, "policy": {"free_only": FREE_ONLY, "consult_min_confidence": float(os.getenv("AI_CONSULT_MIN_CONFIDENCE", "0.78")), "max_estimated_cost": max_estimated_cost(), "max_providers": int(os.getenv("AI_COUNCIL_MAX_PROVIDERS", "2"))}}
 
+
 @app.get("/test-supabase")
 def test_supabase():
     connected = supabase_manager.check_connection()
     return {"status": "ok" if connected else "error", "database": "Supabase connected" if connected else "Connection failed"}
+
 
 @app.get("/test-woocommerce")
 def test_woocommerce():
