@@ -56,10 +56,20 @@ def _verify_whatsapp_signature(body: bytes, request: Request) -> None:
         raise HTTPException(status_code=403, detail="Invalid WhatsApp signature")
 
 
+def _verify_telegram_token(request: Request) -> None:
+    """Validate Telegram's native secret-token header."""
+    expected = _token("telegram")
+    if not expected:
+        if os.getenv("DEBUG", "false").lower() != "true":
+            raise HTTPException(status_code=503, detail="telegram webhook is not configured")
+        return
+    supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Invalid Telegram webhook secret")
+
+
 def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     if channel == "whatsapp":
-        # Meta can send multiple entries/changes/messages in one webhook.
-        # The gateway contract processes one normalized message at a time.
         entries = payload.get("entry") or []
         if not entries:
             return None
@@ -71,8 +81,6 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
         value = change.get("value") or {}
         messages = value.get("messages") or []
         if not messages:
-            # Delivery/read/status callbacks are valid Meta events but are not
-            # inbound customer messages and must be acknowledged without AI work.
             return None
         msg = messages[0] or {}
         message_type = _text(msg.get("type"))
@@ -83,14 +91,10 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
         profile = contact.get("profile") or {}
         phone = _text(msg.get("from") or contact.get("wa_id"))
         return {
-            "message": text,
-            "phone": phone,
-            "email": "",
-            "customer_name": _text(profile.get("name")),
-            "last_name": "",
+            "message": text, "phone": phone, "email": "",
+            "customer_name": _text(profile.get("name")), "last_name": "",
             "conversation_id": phone or _text(msg.get("id")),
-            "external_message_id": _text(msg.get("id")),
-            "channel": channel,
+            "external_message_id": _text(msg.get("id")), "channel": channel,
         }
     if channel == "telegram":
         msg = payload.get("message") or payload.get("edited_message") or {}
@@ -98,7 +102,14 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
         text = _text(msg.get("text"))
         if not text:
             return None
-        return {"message": text, "phone": "", "email": "", "customer_name": _text(sender.get("first_name")), "last_name": _text(sender.get("last_name")), "conversation_id": _text((msg.get("chat") or {}).get("id")), "channel": channel}
+        return {
+            "message": text, "phone": "", "email": "",
+            "customer_name": _text(sender.get("first_name")),
+            "last_name": _text(sender.get("last_name")),
+            "conversation_id": _text((msg.get("chat") or {}).get("id")),
+            "external_message_id": _text(msg.get("message_id")),
+            "channel": channel,
+        }
     if channel == "messenger":
         entry = (payload.get("entry") or [{}])[0]
         messaging = (entry.get("messaging") or [{}])[0]
@@ -122,7 +133,10 @@ async def _handle(channel: str, request: Request):
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Invalid webhook JSON")
     else:
-        _verify_generic_token(channel, request)
+        if channel == "telegram":
+            _verify_telegram_token(request)
+        else:
+            _verify_generic_token(channel, request)
         payload = await request.json()
 
     event = normalize_event(channel, payload)
@@ -130,15 +144,10 @@ async def _handle(channel: str, request: Request):
         return {"status": "ignored", "channel": channel}
 
     result = handle_message(
-        company_id=_company_id(channel),
-        message=event["message"],
-        phone=event["phone"],
-        email=event.get("email", ""),
-        customer_name=event["customer_name"] or "Customer",
-        last_name=event.get("last_name", ""),
-        channel=normalize_channel(channel),
-        conversation_id=event["conversation_id"],
-        language_preference="auto",
+        company_id=_company_id(channel), message=event["message"], phone=event["phone"],
+        email=event.get("email", ""), customer_name=event["customer_name"] or "Customer",
+        last_name=event.get("last_name", ""), channel=normalize_channel(channel),
+        conversation_id=event["conversation_id"], language_preference="auto",
     )
     delivery = await send_external_response(
         channel=channel,
@@ -150,17 +159,7 @@ async def _handle(channel: str, request: Request):
             "customer_id": result.get("customer_id") if isinstance(result, dict) else None,
         },
     )
-    return {
-        "status": "processed",
-        "channel": channel,
-        "external_conversation_id": event["conversation_id"],
-        "external_message_id": event.get("external_message_id"),
-        "conversation_id": result.get("conversation_id"),
-        "customer_id": result.get("customer_id"),
-        "response": result.get("response"),
-        "result": result,
-        "delivery": delivery,
-    }
+    return {"status": "processed", "channel": channel, "external_conversation_id": event["conversation_id"], "external_message_id": event.get("external_message_id"), "conversation_id": result.get("conversation_id"), "customer_id": result.get("customer_id"), "response": result.get("response"), "result": result, "delivery": delivery}
 
 
 @router.get("/{channel}")
