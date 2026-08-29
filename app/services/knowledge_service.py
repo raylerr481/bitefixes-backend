@@ -1,12 +1,12 @@
-"""BiteFixes Knowledge Service + Internet Comparative Research."""
+"""BiteFixes Knowledge Service + evidence-ranked Internet research."""
 from typing import Any, Dict
 
 from app.database.supabase import database
 from app.services.internet_problem_research_service import research_problem
+from app.services.web_research_engine_v2 import research_problem_v2
 
 
-def _internet_context(message: str, intent: str | None, language: str | None) -> Dict[str, Any]:
-    # The research engine treats this as a hypothesis, never as a diagnosis.
+def _problem_hypothesis(message: str, intent: str | None) -> Dict[str, Any]:
     problem = {
         "category": intent or "general_support",
         "intent": intent,
@@ -22,11 +22,20 @@ def _internet_context(message: str, intent: str | None, language: str | None) ->
     if any(x in text for x in ("virus", "malware", "infectado", "infectada", "anuncios", "popups", "publicidad")):
         problem["category"] = "suspected_malware"
         problem["symptoms"] = ["possible malware or unwanted behavior"]
-    return research_problem(message=message, problem=problem, language=language or "es")
+    return problem
+
+
+def _internet_context(message: str, intent: str | None, language: str | None) -> Dict[str, Any]:
+    problem = _problem_hypothesis(message, intent)
+    try:
+        return research_problem_v2(message=message, problem=problem, language=language or "es")
+    except Exception as error:
+        print("[WEB RESEARCH V2 ERROR]", error)
+        return research_problem(message=message, problem=problem, language=language or "es")
 
 
 def search_knowledge(message: str, company_id: int = None, intent: str = None, language: str = None):
-    """Return local knowledge enriched with ranked public-web evidence."""
+    """Return local knowledge enriched with comparative public-web evidence."""
     if not message:
         return None
     best = None
@@ -36,7 +45,6 @@ def search_knowledge(message: str, company_id: int = None, intent: str = None, l
             query = query.eq("company_id", company_id)
         result = query.execute()
         items = result.data or []
-
         if intent:
             matches = [item for item in items if item.get("intent") == intent]
             if matches:
@@ -45,7 +53,6 @@ def search_knowledge(message: str, company_id: int = None, intent: str = None, l
             lang_matches = [item for item in items if item.get("language") == language]
             if lang_matches:
                 items = lang_matches
-
         words = [w.strip(".,!?;:") for w in message.lower().split() if len(w) >= 3]
         score_best = 0
         for item in items:
@@ -65,7 +72,9 @@ def search_knowledge(message: str, company_id: int = None, intent: str = None, l
     result["internet_research"] = internet
     result["evidence_sources"] = internet.get("matches", [])
     result["research_confidence"] = internet.get("confidence", 0.0)
-    result["research_method"] = internet.get("method", "internet_comparative_match_v1")
+    result["research_method"] = internet.get("method", "evidence_ranked_multi_query_v2")
+    result["research_contradictions"] = internet.get("contradictions", [])
+    result["research_risk_buckets"] = internet.get("risk_buckets", {})
     return result
 
 
