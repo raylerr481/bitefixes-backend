@@ -1,4 +1,4 @@
-"""BiteFixes - Bitey Core V26."""
+"""BiteFixes - Bitey Core V27."""
 from typing import Any, Dict, Optional
 from app.services.customer_service import get_or_create_customer
 from app.services.conversation_service import get_or_create_conversation, get_conversation
@@ -24,21 +24,13 @@ try:
 except ImportError:
     get_customer_memory = None
 
-
-def _safe_dict(value: Any) -> Dict:
-    return value if isinstance(value, dict) else {}
-
-def _get_customer_id(customer: Any) -> Optional[int]:
-    return customer.get("id") if isinstance(customer, dict) else None
-
+def _safe_dict(value: Any) -> Dict: return value if isinstance(value, dict) else {}
+def _get_customer_id(customer: Any) -> Optional[int]: return customer.get("id") if isinstance(customer, dict) else None
 def _normalize_language_preference(value: Optional[str]) -> Optional[str]:
     if not value: return None
-    normalized = value.strip().lower().replace("_", "-")
-    return {"pt": "pt-BR", "pt-br": "pt-BR", "es": "es", "en": "en"}.get(normalized)
-
+    return {"pt":"pt-BR","pt-br":"pt-BR","es":"es","en":"en"}.get(value.strip().lower().replace("_","-"))
 def _is_greeting(message: str) -> bool:
-    return " ".join(str(message or "").lower().strip().split()) in {"hola", "hello", "hi", "hey", "oi", "ola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}
-
+    return " ".join(str(message or "").lower().strip().split()) in {"hola","hello","hi","hey","oi","ola","buenas","buenos dias","buenas tardes","buenas noches"}
 def _load_memory(customer_id: int, company_id: int, conversation_id: str) -> Dict[str, Any]:
     if get_memory_context:
         try:
@@ -51,7 +43,6 @@ def _load_memory(customer_id: int, company_id: int, conversation_id: str) -> Dic
             return result if isinstance(result, dict) else {}
         except Exception: pass
     return {}
-
 def _build_context(conversation_context: Dict[str, Any], memory: Dict[str, Any], latest_problem: Optional[dict] = None) -> Dict[str, Any]:
     context = dict(conversation_context or {})
     context["memory"] = memory
@@ -91,10 +82,14 @@ def process_message(company_id: int, message: str, phone: str, email: str = "", 
         context.update({"company_id": company_id, "language": language, "customer_id": customer_id})
         save_customer_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, message=message, channel=channel)
         intent = _safe_dict(detect_intent(message, company_id, context=context))
-        problem = analyze_problem(message=message, current_intent=intent.get("intent"), active_intent=context.get("last_intent"), active_problem=context.get("last_problem"), active_device=context.get("last_device"))
+        problem = analyze_problem(message=message, current_intent=intent.get("intent"), active_intent=context.get("last_intent"), active_problem=context.get("last_problem"), active_device=context.get("last_device"), context=context)
         context.update({"problem_state": problem["state"], "problem_is_new": problem["is_new"], "problem_category": problem.get("category"), "problem_fingerprint": problem.get("fingerprint"), "last_problem": problem.get("category") or context.get("last_problem")})
         if problem.get("device"): context["last_device"] = problem["device"]
-        if problem.get("intent") and problem.get("intent") != intent.get("intent"):
+        # Coherence has priority over a generic classifier result when a turn is
+        # an entity update or answer inside an already active problem.
+        if problem.get("intent") and (problem.get("is_continuation") or problem.get("coherence", {}).get("active_problem_preserved")):
+            intent = {**intent, "intent": problem["intent"], "confidence": max(float(intent.get("confidence", 0) or 0), float(problem.get("confidence", 0) or 0)), "problem_coherence_override": True}
+        elif problem.get("intent") and problem.get("intent") != intent.get("intent"):
             intent = {**intent, "intent": problem["intent"], "confidence": max(float(intent.get("confidence", 0) or 0), float(problem.get("confidence", 0) or 0)), "problem_override": True}
         if problem["is_new"]:
             context["last_intent"] = None; context["last_service"] = None; context["last_ticket"] = None
@@ -102,41 +97,39 @@ def process_message(company_id: int, message: str, phone: str, email: str = "", 
             intent = {"intent": context["last_intent"], "confidence": max(0.70, float(context.get("last_confidence") or 0.0)), "context_inherited": True, "context_source": "problem_history"}
         knowledge = search_knowledge(message=message, company_id=company_id, intent=intent.get("intent"), language=language)
         decision = _safe_dict(ai_first_decision(company_id=company_id, customer=customer, message=message, intent=intent, knowledge=knowledge, memory={**memory, "conversation_id": resolved_conversation_id, "history": context.get("history", []), "problem_state": problem["state"], "problem": problem}, language=language, business_context=context))
-        if not decision: decision = {"action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None, "service": None, "service_id": None, "response": "Claro. Cuéntame un poco más sobre lo que necesitas.", "metadata": {"architecture": "ai_first_v26"}}
+        if not decision: decision = {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"service":None,"service_id":None,"response":"Claro. Cuéntame un poco más sobre lo que necesitas.","metadata":{"architecture":"ai_first_v27"}}
         if problem["is_new"]:
             decision["ticket_id"] = None
             if not intent.get("intent"): decision["create_ticket"] = False
         service_id, service = decision.get("service_id"), decision.get("service")
-        create_ticket_flag, requires_quote = bool(decision.get("create_ticket", False)), bool(decision.get("requires_quote", False))
-        ticket_type = decision.get("ticket_type", "technical_support")
+        create_ticket_flag, requires_quote = bool(decision.get("create_ticket",False)), bool(decision.get("requires_quote",False))
+        ticket_type = decision.get("ticket_type","technical_support")
         ticket = None; ticket_id = None
         if create_ticket_flag:
-            title = service.get("name") if isinstance(service, dict) else None
+            title = service.get("name") if isinstance(service,dict) else None
             title = title or intent.get("intent") or problem.get("category") or "Support"
             ticket = process_ticket(company_id=company_id, customer_id=customer_id, service_id=service_id, intent=intent.get("intent"), description=message, title=title, language=language, channel=channel, ticket_type=ticket_type)
             ticket_id = ticket.get("id") if ticket else None
         persisted_problem = persist_problem(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, ticket_id=ticket_id, analysis=problem, summary=message)
         if persisted_problem:
             context["last_problem_id"] = persisted_problem.get("id"); context["last_problem_fingerprint"] = persisted_problem.get("fingerprint")
-        # Self-service is a customer-selected mode, not an automatic replacement for professional service.
         requested_mode = context.get("self_service_mode") or context.get("guide_mode")
-        guide = build_guide(problem=problem, research=(knowledge or {}).get("internet_research", {}) if isinstance(knowledge, dict) else {}, step=int(context.get("guide_step") or 1), customer_choice=requested_mode)
-        context["guide_mode"] = guide.get("mode")
-        context["guide_step"] = guide.get("step", 1)
+        guide = build_guide(problem=problem, research=(knowledge or {}).get("internet_research",{}) if isinstance(knowledge,dict) else {}, step=int(context.get("guide_step") or 1), customer_choice=requested_mode)
+        context["guide_mode"] = guide.get("mode"); context["guide_step"] = guide.get("step",1)
         quote = None
         if requires_quote and ticket:
             quote = create_quote(company_id=company_id, customer_id=customer_id, service_id=service_id, title=ticket.get("title") or "Quote", description=message, ticket_id=ticket_id)
         response = build_response(decision=decision, ticket=ticket, knowledge=knowledge, language=language, customer_name=customer.get("full_name"))
-        response_text = (response.get("response") or response.get("message") or str(response)) if isinstance(response, dict) else str(response)
-        if guide.get("mode") == "OFFER_OPTIONS" and problem.get("confidence", 0) >= 0.5:
+        response_text = (response.get("response") or response.get("message") or str(response)) if isinstance(response,dict) else str(response)
+        if guide.get("mode") == "OFFER_OPTIONS" and problem.get("confidence",0) >= 0.5:
             response_text += "\n\nPuedes intentar resolverlo conmigo paso a paso, o si prefieres podemos ayudarte directamente en BiteFixes por asistencia remota o en nuestro taller. ¿Qué opción prefieres?"
         elif guide.get("mode") == "SELF_SERVICE_GUIDE":
-            response_text += f"\n\nModo guía Bitey activado. Empezaremos por el paso {guide.get('step', 1)} y comprobaremos el resultado antes de continuar."
+            response_text += f"\n\nModo guía Bitey activado. Empezaremos por el paso {guide.get('step',1)} y comprobaremos el resultado antes de continuar."
         if ticket:
-            notify_event(company_id=company_id, event="ticket_created", ticket_id=ticket_id, customer_id=customer_id, service_id=service_id, intent=intent.get("intent"), message=message, channel=channel, metadata={"language": language, "ticket_type": ticket_type, "requires_quote": requires_quote, "problem_state": problem["state"], "problem_fingerprint": problem["fingerprint"], "guide_mode": guide.get("mode")})
-        save_bitey_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, response=response_text, intent=intent.get("intent"), service_id=service_id, ticket_id=ticket_id, channel=channel)
-        update_conversation_context(resolved_conversation_id, intent=intent.get("intent"), response=response_text, ticket_id=ticket_id, service_id=service_id, confidence=float(intent.get("confidence", 0) or 0), language=language, metadata={"problem_id": context.get("last_problem_id"), "problem_state": problem["state"], "guide_mode": guide.get("mode"), "guide_step": guide.get("step", 1)})
-        return {"success": True, "customer_id": customer_id, "customer_name": customer.get("full_name"), "conversation_id": str(resolved_conversation_id), "channel_conversation_id": conversation_id, "language": language, "problem": problem, "problem_id": context.get("last_problem_id"), "problem_fingerprint": problem.get("fingerprint"), "guide": guide, "intent": intent.get("intent"), "confidence": float(intent.get("confidence", 0) or 0), "memory": {"used": bool(context.get("history")), "messages": len(context.get("history") or []), "problems": len(historical_problems), "scope": "customer+conversation"}, "decision": decision, "ticket": ticket, "ticket_id": ticket_id, "quote": quote, "response": response_text, "channel": channel}
+            notify_event(company_id=company_id,event="ticket_created",ticket_id=ticket_id,customer_id=customer_id,service_id=service_id,intent=intent.get("intent"),message=message,channel=channel,metadata={"language":language,"ticket_type":ticket_type,"requires_quote":requires_quote,"problem_state":problem["state"],"problem_fingerprint":problem["fingerprint"],"guide_mode":guide.get("mode")})
+        save_bitey_message(company_id=company_id,customer_id=customer_id,conversation_id=resolved_conversation_id,response=response_text,intent=intent.get("intent"),service_id=service_id,ticket_id=ticket_id,channel=channel)
+        update_conversation_context(resolved_conversation_id,intent=intent.get("intent"),response=response_text,ticket_id=ticket_id,service_id=service_id,confidence=float(intent.get("confidence",0) or 0),language=language,metadata={"problem_id":context.get("last_problem_id"),"problem_state":problem["state"],"guide_mode":guide.get("mode"),"guide_step":guide.get("step",1),"coherence":problem.get("coherence",{})})
+        return {"success":True,"customer_id":customer_id,"customer_name":customer.get("full_name"),"conversation_id":str(resolved_conversation_id),"channel_conversation_id":conversation_id,"language":language,"problem":problem,"problem_id":context.get("last_problem_id"),"problem_fingerprint":problem.get("fingerprint"),"guide":guide,"intent":intent.get("intent"),"confidence":float(intent.get("confidence",0) or 0),"memory":{"used":bool(context.get("history")),"messages":len(context.get("history") or []),"problems":len(historical_problems),"scope":"customer+conversation"},"decision":decision,"ticket":ticket,"ticket_id":ticket_id,"quote":quote,"response":response_text,"channel":channel}
     except Exception as error:
-        import traceback; print("[BITEY CORE ERROR]", error); traceback.print_exc()
-        return {"success": False, "error": type(error).__name__, "response": "Claro. Cuéntame un poco más sobre lo que necesitas y te ayudo.", "ticket": None, "ticket_id": None}
+        import traceback; print("[BITEY CORE ERROR]",error); traceback.print_exc()
+        return {"success":False,"error":type(error).__name__,"response":"Claro. Cuéntame un poco más sobre lo que necesitas y te ayudo.","ticket":None,"ticket_id":None}
