@@ -36,8 +36,6 @@ CONVERSATION PRIORITY
 The current turn is interpreted together with recent conversation and explicit continuity state. A short follow-up inherits the active object, problem, topic and service whenever they are unambiguous.
 """.strip()
 
-# Deliberately compact. The full context is reconstructed once in the prompt;
-# providers must not receive a second copy of the same context in their payload.
 CONTEXT_BUDGET = {
     "business_index": 3300,
     "contextual_state": 1200,
@@ -95,11 +93,7 @@ def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
             from app.services.company_people_service import build_company_people_context
             raw_people = build_company_people_context(int(company_id)) or {}
             people_context = {
-                "company_people": [
-                    person
-                    for person in (raw_people.get("company_people") or [])
-                    if bool(person.get("ai_context_authority"))
-                ],
+                "company_people": [person for person in (raw_people.get("company_people") or []) if bool(person.get("ai_context_authority"))],
                 "count": int(raw_people.get("count") or 0),
             }
     except Exception as exc:
@@ -111,37 +105,20 @@ def _business_index(context: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(location, dict):
             continue
         locations.append({
-            "id": location.get("id"),
-            "name": location.get("name"),
-            "type": location.get("location_type"),
-            "street": location.get("street"),
-            "number": location.get("number"),
-            "complement": location.get("complement"),
-            "neighborhood": location.get("neighborhood"),
-            "city": location.get("city"),
-            "state": location.get("state"),
-            "postal_code": location.get("postal_code"),
-            "country": location.get("country"),
-            "latitude": location.get("latitude"),
-            "longitude": location.get("longitude"),
-            "maps_url": location.get("maps_url"),
-            "phone": location.get("phone"),
-            "whatsapp": location.get("whatsapp"),
-            "opening_hours": location.get("opening_hours") or {},
-            "appointment_required": bool(location.get("appointment_required")),
-            "is_primary": bool(location.get("is_primary")),
+            "id": location.get("id"), "name": location.get("name"), "type": location.get("location_type"),
+            "street": location.get("street"), "number": location.get("number"), "complement": location.get("complement"),
+            "neighborhood": location.get("neighborhood"), "city": location.get("city"), "state": location.get("state"),
+            "postal_code": location.get("postal_code"), "country": location.get("country"), "latitude": location.get("latitude"),
+            "longitude": location.get("longitude"), "maps_url": location.get("maps_url"), "phone": location.get("phone"),
+            "whatsapp": location.get("whatsapp"), "opening_hours": location.get("opening_hours") or {},
+            "appointment_required": bool(location.get("appointment_required")), "is_primary": bool(location.get("is_primary")),
         })
 
     return {
-        "company": context.get("company") or {},
-        "company_ai_profile": context.get("company_ai_profile") or {},
-        "people_authority": people_context,
-        "locations": locations,
-        "profile": context.get("business_profile") or {},
-        "domains": names(context.get("domains")),
-        "services": names(context.get("services")),
-        "capabilities": names(context.get("capabilities")),
-        "ai_scope": context.get("ai_scope") or {},
+        "company": context.get("company") or {}, "company_ai_profile": context.get("company_ai_profile") or {},
+        "people_authority": people_context, "locations": locations, "profile": context.get("business_profile") or {},
+        "domains": names(context.get("domains")), "services": names(context.get("services")),
+        "capabilities": names(context.get("capabilities")), "ai_scope": context.get("ai_scope") or {},
         "knowledge_available": bool(context.get("knowledge")),
     }
 
@@ -162,14 +139,10 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
             "knowledge": _compact(context.get("knowledge"), CONTEXT_BUDGET["knowledge"]),
         }
         prompt = (
-            f"{RECTOR_DIRECTIVES}\n\n"
-            f"BUSINESS ENVIRONMENT:\n{cognitive_packet['business_context_index']}\n\n"
-            f"CONVERSATION STATE:\n{cognitive_packet['contextual_state']}\n\n"
-            f"CONTEXT RULES:\n{cognitive_packet['contextual_directive']}\n\n"
-            f"RECENT CONVERSATION MEMORY:\n{cognitive_packet['conversation_memory']}\n\n"
-            f"AUTHORIZED TOOL RESULT:\n{cognitive_packet['governed_tool_result']}\n\n"
-            f"RELEVANT COMPANY KNOWLEDGE:\n{cognitive_packet['knowledge']}\n\n"
-            f"CURRENT USER MESSAGE:\n{message.strip()}\n\n"
+            f"{RECTOR_DIRECTIVES}\n\nBUSINESS ENVIRONMENT:\n{cognitive_packet['business_context_index']}\n\n"
+            f"CONVERSATION STATE:\n{cognitive_packet['contextual_state']}\n\nCONTEXT RULES:\n{cognitive_packet['contextual_directive']}\n\n"
+            f"RECENT CONVERSATION MEMORY:\n{cognitive_packet['conversation_memory']}\n\nAUTHORIZED TOOL RESULT:\n{cognitive_packet['governed_tool_result']}\n\n"
+            f"RELEVANT COMPANY KNOWLEDGE:\n{cognitive_packet['knowledge']}\n\nCURRENT USER MESSAGE:\n{message.strip()}\n\n"
             f"Before answering, resolve the current message against the conversation state and recent turns. Then answer only the current need."
         )
         print(f"[AI REASONING] provider={spec.name} status=requested context_chars={len(prompt)}")
@@ -177,14 +150,10 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
         if not answer:
             return {"_error": {"category": "empty_response", "http_status": None}, "provider": spec.name}
         return {
-            "provider": spec.name,
-            "answer": str(answer).strip(),
-            "cost_class": spec.cost_class,
-            "capabilities": list(spec.capabilities),
-            "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))},
+            "provider": spec.name, "answer": str(answer).strip(), "cost_class": spec.cost_class,
+            "capabilities": list(spec.capabilities), "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))},
             "evidence": tool_context.get("web_search", {}).get("results", []),
-            "search_query": tool_context.get("web_search", {}).get("query"),
-            "search_verified": bool(tool_context.get("web_search", {}).get("verified")),
+            "search_query": tool_context.get("web_search", {}).get("query"), "search_verified": bool(tool_context.get("web_search", {}).get("verified")),
             "contextual_state": state,
         }
     except Exception as exc:
@@ -194,6 +163,7 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
 
 
 def consult(message: str, *, language: str, context: Dict[str, Any], max_providers: int = 1, capabilities: Sequence[str] | None = None) -> List[Dict[str, Any]]:
+    """Consult multiple eligible providers so the coherence gate can compare independent candidates."""
     if max_providers <= 0:
         return []
     registry = build_ai_orchestrator().registry
@@ -209,20 +179,39 @@ def consult(message: str, *, language: str, context: Dict[str, Any], max_provide
         providers = registry.available("general_reasoning")
     if not providers:
         return []
+    providers = providers[:max_providers]
     print("[AI REASONING] providers=" + ",".join(spec.name for spec in providers))
 
     async def run() -> List[Dict[str, Any]]:
+        healthy: list[tuple[Any, Any]] = []
         for spec in providers:
             health = await probe_provider_spec(spec)
             if health is not None and not health.get("ok"):
                 print(f"[AI REASONING] provider={spec.name} health=unhealthy category={health.get('category')} http_status={health.get('http_status')}")
                 continue
-            result = await _ask_provider(spec, message, language, context)
+            healthy.append((spec, health))
+
+        if not healthy:
+            return []
+
+        # Ask every healthy selected provider independently. Their outputs are
+        # deliberately kept separate so consultation_service can score them
+        # against the same enterprise context and problem state.
+        results = await asyncio.gather(
+            *(_ask_provider(spec, message, language, context) for spec, _health in healthy),
+            return_exceptions=True,
+        )
+        accepted: list[Dict[str, Any]] = []
+        for (spec, health), result in zip(healthy, results):
+            if isinstance(result, Exception):
+                diagnostic = classify_exception(result)
+                print(f"[AI REASONING] provider={spec.name} status=error category={diagnostic.get('category')} http_status={diagnostic.get('http_status')}")
+                continue
             if result and result.get("answer"):
                 result["provider_health"] = health
-                print(f"[AI REASONING] provider={spec.name} status=selected")
-                return [result]
-        return []
+                accepted.append(result)
+                print(f"[AI REASONING] provider={spec.name} status=candidate")
+        return accepted
 
     try:
         return asyncio.run(run())
