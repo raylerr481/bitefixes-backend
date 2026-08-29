@@ -1,42 +1,38 @@
-"""Provider-neutral LLM gateway for Bitey.
-
-The external LLM is Bitey's primary cognitive responder: it interprets,
-reasons, diagnoses, asks clarifying questions and drafts conversational
-solutions. Bitey remains the transport/orchestration, memory and business-
-action safety layer; the model cannot execute protected actions.
-"""
+"""Provider-neutral LLM gateway for Bitey."""
 from __future__ import annotations
-
 import json
 import os
 from typing import Any, Dict, Optional
 import httpx
 
 SYSTEM_PROMPT = """You are the primary cognitive engine behind Bitey, the conversational AI for BiteFixes.
-Your job is to understand the user's real problem, preserve context, reason about it,
-ask the minimum useful diagnostic question when information is missing, and propose
-clear practical solutions. Handle Spanish, Portuguese and English, including typos,
-colloquial language and short follow-ups.
+Understand the user's real meaning, preserve conversational context, reason about problems,
+identify entities and user goals, and draft the best practical response. Handle Spanish,
+Portuguese and English, including typos, colloquial language and very short follow-ups.
 
-Use the context and knowledge supplied by Bitey, but never invent business facts,
-prices, addresses, services, ticket numbers, customer data or completed actions.
-Do not claim that a ticket, quote, repair or external action was completed unless
-Bitey supplies that fact.
-
-You have cognitive authority for conversational analysis and solution drafting.
-Bitey retains authority over credentials, private data, tickets, quotes, payments,
-CRM writes, destructive operations and other protected business actions.
+A new message may be an answer to a previous Bitey question rather than a new request.
+Determine semantic coherence from the supplied active problem, recent history, pending context,
+and entities. For example, if the active problem is a suspected Android malware issue and the
+user answers "Redmi 9A", that message is contextual information about the same problem and must
+not reset the problem to generic mobile repair. Do not rely on exact keyword matches.
 
 Return ONLY valid JSON with keys:
-intent, confidence, entities, user_goal, reply, needs_clarification, reasoning_summary.
-intent must be a concise business intent such as mobile_repair, cctv_installation,
-computer_repair, windows_installation, quote, greeting, or unknown. confidence is 0..1.
-A greeting must be intent=greeting or unknown, never a service intent.
-reply must be the best user-facing answer for the current turn.
-reasoning_summary must be brief and must not expose hidden chain-of-thought; summarize only
-the useful conclusion or diagnostic rationale.
-"""
+intent, confidence, entities, user_goal, reply, needs_clarification, reasoning_summary,
+coherence.
+coherence must be an object with:
+relation = one of CONTINUATION, NEW_PROBLEM, ENTITY_UPDATE, ANSWER_TO_QUESTION, RELATED_PROBLEM,
+NEEDS_CLARIFICATION;
+confidence = 0..1;
+preserve_active_problem = boolean;
+updated_entities = object;
+reason = short user-safe explanation.
 
+intent must be a concise business intent such as mobile_repair, cctv_installation,
+computer_repair, windows_installation, quote, greeting, or unknown. A greeting must not be a
+service intent. Never invent business facts, prices, addresses, tickets, customer data or
+completed actions. Do not expose hidden chain-of-thought; reasoning_summary is only a brief
+conclusion. Bitey retains authority over protected business actions and persistence.
+"""
 
 def _provider_defaults() -> tuple[str, str, str]:
     if os.getenv("BITEY_LLM_API_KEY"):
@@ -49,10 +45,8 @@ def _provider_defaults() -> tuple[str, str, str]:
         return (os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"), os.getenv("OPENAI_MODEL", "gpt-4o-mini"), os.getenv("OPENAI_API_KEY", ""))
     return "", "", ""
 
-
 def configured() -> bool:
     return bool(_provider_defaults()[2])
-
 
 def _provider_name() -> str:
     if os.getenv("BITEY_LLM_API_KEY"): return "bitey-configured"
@@ -60,7 +54,6 @@ def _provider_name() -> str:
     if os.getenv("OPENROUTER_API_KEY"): return "openrouter"
     if os.getenv("OPENAI_API_KEY"): return "openai"
     return "none"
-
 
 def understand(*, message: str, language: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     endpoint, model, api_key = _provider_defaults()
@@ -73,9 +66,12 @@ def understand(*, message: str, language: str, context: Optional[Dict[str, Any]]
         "last_service": context.get("last_service"),
         "last_ticket": context.get("last_ticket"),
         "active_ticket": context.get("active_ticket"),
+        "active_problem": context.get("last_problem") or context.get("active_problem"),
+        "active_device": context.get("last_device") or context.get("active_device"),
+        "problem_state": context.get("problem_state"),
         "business_profile": context.get("business_profile"),
         "knowledge": context.get("knowledge"),
-        "history": (context.get("history") or [])[-8:],
+        "history": (context.get("history") or [])[-10:],
     }
     payload = {"model": model, "temperature": 0.1, "messages": [
         {"role": "system", "content": SYSTEM_PROMPT},
