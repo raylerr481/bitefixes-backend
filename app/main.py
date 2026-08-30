@@ -13,39 +13,25 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer
+from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
 
 
 async def _register_telegram_webhook() -> None:
-    """Register Telegram's webhook automatically from Render environment secrets."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     secret = os.getenv("TELEGRAM_WEBHOOK_TOKEN", "").strip()
     if not bot_token or not secret:
         print("Telegram Webhook : NOT CONFIGURED (missing environment secret)")
         return
-
-    webhook_url = os.getenv(
-        "TELEGRAM_WEBHOOK_URL",
-        "https://bitefixes-backend.onrender.com/webhooks/telegram",
-    ).strip()
+    webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "https://bitefixes-backend.onrender.com/webhooks/telegram").strip()
     api_url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
-    data = urlencode({
-        "url": webhook_url,
-        "secret_token": secret,
-        "drop_pending_updates": "true",
-    }).encode("utf-8")
+    data = urlencode({"url": webhook_url, "secret_token": secret, "drop_pending_updates": "true"}).encode("utf-8")
 
     def _request() -> tuple[bool, str]:
         try:
-            request = UrlRequest(
-                api_url,
-                data=data,
-                method="POST",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
+            request = UrlRequest(api_url, data=data, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"})
             with urlopen(request, timeout=20) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return bool(payload.get("ok")), str(payload.get("description", ""))
@@ -53,10 +39,7 @@ async def _register_telegram_webhook() -> None:
             return False, type(exc).__name__
 
     ok, detail = await asyncio.to_thread(_request)
-    if ok:
-        print(f"Telegram Webhook : REGISTERED -> {webhook_url}")
-    else:
-        print(f"Telegram Webhook : REGISTRATION FAILED ({detail})")
+    print(f"Telegram Webhook : {'REGISTERED -> ' + webhook_url if ok else 'REGISTRATION FAILED (' + detail + ')'}")
 
 
 @asynccontextmanager
@@ -80,7 +63,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, description="BiteFixes SaaS Backend powered by Bitey AI Engine and unified cloud gateway", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "Accept", "Origin"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Sync-Token"])
 
 
 @app.exception_handler(Exception)
@@ -97,6 +80,7 @@ app.include_router(ai.router)
 app.include_router(webhooks.router)
 app.include_router(company_profile.router)
 app.include_router(bitey_trainer.router)
+app.include_router(supportcandy.router)
 
 
 @app.get("/")
@@ -111,12 +95,12 @@ def health():
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "status": "running"}
+    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "status": "running"}
 
 
 @app.get("/gateway/status")
 def gateway_status():
-    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"], "identity": "centralized-customer-conversation-memory"}
+    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/integrations/supportcandy/sync", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "identity": "centralized-customer-conversation-memory"}
 
 
 @app.get("/ai/status")
@@ -136,7 +120,6 @@ def test_supabase():
 
 @app.get("/test-woocommerce")
 def test_woocommerce():
-    """Read-only WooCommerce connectivity test; never exposes credentials."""
     try:
         return check_woocommerce_connection()
     except WooCommerceConfigurationError:
