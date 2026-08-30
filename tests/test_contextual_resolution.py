@@ -11,7 +11,10 @@ def test_request_details_do_not_become_diagnostic_problem():
         "active_category": "camera",
         "active_object": "camera",
         "entity_only": True,
-        "confirmed_facts": [{"type": "object", "value": "camera"}, {"type": "problem", "value": "problema de cámara/vídeo"}],
+        "confirmed_facts": [
+            {"type": "object", "value": "camera"},
+            {"type": "problem", "value": "problema de cámara/vídeo"},
+        ],
         "confidence": 0.72,
     }
     state = resolve_context(raw, "Es una vivienda, 2 cámaras, una afuera y otra adentro", history)
@@ -23,10 +26,17 @@ def test_request_details_do_not_become_diagnostic_problem():
     assert all(f["type"] != "problem" for f in state["confirmed_facts"])
 
 
-def test_explicit_symptom_can_create_problem():
+def test_explicit_symptom_does_not_get_suppressed():
     history = [
         {"sender_type": "customer", "message_content": "Hola, quisiera instalar cámaras"},
     ]
-    raw = {"active_problem": None, "active_category": None, "active_object": "camera", "entity_only": False, "confirmed_facts": []}
+    raw = {
+        "active_problem": "problema de cámara/vídeo",
+        "active_category": "camera",
+        "active_object": "camera",
+        "entity_only": False,
+        "confirmed_facts": [{"type": "problem", "value": "problema de cámara/vídeo"}],
+    }
     state = resolve_context(raw, "la cámara no muestra imagen", history)
-    assert state["active_problem"] is None or state["active_problem"] != "problema de cámara/vídeo" or state["active_category"] is None
+    assert state["active_problem"] == "problema de cámara/vídeo"
+    assert state["active_category"] == "camera"
