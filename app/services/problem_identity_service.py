@@ -1,11 +1,11 @@
-"""Bitey Problem Identity Engine V8.
+"""Bitey Problem Identity Engine V9.
 
 General evolving problem state. A device/model is an entity update, not a new
 problem. Problem identity stays stable while symptoms, evidence, hypotheses,
 goals and entities evolve across a conversation.
 
-V8 adds ticket continuity safety: an existing problem's ticket association is
-never erased by a continuation turn that did not create a new ticket.
+V9 hardens context merge so structured active-problem state can safely be
+passed back into the analyzer without being mistaken for a problem string.
 """
 from __future__ import annotations
 from hashlib import sha256
@@ -34,6 +34,18 @@ def _norm(value:Any)->str:
     return " ".join(re.findall(r"[a-z0-9]+",text))
 
 def _tokens(value:Any)->set[str]: return set(_norm(value).split())
+
+def _active_problem_value(value:Any)->Optional[str]:
+    """Normalize scalar or structured active-problem context to a category string."""
+    if isinstance(value,dict):
+        for key in ("category","problem_category","problem_type","intent","problem_summary"):
+            candidate=value.get(key)
+            if candidate:
+                return str(candidate).strip()
+        return None
+    if value is None:return None
+    text=str(value).strip()
+    return text or None
 
 def extract_device(message:str)->Dict[str,Optional[str]]:
     text=_norm(message)
@@ -79,8 +91,9 @@ def _semantic_understanding(message:str,active_problem:Optional[str],active_inte
     except Exception as error:
         print("[SEMANTIC UNDERSTANDING WARNING]",error);return {}
 
-def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[str]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:
+def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[Any]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:
     text=_norm(message);tokens=_tokens(message);device=extract_device(message)
+    active_problem=_active_problem_value(active_problem)
     active_kind=_device_kind(active_device);current_kind=device["kind"] or _device_kind(device["label"])
     active_platform=(context or {}).get("last_platform") or (context or {}).get("device_platform")
     os_version=_extract_os_version(message)
@@ -136,9 +149,9 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     entities={**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform}
     if os_version:entities["os_version"]=os_version
     elif active_problem and (context or {}).get("last_os_version"):entities["os_version"]=(context or {}).get("last_os_version")
-    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":entities,"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"os_version":entities.get("os_version"),"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"entity_update":entity_update,"active_problem_preserved":bool(active_problem and (device_only or entity_update or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities,"explicit_device_switch":explicit_device_switch},"analysis_version":"problem-identity-v8-context-entity-merge"}
+    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":entities,"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"os_version":entities.get("os_version"),"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"entity_update":entity_update,"active_problem_preserved":bool(active_problem and (device_only or entity_update or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities,"explicit_device_switch":explicit_device_switch},"analysis_version":"problem-identity-v9-context-entity-merge"}
 
-def classify_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[str]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:return analyze_problem(message,current_intent,active_intent,active_problem,active_device,context=context)
+def classify_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[Any]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:return analyze_problem(message,current_intent,active_intent,active_problem,active_device,context=context)
 
 def find_customer_problems(customer_id:int,company_id:Optional[int]=None,limit:int=20)->list[dict]:
     try:
