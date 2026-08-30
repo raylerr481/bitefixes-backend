@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from typing import Any
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
-
-from app.config import settings
 
 
 class SupportCandyConfigurationError(RuntimeError):
@@ -16,12 +15,13 @@ class SupportCandyConfigurationError(RuntimeError):
 
 class SupportCandyClient:
     def __init__(self) -> None:
-        self.base_url = (settings.SUPPORTCANDY_URL or "").rstrip("/") + "/"
-        self.username = settings.SUPPORTCANDY_USERNAME or ""
-        self.app_password = settings.SUPPORTCANDY_APP_PASSWORD or ""
-        if not self.base_url or not self.username or not self.app_password:
+        self.base_url = os.getenv("SUPPORTCANDY_URL", "https://bitefixes.com").rstrip("/") + "/"
+        self.username = os.getenv("SUPPORTCANDY_USERNAME", "").strip()
+        self.app_password = os.getenv("SUPPORTCANDY_APP_PASSWORD", "").strip()
+        self.timeout = float(os.getenv("SUPPORTCANDY_TIMEOUT", "20"))
+        if not self.username or not self.app_password:
             raise SupportCandyConfigurationError(
-                "SUPPORTCANDY_URL, SUPPORTCANDY_USERNAME and SUPPORTCANDY_APP_PASSWORD are required"
+                "SUPPORTCANDY_USERNAME and SUPPORTCANDY_APP_PASSWORD are required"
             )
 
     def _request(self, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -30,7 +30,7 @@ class SupportCandyClient:
             url += "?" + urlencode(params)
         token = base64.b64encode(f"{self.username}:{self.app_password}".encode()).decode()
         request = Request(url, headers={"Authorization": f"Basic {token}", "Accept": "application/json"}, method="GET")
-        with urlopen(request, timeout=settings.SUPPORTCANDY_TIMEOUT) as response:
+        with urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
     @staticmethod
