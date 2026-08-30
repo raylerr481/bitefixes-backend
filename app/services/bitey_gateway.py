@@ -9,9 +9,12 @@ from app.services.conversation_service import get_or_create_conversation, update
 from app.services.message_service import save_customer_message, save_bitey_message, get_conversation_history
 from app.services.website_diagnostic_service import extract_urls, fetch_website_context
 from app.services.problem_state_service import build_problem_state
+from app.cognitive.idempotency_guard import IdempotencyGuard
+from app.cognitive.identity_scope import IdentityScope
 
 SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
 _INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
+_IDEMPOTENCY = IdempotencyGuard()
 
 
 def normalize_channel(channel: str | None) -> str:
@@ -62,7 +65,7 @@ def _website_context(history: list[dict[str, Any]], message: str, state: dict[st
     except Exception as exc: return {"reference_url": target, "diagnostic_requested": True, "fetch_error": type(exc).__name__}
 
 
-def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str, customer_name: str, last_name: str, conversation_id: str | None, language: str, preferred_contact_channel: str | None) -> dict[str, Any]:
+def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str, customer_name: str, last_name: str, conversation_id: str | None, external_message_id: str | None, language: str, preferred_contact_channel: str | None) -> dict[str, Any]:
     identity_phone, external_identity = _channel_identity(channel, phone, conversation_id)
     customer = get_or_create_customer(company_id=company_id, phone=identity_phone, email=str(email or "").strip(), name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer", channel=channel, external_id=external_identity)
     customer_id = customer.get("id") if isinstance(customer, dict) else None
@@ -88,18 +91,25 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
     return result
 
 
-def handle_message(*, company_id: int, message: str, channel: str = "website", phone: str = "", email: str = "", customer_name: str = "Customer", last_name: str = "", conversation_id: str | None = None, language_preference: str = "auto", preferred_contact_channel: str | None = None) -> dict[str, Any]:
+def handle_message(*, company_id: int, message: str, channel: str = "website", phone: str = "", email: str = "", customer_name: str = "Customer", last_name: str = "", conversation_id: str | None = None, external_message_id: str | None = None, language_preference: str = "auto", preferred_contact_channel: str | None = None) -> dict[str, Any]:
     normalized_channel = normalize_channel(channel)
     if not str(message or "").strip(): return _public_result({"success":False,"response":"Escribe un mensaje para continuar."})
 
-    # WhatsApp now uses the canonical Bitey Core flow so problem identity,
-    # ticket continuity and customer memory are applied to real webhook traffic.
-    # Telegram and all other existing channels keep their current gateway path.
+    identity = IdentityScope(company_id=company_id, channel=normalized_channel, conversation_id=str(conversation_id or "anonymous"), user_id=phone or email or None, external_message_id=external_message_id)
+    if external_message_id:
+        key = identity.message_key(message)
+        existing = _IDEMPOTENCY.get(key)
+        if existing is not None:
+            return existing
+
+    # WhatsApp uses the canonical Bitey Core flow for real webhook traffic.
     if normalized_channel == "whatsapp":
         from app.core.bitey import process_message
         result = process_message(company_id=company_id,message=str(message).strip(),phone=phone,email=email,customer_name=customer_name,last_name=last_name,channel="whatsapp",conversation_id=conversation_id,language_preference=language_preference)
-        return _public_result(result)
-
-    language = language_preference if language_preference not in (None,"","auto") else "es"
-    result = _try_external_ai(company_id=company_id,message=str(message).strip(),channel=normalized_channel,phone=phone,email=email,customer_name=customer_name,last_name=last_name,conversation_id=conversation_id,language=language,preferred_contact_channel=preferred_contact_channel)
-    return _public_result(result)
+    else:
+        language = language_preference if language_preference not in (None,"","auto") else "es"
+        result = _try_external_ai(company_id=company_id,message=str(message).strip(),channel=normalized_channel,phone=phone,email=email,customer_name=customer_name,last_name=last_name,conversation_id=conversation_id,external_message_id=external_message_id,language=language,preferred_contact_channel=preferred_contact_channel)
+    public_result = _public_result(result)
+    if external_message_id:
+        _IDEMPOTENCY.mark(key, public_result)
+    return public_result
