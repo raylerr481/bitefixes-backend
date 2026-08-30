@@ -20,7 +20,7 @@ except Exception:
     llm_understand = None
 
 STATES={"NEW_PROBLEM","CONTINUATION","REOPENED_PROBLEM","RELATED_PROBLEM","NEEDS_CLARIFICATION"}
-PLATFORM_WORDS={"android":"android","ios":"ios","iphone":"ios","windows":"windows","macos":"macos","linux":"linux","ipad":"ios"}
+PLATFORM_WORDS={"pt":"pt","pt-br":"pt-BR","es":"es","en":"en","android":"android","ios":"ios","iphone":"ios","windows":"windows","macos":"macos","linux":"linux","ipad":"ios"}
 MOBILE_WORDS={"celular","telefono","telefone","movil","smartphone","phone","mobile","tablet","tableta","android","iphone","redmi","galaxy","pixel"}
 COMPUTER_WORDS={"laptop","notebook","computador","computadora","pc","ordenador","macbook","windows"}
 DEVICE_PATTERNS=[(r"\b(redmi\s+note\s+[0-9]+[a-z0-9-]*)\b","mobile"),(r"\b(redmi\s+[a-z0-9-]+)\b","mobile"),(r"\b(iphone\s*[0-9]+(?:\s*(?:pro|max|plus|mini))?)\b","mobile"),(r"\b(galaxy\s+[a-z0-9][a-z0-9 -]*)\b","mobile"),(r"\b(pixel\s+[0-9]+(?:\s*(?:pro|xl))?)\b","mobile"),(r"\b(laptop|notebook|computador|computadora|pc|ordenador|macbook)\b","computer"),(r"\b(celular|telefono|telefone|movil|smartphone|phone|mobile|tablet|tableta)\b","mobile")]
@@ -47,6 +47,14 @@ def extract_device(message:str)->Dict[str,Optional[str]]:
     if platform=="android": return {"label":"android phone","kind":"mobile","platform":"android"}
     return {"label":None,"kind":None,"platform":platform}
 
+def _extract_os_version(message:str)->Optional[str]:
+    text=_norm(message)
+    patterns=(r"\bwindows\s*(10|11|7|8(?:\.1)?)\b",r"\bwin\s*(10|11|7|8(?:\.1)?)\b")
+    for pattern in patterns:
+        match=re.search(pattern,text)
+        if match:return f"Windows {match.group(1)}"
+    return None
+
 def _device_kind(value:Any)->Optional[str]:
     tokens=_tokens(value)
     if tokens&MOBILE_WORDS:return "mobile"
@@ -57,6 +65,11 @@ def _looks_like_device_only(text:str,device:Dict[str,Optional[str]])->bool:
     if not device.get("label"):return False
     problem_tokens=set().union(*(_tokens(p) for values in PROBLEM_PATTERNS.values() for p in values))
     return not (_tokens(text)&problem_tokens) and len(_tokens(text))<=8
+
+def _looks_like_entity_update(text:str,os_version:Optional[str],device:Dict[str,Optional[str]])->bool:
+    if os_version:return True
+    if device.get("platform") and len(_tokens(text))<=8:return True
+    return False
 
 def _semantic_understanding(message:str,active_problem:Optional[str],active_intent:Optional[str],active_device:Optional[str],context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:
     if not llm_understand:return {}
@@ -69,6 +82,8 @@ def _semantic_understanding(message:str,active_problem:Optional[str],active_inte
 def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[str]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:
     text=_norm(message);tokens=_tokens(message);device=extract_device(message)
     active_kind=_device_kind(active_device);current_kind=device["kind"] or _device_kind(device["label"])
+    active_platform=(context or {}).get("last_platform") or (context or {}).get("device_platform")
+    os_version=_extract_os_version(message)
     scores:Dict[str,int]={};matched=[]
     for category,patterns in PROBLEM_PATTERNS.items():
         for phrase in patterns:
@@ -87,13 +102,14 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     semantic_symptoms=semantic.get("symptoms") if isinstance(semantic.get("symptoms"),list) else []
     semantic_entities=semantic.get("entities") if isinstance(semantic.get("entities"),dict) else {}
     device_only=_looks_like_device_only(text,device)
+    entity_update=_looks_like_entity_update(text,os_version,device)
     category=str(semantic_category or lexical_category or "").strip() or None
     intent=str(semantic.get("intent") or current_intent or active_intent or "").strip() or None
-    if active_problem and (device_only or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"}):
+    if active_problem and (device_only or entity_update or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"}):
         if active_intent:intent=active_intent
-        if device_only or preserve_active:category=active_problem
+        if device_only or entity_update or preserve_active:category=active_problem
     effective_device=device["label"] or semantic_entities.get("device") or updated_entities.get("device") or active_device
-    effective_platform=device["platform"] or semantic_entities.get("platform") or updated_entities.get("platform")
+    effective_platform=device["platform"] or semantic_entities.get("platform") or updated_entities.get("platform") or active_platform
     if not effective_platform and active_device and "android" in _norm(active_device):effective_platform="android"
     effective_kind=current_kind or active_kind
     active_tokens=_tokens(active_problem);overlap=len(tokens&active_tokens) if active_tokens else 0
@@ -101,7 +117,7 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     explicit_device_switch=bool(active_kind and current_kind and active_kind!=current_kind)
     explicit_reopen=any(marker in text for marker in REOPEN_MARKERS);explicit_continuation=any(marker in text for marker in CONTINUATION_MARKERS)
     same_problem_domain=bool(category and active_problem and (category==active_problem or category in active_tokens))
-    if active_problem and device_only:state="CONTINUATION"
+    if active_problem and (device_only or entity_update):state="CONTINUATION"
     elif relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"} and semantic_confidence>=0.60 and active_problem:state="CONTINUATION"
     elif relation=="RELATED_PROBLEM" and semantic_confidence>=0.70 and active_problem:state="RELATED_PROBLEM"
     elif relation=="NEW_PROBLEM" and semantic_confidence>=0.70:state="NEW_PROBLEM"
@@ -117,7 +133,10 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     fingerprint=sha256("|".join([_norm(identity_category),_norm(identity_intent),_norm(identity_platform),_norm(identity_device_kind)]).encode()).hexdigest()[:32]
     confidence=max(0.35,min(0.95,0.35+(0.25 if category else 0)+(0.15 if effective_device else 0)+(0.10 if intent else 0)+(0.15 if semantic_confidence>=0.60 else 0)))
     if semantic_confidence>0:confidence=max(confidence,min(0.99,semantic_confidence))
-    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":{**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform},"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"active_problem_preserved":bool(active_problem and (device_only or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities,"explicit_device_switch":explicit_device_switch},"analysis_version":"problem-identity-v8-ticket-continuity-device-safe"}
+    entities={**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform}
+    if os_version:entities["os_version"]=os_version
+    elif active_problem and (context or {}).get("last_os_version"):entities["os_version"]=(context or {}).get("last_os_version")
+    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":entities,"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"os_version":entities.get("os_version"),"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"entity_update":entity_update,"active_problem_preserved":bool(active_problem and (device_only or entity_update or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities,"explicit_device_switch":explicit_device_switch},"analysis_version":"problem-identity-v8-context-entity-merge"}
 
 def classify_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[str]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:return analyze_problem(message,current_intent,active_intent,active_problem,active_device,context=context)
 
@@ -134,8 +153,6 @@ def persist_problem(*,company_id:int,customer_id:int,conversation_id:Optional[in
     try:
         existing_result=database.table("bitey_problems").select("*").eq("customer_id",customer_id).eq("company_id",company_id).eq("fingerprint",fingerprint).limit(1).execute()
         existing=(existing_result.data or [None])[0]
-        # Critical invariant: a continuation without a newly created ticket must
-        # retain the ticket already associated with this stable problem identity.
         effective_ticket_id=ticket_id if ticket_id is not None else (existing.get("ticket_id") if existing else None)
         payload={"company_id":company_id,"customer_id":customer_id,"conversation_id":conversation_id,"ticket_id":effective_ticket_id,"fingerprint":fingerprint,"state":analysis.get("state","NEW_PROBLEM"),"category":analysis.get("category"),"intent":analysis.get("intent"),"device_label":analysis.get("device"),"device_platform":analysis.get("platform"),"problem_summary":(analysis.get("problem_summary") or summary)[:1000],"symptoms":analysis.get("symptoms") or analysis.get("matched_signals",[]),"evidence":{"confidence":analysis.get("confidence"),"overlap_tokens":analysis.get("overlap_tokens",0),"coherence":analysis.get("coherence",{}),"hypotheses":analysis.get("hypotheses",[]),"entities":analysis.get("entities",{}),"analysis_version":analysis.get("analysis_version")},"confidence":analysis.get("confidence",0)}
         if existing:
