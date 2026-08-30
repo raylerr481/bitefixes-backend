@@ -1,4 +1,8 @@
-"""General semantic conversation/problem state for Bitey."""
+"""General semantic conversation/problem state for Bitey.
+
+Important: object mentions are not symptoms. A service request establishes a goal;
+only explicit symptom evidence may establish an active problem.
+"""
 from __future__ import annotations
 import re
 from typing import Any
@@ -35,6 +39,10 @@ _OBJECTS = {
     "camera": ("camara", "cámara", "cctv", "dvr", "nvr"), "business_system": ("crm", "saas", "wordpress", "woocommerce", "empresa", "negocio"),
 }
 
+_REQUEST_PATTERNS = re.compile(r"\b(?:quiero|quisiera|deseo|necesito|me gustaria|me gustaría|busco|solicito|pretendo)\b.*\b(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|implementar|poner)\b", re.I)
+_REQUEST_PATTERNS_2 = re.compile(r"\b(?:instalar|crear|configurar|comprar|contratar|montar|adquirir|implementar)\b", re.I)
+_SYMPTOM_PATTERNS = re.compile(r"\b(?:no funciona|no muestra|no se ve|se corta|falla|fallando|falló|fallo|problema|problemas|aver[ií]a|averiado|roto|dañado|lento|lenta|no enciende|no inicia|no conecta|no carga)\b", re.I)
+
 def _contains(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text.lower() for term in terms)
 
@@ -65,40 +73,62 @@ def build_problem_state(history: list[dict[str, Any]], current_message: str) -> 
     user_rows = [r for r in recent if str(r.get("sender_type") or "").lower() in {"customer", "user"}]
     user_texts = [str(r.get("message_content") or "").strip() for r in user_rows if str(r.get("message_content") or "").strip()]
     current = str(current_message or "").strip()
+    prior_user = " ".join(user_texts[:-1]) if user_texts else ""
+    current_lower = current.lower()
     all_user = " ".join(user_texts + [current]).lower()
+
+    # A request establishes a goal. Object words (camera, server, notebook, etc.)
+    # alone never establish a diagnostic problem.
+    request_present = bool(_REQUEST_PATTERNS.search(all_user) or _REQUEST_PATTERNS_2.search(current))
+    explicit_symptom = bool(_SYMPTOM_PATTERNS.search(current))
     signal_scores = {group: sum(1 for term in terms if term in all_user) for group, terms in _SIGNAL_GROUPS.items()}
     signal_scores = {g: s for g, s in signal_scores.items() if s}
-    signals = list(signal_scores)
-    prior_user = " ".join(user_texts[:-1]).lower() if user_texts else ""
-    prior_signals = [g for g, terms in _SIGNAL_GROUPS.items() if any(term in prior_user for term in terms)]
-    current_signals = [g for g, terms in _SIGNAL_GROUPS.items() if any(term in current.lower() for term in terms)]
+    prior_signals = [g for g, terms in _SIGNAL_GROUPS.items() if any(term in prior_user.lower() for term in terms)]
+    current_signals = [g for g, terms in _SIGNAL_GROUPS.items() if any(term in current_lower for term in terms)]
     objects, model, location = _extract_objects(all_user), _extract_model(all_user), _extract_location(user_texts + [current])
-    entity_only = len(current.split()) <= 8 and not current_signals and bool(model or objects or location)
-    continuation = bool(user_texts) and (entity_only or not current_signals)
-    active_category = max(current_signals, key=lambda g: signal_scores.get(g, 0)) if current_signals else (prior_signals[-1] if prior_signals else None)
-    active_object = objects[0] if objects else ("phone" if model and any(x in all_user for x in _OBJECTS["phone"]) else None)
+
+    # If this turn only supplies details for a previously requested service,
+    # keep the goal and do not manufacture a problem from the entity.
+    detail_only = bool(user_texts and not explicit_symptom and (objects or model or location) and not current_signals)
+    active_category = max(current_signals, key=lambda g: signal_scores.get(g, 0)) if explicit_symptom and current_signals else None
+    if not active_category and not request_present and prior_signals and current_signals:
+        active_category = max(current_signals, key=lambda g: signal_scores.get(g, 0))
+
     labels = {"security":"posible problema de seguridad","performance":"problema de rendimiento","startup":"problema de inicio/arranque","connectivity":"problema de conectividad","power":"problema de energía/batería","display":"problema de pantalla/interfaz","audio":"problema de audio","camera":"problema de cámara/vídeo","printing":"problema de impresión","software":"problema de software","accounts":"problema de acceso/cuenta","data":"problema de datos/recuperación","physical_damage":"posible daño físico","business_ai":"problema o necesidad de sistema empresarial/IA"}
     active_problem = labels.get(active_category) if active_category else None
+    active_object = objects[0] if objects else None
+
     hypotheses = []
-    if active_category: hypotheses.append({"category": active_category, "confidence": min(0.55 + 0.10 * signal_scores.get(active_category, 1), 0.95), "basis": "conversation_signals"})
-    if active_category == "security": hypotheses.append({"category":"benign_or_non_malware_cause","confidence":0.30,"basis":"initial_claim_requires_verification"})
-    if active_category == "performance": hypotheses.append({"category":"software_or_resource_cause","confidence":0.35,"basis":"requires_observation"})
+    if active_category:
+        hypotheses.append({"category": active_category, "confidence": min(0.55 + 0.10 * signal_scores.get(active_category, 1), 0.95), "basis": "explicit_symptom_evidence"})
     customer_goal = None
-    if re.search(r"\b(quiero hacerlo yo|hacerlo yo mismo|por mi cuenta|yo mismo|autoservicio|paso a paso)\b", all_user, re.IGNORECASE): customer_goal="SELF_SERVICE"
-    elif re.search(r"\b(remoto|asistencia remota|soporte remoto)\b", all_user, re.IGNORECASE): customer_goal="REMOTE_ASSISTANCE"
-    elif re.search(r"\b(taller|llevarlo|llevar el equipo|presencial)\b", all_user, re.IGNORECASE): customer_goal="WORKSHOP"
-    elif re.search(r"\b(cuanto cuesta|cuánto cuesta|precio|presupuesto|cotizacion|cotización)\b", all_user, re.IGNORECASE): customer_goal="QUOTE"
-    state = "CONTINUATION" if continuation else ("NEW_PROBLEM" if not user_texts else "PROBLEM_UPDATE")
-    if entity_only: state="ENTITY_UPDATE"
-    elif current_signals and prior_signals and set(current_signals).isdisjoint(set(prior_signals)): state="NEW_PROBLEM"
-    confidence = 0.72 if active_problem else 0.50
-    if len(signals)>1 and active_problem: confidence=0.78
-    if entity_only and active_problem: confidence=min(confidence+0.04,0.92)
+    if re.search(r"\b(quiero hacerlo yo|hacerlo yo mismo|por mi cuenta|yo mismo|autoservicio|paso a paso)\b", all_user, re.I): customer_goal="SELF_SERVICE"
+    elif re.search(r"\b(remoto|asistencia remota|soporte remoto)\b", all_user, re.I): customer_goal="REMOTE_ASSISTANCE"
+    elif re.search(r"\b(taller|llevarlo|llevar el equipo|presencial)\b", all_user, re.I): customer_goal="WORKSHOP"
+    elif re.search(r"\b(cuanto cuesta|cuánto cuesta|precio|presupuesto|cotizacion|cotización)\b", all_user, re.I): customer_goal="QUOTE"
+
+    if request_present and not active_problem:
+        state = "GOAL_REQUEST"
+        active_goal = "REQUEST_SERVICE"
+    elif detail_only and not active_problem:
+        state = "ENTITY_UPDATE"
+        active_goal = "REQUEST_SERVICE"
+    elif active_category and prior_signals and set(current_signals).isdisjoint(set(prior_signals)):
+        state = "NEW_PROBLEM"
+        active_goal = "SOLVE_PROBLEM"
+    elif active_category:
+        state = "PROBLEM_UPDATE"
+        active_goal = "SOLVE_PROBLEM"
+    else:
+        state = "CONTINUATION" if user_texts else "NEW_TURN"
+        active_goal = "REQUEST_SERVICE" if request_present else None
+
+    confidence = 0.82 if active_goal == "REQUEST_SERVICE" else (0.72 if active_problem else 0.50)
     facts=[]
     if active_object: facts.append({"type":"object","value":active_object})
     if model: facts.append({"type":"model","value":model})
     if active_problem: facts.append({"type":"problem","value":active_problem})
     if location: facts.append({"type":"location","value":location})
     if customer_goal: facts.append({"type":"customer_goal","value":customer_goal})
-    fingerprint_parts=[active_category or "", active_object or ""]
-    return {"state":state,"active_problem":active_problem,"active_category":active_category,"active_object":active_object,"active_model":model,"active_location":location,"symptoms":signals,"hypotheses":hypotheses,"customer_goal":customer_goal,"confidence":round(confidence,3),"is_follow_up":continuation,"entity_only":entity_only,"confirmed_facts":facts,"signal_scores":signal_scores,"problem_fingerprint":"|".join(x for x in fingerprint_parts if x),"recent_turns":recent}
+    if active_goal: facts.append({"type":"active_goal","value":active_goal})
+    return {"state":state,"active_problem":active_problem,"active_category":active_category,"active_object":active_object,"active_model":model,"active_location":location,"active_goal":active_goal,"symptoms":current_signals,"hypotheses":hypotheses,"customer_goal":customer_goal,"confidence":round(confidence,3),"is_follow_up":bool(user_texts),"entity_only":detail_only,"confirmed_facts":facts,"signal_scores":signal_scores,"problem_fingerprint":"|".join(x for x in (active_category or "",active_object or "") if x),"recent_turns":recent}
