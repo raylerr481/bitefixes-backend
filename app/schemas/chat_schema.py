@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     last_name: str | None = None
     channel: str = "website"
     conversation_id: str | None = None
+    external_message_id: str | None = None
     language_preference: str = "auto"
     preferred_contact_channel: str | None = None
 
