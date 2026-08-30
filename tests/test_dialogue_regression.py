@@ -1,108 +1,98 @@
-"""Dialogue regression cases for Bitey problem continuity and context accumulation.
+"""Deterministic dialogue regression tests for Bitey problem continuity.
 
-These tests exercise the deterministic problem-identity layer without requiring
-network access, external AI providers, Supabase, or Render.
+These tests exercise the real Problem Identity API used by Bitey Core without
+requiring Render, Supabase, or an external AI provider.
 """
 
-from app.services.problem_identity_service import ProblemIdentityService
-
-
-def _service():
-    return ProblemIdentityService()
+from app.services.problem_identity_service import analyze_problem
 
 
 def test_pc_slow_then_windows_10_is_context_update():
-    svc = _service()
-
-    first = svc.analyze_problem(
+    first = analyze_problem(
         "tengo mi pc lenta con windows",
-        customer_id=1,
-        active_problem=None,
-        active_device=None,
-        active_platform=None,
+        current_intent="slow_performance",
     )
 
-    second = svc.analyze_problem(
+    second = analyze_problem(
         "windows 10",
-        customer_id=1,
+        current_intent="slow_performance",
+        active_intent=first.get("intent"),
         active_problem=first,
         active_device=first.get("device"),
-        active_platform=first.get("platform"),
-    )
-
-    assert second["is_continuation"] is True
-    assert second["is_new"] is False
-    assert second.get("device") in {"computer", "pc"}
-    assert "windows" in str(second.get("platform", "")).lower()
-    assert "slow" in str(second.get("category", "")).lower() or "performance" in str(second.get("category", "")).lower()
-
-
-def test_followup_keeps_pc_problem_identity():
-    svc = _service()
-
-    first = svc.analyze_problem(
-        "mi pc con windows esta lenta",
-        customer_id=1,
-        active_problem=None,
-        active_device=None,
-        active_platform=None,
-    )
-
-    second = svc.analyze_problem(
-        "tambien se calienta",
-        customer_id=1,
-        active_problem=first,
-        active_device=first.get("device"),
-        active_platform=first.get("platform"),
+        context={
+            "language": "es",
+            "last_platform": first.get("platform"),
+            "last_os_version": first.get("os_version"),
+        },
     )
 
     assert second["is_continuation"] is True
     assert second["is_new"] is False
     assert second.get("device") == first.get("device")
+    assert "windows" in str(second.get("platform", "")).lower()
+    assert second.get("os_version") == "Windows 10"
+    assert second.get("category") == first.get("category")
 
 
-def test_switching_to_phone_is_new_problem():
-    svc = _service()
-
-    first = svc.analyze_problem(
-        "mi pc esta lenta con windows",
-        customer_id=1,
-        active_problem=None,
-        active_device=None,
-        active_platform=None,
+def test_followup_keeps_pc_problem_identity():
+    first = analyze_problem(
+        "mi pc con windows esta lenta",
+        current_intent="slow_performance",
     )
 
-    second = svc.analyze_problem(
-        "ahora mi celular no enciende",
-        customer_id=1,
+    second = analyze_problem(
+        "tambien se calienta",
+        current_intent=first.get("intent"),
+        active_intent=first.get("intent"),
         active_problem=first,
         active_device=first.get("device"),
-        active_platform=first.get("platform"),
-    )
-
-    assert second["is_new"] is True
-    assert second["is_continuation"] is False
-
-
-def test_phone_followup_does_not_lose_phone_context():
-    svc = _service()
-
-    first = svc.analyze_problem(
-        "mi celular no enciende",
-        customer_id=1,
-        active_problem=None,
-        active_device=None,
-        active_platform=None,
-    )
-
-    second = svc.analyze_problem(
-        "es android",
-        customer_id=1,
-        active_problem=first,
-        active_device=first.get("device"),
-        active_platform=first.get("platform"),
+        context={"language": "es", "last_platform": first.get("platform")},
     )
 
     assert second["is_continuation"] is True
     assert second["is_new"] is False
-    assert second.get("device") in {"mobile", "phone", "cellphone", "smartphone"}
+    assert second.get("device") == first.get("device")
+    assert second.get("category") == first.get("category")
+
+
+def test_switching_to_phone_is_new_problem():
+    first = analyze_problem(
+        "mi pc esta lenta con windows",
+        current_intent="slow_performance",
+    )
+
+    second = analyze_problem(
+        "ahora mi celular no enciende",
+        current_intent="power",
+        active_intent=first.get("intent"),
+        active_problem=first,
+        active_device=first.get("device"),
+        context={"language": "es", "last_platform": first.get("platform")},
+    )
+
+    assert second["is_new"] is True
+    assert second["is_continuation"] is False
+    assert second.get("device_kind") == "mobile"
+    assert second.get("category") == "power"
+
+
+def test_phone_followup_does_not_lose_phone_context():
+    first = analyze_problem(
+        "mi celular no enciende",
+        current_intent="power",
+    )
+
+    second = analyze_problem(
+        "es android",
+        current_intent=first.get("intent"),
+        active_intent=first.get("intent"),
+        active_problem=first,
+        active_device=first.get("device"),
+        context={"language": "es", "last_platform": first.get("platform")},
+    )
+
+    assert second["is_continuation"] is True
+    assert second["is_new"] is False
+    assert second.get("device_kind") == "mobile"
+    assert second.get("platform") == "android"
+    assert second.get("category") == first.get("category")
