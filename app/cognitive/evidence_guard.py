@@ -11,6 +11,7 @@ FACT_SOURCES = {"user", "system", "database", "search", "tool", "verified"}
 HYPOTHESIS_SOURCES = {"llm", "inference", "candidate", "ai_council"}
 
 
+
 def normalize_evidence(items: Iterable[Any]) -> List[Dict[str, Any]]:
     normalized: List[Dict[str, Any]] = []
     for item in items or []:
@@ -19,6 +20,7 @@ def normalize_evidence(items: Iterable[Any]) -> List[Dict[str, Any]]:
         elif isinstance(item, dict):
             normalized.append(dict(item))
     return normalized
+
 
 
 def partition_claims(claims: Iterable[Any]) -> Dict[str, List[Dict[str, Any]]]:
@@ -40,8 +42,9 @@ def partition_claims(claims: Iterable[Any]) -> Dict[str, List[Dict[str, Any]]]:
     return {"facts": facts, "hypotheses": hypotheses}
 
 
+
 def guard_state_update(current: Dict[str, Any], proposed: Dict[str, Any], evidence: Iterable[Any] = ()) -> Dict[str, Any]:
-    """Apply an LLM proposal while preventing unsupported claims becoming facts."""
+    """Apply a proposal while allowing canonical changes only when grounded."""
     current = dict(current or {})
     proposed = dict(proposed or {})
     partitioned = partition_claims(evidence)
@@ -53,20 +56,16 @@ def guard_state_update(current: Dict[str, Any], proposed: Dict[str, Any], eviden
 
     result = dict(current)
     for key, value in proposed.items():
+        # Reasoning artifacts are explicitly non-canonical.
         if key in {"hypotheses", "interpretation", "reasoning", "candidates"}:
             result[key] = value
             continue
+        # A factual field may change only when evidence explicitly grounds it.
         if key in grounded_keys:
             result[key] = value
             continue
-        # LLM-only claims are never promoted to canonical facts.
-        if isinstance(value, dict) and value.get("source") in HYPOTHESIS_SOURCES:
-            continue
-        if key not in result:
-            # New state fields require explicit grounding.
-            continue
-        if value not in (None, "", [], {}):
-            result[key] = value
+        # Everything else is rejected as an unsupported state mutation.
+        continue
 
     result["evidence"] = partitioned["facts"]
     result["hypotheses"] = partitioned["hypotheses"] + list(result.get("hypotheses") or [])
