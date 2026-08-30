@@ -32,6 +32,22 @@ def _one(table: str, record_id: int, select: str = "*"):
     return rows[0] if rows else None
 
 
+def _signal_evidence(signal: dict) -> str | None:
+    evidence = signal.get("evidence")
+    if not evidence:
+        return None
+    # Existing rows can contain mojibake from an earlier encoding boundary.
+    # Decode only when the round-trip is clearly reversible; never invent text.
+    if "Ã" in evidence or "â" in evidence:
+        try:
+            repaired = evidence.encode("latin-1").decode("utf-8")
+            if repaired:
+                return repaired
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return evidence
+
+
 @router.get("/status")
 def portal_status():
     return {
@@ -46,15 +62,10 @@ def portal_status():
 
 @router.get("/customers")
 def portal_customers(company_id: int = Query(1), limit: int = Query(50, ge=1, le=200)):
-    return {
-        "status": "success",
-        "customers": _rows(
-            "customers",
-            filters={"company_id": company_id, "is_active": True},
-            order="updated_at:true",
-            limit=limit,
-        ),
-    }
+    return {"status": "success", "customers": _rows(
+        "customers", filters={"company_id": company_id, "is_active": True},
+        order="updated_at:true", limit=limit,
+    )}
 
 
 @router.get("/customers/{customer_id}")
@@ -71,10 +82,9 @@ def portal_tickets(company_id: int = Query(1), status: str | None = None,
     filters = {"company_id": company_id}
     if status:
         filters["status"] = status
-    return {
-        "status": "success",
-        "tickets": _rows("tickets", filters=filters, order="updated_at:true", limit=limit),
-    }
+    return {"status": "success", "tickets": _rows(
+        "tickets", filters=filters, order="updated_at:true", limit=limit,
+    )}
 
 
 @router.get("/tickets/{ticket_id}")
@@ -82,12 +92,7 @@ def portal_ticket(ticket_id: int):
     ticket = _one("tickets", ticket_id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    messages = _rows(
-        "messages",
-        filters={"ticket_id": ticket_id},
-        order="created_at:false",
-        limit=100,
-    )
+    messages = _rows("messages", filters={"ticket_id": ticket_id}, order="created_at:false", limit=100)
     return {"status": "success", "ticket": ticket, "messages": messages}
 
 
@@ -98,8 +103,6 @@ def portal_conversations(company_id: int = Query(1), customer_id: int | None = N
     if customer_id is not None:
         filters["customer_id"] = customer_id
     rows = _rows("conversations", filters=filters, order="updated_at:true", limit=limit)
-    # conversations has no company_id in the canonical schema; customer/ticket
-    # ownership is resolved through the linked records by the portal consumer.
     return {"status": "success", "company_id": company_id, "conversations": rows}
 
 
@@ -108,12 +111,7 @@ def portal_conversation(conversation_id: int):
     conversation = _one("conversations", conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    messages = _rows(
-        "messages",
-        filters={"conversation_id": conversation_id},
-        order="created_at:false",
-        limit=100,
-    )
+    messages = _rows("messages", filters={"conversation_id": conversation_id}, order="created_at:false", limit=100)
     return {"status": "success", "conversation": conversation, "messages": messages}
 
 
@@ -123,55 +121,58 @@ def portal_cognitive(conversation_id: int):
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    problems = _rows(
-        "bitey_problems",
-        filters={"conversation_id": conversation_id},
-        order="updated_at:true",
-        limit=20,
-    )
-    commitments = _rows(
-        "conversation_commitments",
-        filters={"conversation_id": conversation_id},
-        order="updated_at:true",
-        limit=20,
-    )
-    signals = _rows(
-        "contextual_signals",
-        filters={"conversation_id": str(conversation_id)},
-        order="created_at:true",
-        limit=50,
-    )
+    problems = _rows("bitey_problems", filters={"conversation_id": conversation_id}, order="updated_at:true", limit=20)
+    commitments = _rows("conversation_commitments", filters={"conversation_id": conversation_id}, order="updated_at:true", limit=20)
+    signals = _rows("contextual_signals", filters={"conversation_id": str(conversation_id)}, order="created_at:true", limit=50)
 
     active_problem = next((p for p in problems if p.get("state") not in {"resolved", "closed"}), None)
     active_commitment = next((c for c in commitments if c.get("state") not in {"resolved", "closed"}), None)
 
     known_facts = []
     if active_problem:
-        if active_problem.get("device_label"):
-            known_facts.append(f"device: {active_problem['device_label']}")
-        if active_problem.get("device_platform"):
-            known_facts.append(f"platform: {active_problem['device_platform']}")
-        if active_problem.get("symptoms"):
-            known_facts.append(active_problem["symptoms"])
-        if active_problem.get("evidence"):
-            known_facts.append(active_problem["evidence"])
+        for key, label in (("device_label", "device"), ("device_platform", "platform"), ("symptoms", None), ("evidence", None)):
+            value = active_problem.get(key)
+            if value:
+                known_facts.append(f"{label}: {value}" if label else value)
+
+    # If no formal problem/commitment exists yet, derive only observable facts
+    # from detected signals. This is a projection, not a new inference.
+    if not known_facts:
+        for signal in reversed(signals):
+            value = signal.get("signal_value")
+            evidence = _signal_evidence(signal)
+            if value and signal.get("signal_type") in {"SERVICE_REQUEST", "NEED", "CONTACT_REQUEST", "CONVERSATION_CONTINUITY"}:
+                known_facts.append(f"{signal.get('signal_type')}: {value}")
+            if evidence and evidence not in known_facts:
+                known_facts.append(evidence)
 
     missing = active_commitment.get("missing_requirements", []) if active_commitment else []
     next_action = active_commitment.get("next_action") if active_commitment else None
+
+    # Do not invent objective/problem/action. Only expose values persisted in
+    # the canonical cognitive records or directly observable signals.
+    active_objective = active_commitment.get("objective") if active_commitment else None
+    current_problem = active_problem.get("problem_summary") if active_problem else None
+    evidence = active_problem.get("evidence") if active_problem else [
+        _signal_evidence(s) for s in signals if _signal_evidence(s)
+    ]
+    evidence = list(dict.fromkeys(evidence))
+    contradictions = [s for s in signals if str(s.get("signal_type", "")).lower() in {"contradiction", "conflict"}]
+    confidence = (active_problem or active_commitment or {}).get("confidence")
 
     return {
         "status": "success",
         "conversation_id": conversation_id,
         "customer_id": conversation.get("customer_id"),
         "ticket_id": conversation.get("ticket_id"),
-        "active_objective": active_commitment.get("state") if active_commitment else None,
-        "current_problem": active_problem.get("problem_summary") if active_problem else None,
-        "known_facts": known_facts,
+        "active_objective": active_objective,
+        "current_problem": current_problem,
+        "known_facts": list(dict.fromkeys(known_facts)),
         "missing_information": missing,
-        "evidence": active_problem.get("evidence") if active_problem else [],
-        "contradictions": [s for s in signals if s.get("signal_type") in {"contradiction", "conflict"}],
+        "evidence": evidence,
+        "contradictions": contradictions,
         "next_action": next_action,
-        "confidence": (active_problem or active_commitment or {}).get("confidence"),
+        "confidence": confidence,
         "problems": problems,
         "commitments": commitments,
         "signals": signals,
