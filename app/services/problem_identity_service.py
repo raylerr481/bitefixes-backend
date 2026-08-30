@@ -98,6 +98,7 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     effective_kind=current_kind or active_kind
     active_tokens=_tokens(active_problem);overlap=len(tokens&active_tokens) if active_tokens else 0
     same_device=bool(active_device and effective_device and _norm(active_device)==_norm(effective_device))
+    explicit_device_switch=bool(active_kind and current_kind and active_kind!=current_kind)
     explicit_reopen=any(marker in text for marker in REOPEN_MARKERS);explicit_continuation=any(marker in text for marker in CONTINUATION_MARKERS)
     same_problem_domain=bool(category and active_problem and (category==active_problem or category in active_tokens))
     if active_problem and device_only:state="CONTINUATION"
@@ -106,15 +107,17 @@ def analyze_problem(message:str,current_intent:Optional[str]=None,active_intent:
     elif relation=="NEW_PROBLEM" and semantic_confidence>=0.70:state="NEW_PROBLEM"
     elif relation=="NEEDS_CLARIFICATION" and semantic_confidence>=0.70:state="NEEDS_CLARIFICATION"
     elif explicit_reopen and active_problem:state="REOPENED_PROBLEM"
+    elif explicit_device_switch and not (relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"} and semantic_confidence>=0.80):state="NEW_PROBLEM"
     elif active_problem and (same_device or not device.get("label")) and (overlap>=1 or explicit_continuation or same_problem_domain):state="CONTINUATION"
     elif active_problem and category and overlap>=1:state="RELATED_PROBLEM"
     elif active_problem and not category and not device["label"]:state="NEEDS_CLARIFICATION"
     else:state="NEW_PROBLEM"
     identity_category=category or active_problem or "unknown";identity_intent=intent or active_intent or "unknown";identity_platform=effective_platform or ("mobile" if effective_kind=="mobile" else effective_kind) or "unknown"
-    fingerprint=sha256("|".join([_norm(identity_category),_norm(identity_intent),_norm(identity_platform)]).encode()).hexdigest()[:32]
+    identity_device_kind=effective_kind or "unknown"
+    fingerprint=sha256("|".join([_norm(identity_category),_norm(identity_intent),_norm(identity_platform),_norm(identity_device_kind)]).encode()).hexdigest()[:32]
     confidence=max(0.35,min(0.95,0.35+(0.25 if category else 0)+(0.15 if effective_device else 0)+(0.10 if intent else 0)+(0.15 if semantic_confidence>=0.60 else 0)))
     if semantic_confidence>0:confidence=max(confidence,min(0.99,semantic_confidence))
-    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":{**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform},"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"active_problem_preserved":bool(active_problem and (device_only or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities},"analysis_version":"problem-identity-v8-ticket-continuity-stable-identity"}
+    return {"state":state,"is_new":state=="NEW_PROBLEM","is_continuation":state=="CONTINUATION","is_reopened":state=="REOPENED_PROBLEM","is_related":state=="RELATED_PROBLEM","confidence":round(confidence,3),"category":category,"intent":intent,"problem_summary":semantic_summary or category,"hypotheses":hypotheses,"symptoms":list(dict.fromkeys(matched+[str(x) for x in semantic_symptoms]))[:30],"entities":{**semantic_entities,**updated_entities,"device":effective_device,"platform":effective_platform},"device":effective_device,"device_kind":effective_kind,"platform":effective_platform,"matched_signals":sorted(set(matched)),"overlap_tokens":overlap,"fingerprint":fingerprint,"coherence":{"device_only":device_only,"active_problem_preserved":bool(active_problem and (device_only or preserve_active or relation in {"CONTINUATION","ENTITY_UPDATE","ANSWER_TO_QUESTION"})),"semantic_relation":relation or None,"semantic_confidence":semantic_confidence,"updated_entities":updated_entities,"explicit_device_switch":explicit_device_switch},"analysis_version":"problem-identity-v8-ticket-continuity-device-safe"}
 
 def classify_problem(message:str,current_intent:Optional[str]=None,active_intent:Optional[str]=None,active_problem:Optional[str]=None,active_device:Optional[str]=None,context:Optional[Dict[str,Any]]=None)->Dict[str,Any]:return analyze_problem(message,current_intent,active_intent,active_problem,active_device,context=context)
 
