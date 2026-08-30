@@ -1,4 +1,4 @@
-"""Persistence contract for cross-process message idempotency."""
+"""Atomic persistence contract for cross-process message idempotency."""
 from __future__ import annotations
 
 import hashlib
@@ -14,25 +14,20 @@ def request_fingerprint(scope_key: str, message: str) -> str:
 def claim_message(*, company_id: int, channel: str, conversation_id: str, user_id: str | None, external_message_id: str, fingerprint: str) -> dict[str, Any] | None:
     if not external_message_id:
         return None
-    existing = supabase.table("bitey_message_idempotency").select("*").eq("company_id", company_id).eq("channel", channel).eq("external_message_id", external_message_id).limit(1).execute()
-    rows = existing.data or []
-    if rows:
-        return rows[0]
-    inserted = supabase.table("bitey_message_idempotency").insert({
-        "company_id": company_id,
-        "channel": channel,
-        "conversation_id": conversation_id,
-        "user_id": user_id,
-        "external_message_id": external_message_id,
-        "request_fingerprint": fingerprint,
-        "status": "processing",
+    result = supabase.rpc("claim_bitey_message", {
+        "p_company_id": company_id,
+        "p_channel": channel,
+        "p_conversation_id": conversation_id,
+        "p_user_id": user_id,
+        "p_external_message_id": external_message_id,
+        "p_request_fingerprint": fingerprint,
     }).execute()
-    return (inserted.data or [None])[0]
+    rows = result.data or []
+    return rows[0] if rows else None
 
 
 def complete_message(*, row_id: int, response: dict[str, Any]) -> None:
-    supabase.table("bitey_message_idempotency").update({
-        "response_json": response,
-        "status": "completed",
-        "completed_at": "now()",
-    }).eq("id", row_id).execute()
+    supabase.rpc("complete_bitey_message", {
+        "p_row_id": row_id,
+        "p_response_json": response,
+    }).execute()
