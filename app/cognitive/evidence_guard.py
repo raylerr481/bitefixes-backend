@@ -1,13 +1,14 @@
 """Evidence boundary for Bitey's cognitive state.
 
 The LLM may propose hypotheses, interpretations, and candidates, but only
-observed/user-provided/retrieved evidence may become canonical facts.
+observed or explicitly verified evidence may become canonical facts.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
-FACT_SOURCES = {"user", "system", "database", "search", "tool", "verified"}
+DIRECT_FACT_SOURCES = {"user", "system", "database"}
+VERIFIED_EVIDENCE_SOURCES = {"search", "tool", "verified"}
 HYPOTHESIS_SOURCES = {"llm", "inference", "candidate", "ai_council"}
 
 
@@ -24,13 +25,13 @@ def normalize_evidence(items: Iterable[Any]) -> List[Dict[str, Any]]:
 
 
 def partition_claims(claims: Iterable[Any]) -> Dict[str, List[Dict[str, Any]]]:
-    """Separate grounded facts from hypotheses without discarding candidates."""
+    """Separate grounded facts from hypotheses and unverified evidence."""
     facts: List[Dict[str, Any]] = []
     hypotheses: List[Dict[str, Any]] = []
     for claim in normalize_evidence(claims):
         source = str(claim.get("source", "unknown")).lower()
         verified = bool(claim.get("verified", False))
-        if verified or source in FACT_SOURCES:
+        if source in DIRECT_FACT_SOURCES or (source in VERIFIED_EVIDENCE_SOURCES and verified):
             claim["status"] = "fact"
             facts.append(claim)
         elif source in HYPOTHESIS_SOURCES or claim.get("hypothesis") is True:
