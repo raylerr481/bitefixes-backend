@@ -1,0 +1,31 @@
+name: Test Bitey Continuity
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app/services/problem_identity_service.py'
+      - 'tests/test_continuity_harness.py'
+      - '.github/workflows/test-continuity.yml'
+
+jobs:
+  continuity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
+      - name: Run generalized continuity harness
+        run: pytest -q tests/test_continuity_harness.py
