@@ -1,0 +1,26 @@
+name: Test cognitive context loop
+
+on:
+  push:
+    branches:
+      - feat/cognitive-context-loop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  cognitive-context:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: "https://unit-test.supabase.local"
+      SUPABASE_KEY: "unit-test-key"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt pytest
+      - name: Run cognitive regression
+        run: python -m pytest -q tests/test_cognitive_context_bridge.py tests/test_evidence_guard.py tests/test_cognitive_regression.py
