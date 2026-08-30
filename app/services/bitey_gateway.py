@@ -2,22 +2,21 @@
 from __future__ import annotations
 import os
 from typing import Any
-
 from app.services.decision_engine_v29 import decision_engine as ai_first_decision
 from app.services.customer_service import get_or_create_customer
 from app.services.conversation_service import get_or_create_conversation, update_conversation_context
 from app.services.message_service import save_customer_message, save_bitey_message, get_conversation_history
 from app.services.website_diagnostic_service import extract_urls, fetch_website_context
 from app.services.problem_state_service import build_problem_state
+from app.cognitive.identity_scope import IdentityScope
+from app.cognitive.persistent_idempotency import claim_message, complete_message, request_fingerprint
 
 SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
 _INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
 
-
 def normalize_channel(channel: str | None) -> str:
     value = str(channel or "website").strip().lower()
     return value if value in SUPPORTED_CHANNELS else "api"
-
 
 def _public_result(result: dict[str, Any]) -> dict[str, Any]:
     if os.getenv("BITEY_PUBLIC_DEBUG", "false").lower() == "true": return result
@@ -26,13 +25,11 @@ def _public_result(result: dict[str, Any]) -> dict[str, Any]:
     public["public_contract"] = "bitey-chat-v1"
     return public
 
-
 def _db_conversation_id(value: str | None) -> int | None:
     try:
         text = str(value or "").strip()
         return int(text) if text.isdigit() else None
     except (TypeError, ValueError): return None
-
 
 def _channel_identity(channel: str, phone: str, conversation_id: str | None) -> tuple[str, str]:
     supplied, external = str(phone or "").strip(), str(conversation_id or "").strip()
@@ -48,7 +45,6 @@ def _channel_identity(channel: str, phone: str, conversation_id: str | None) -> 
     stable = supplied or external
     return stable or f"{channel}:anonymous", stable
 
-
 def _website_context(history: list[dict[str, Any]], message: str, state: dict[str, Any]) -> dict[str, Any] | None:
     urls = extract_urls(message)
     for row in reversed(history[-12:]): urls.extend(extract_urls(str(row.get("message_content") or row.get("ai_response") or "")))
@@ -61,8 +57,7 @@ def _website_context(history: list[dict[str, Any]], message: str, state: dict[st
         context = fetch_website_context(target); context["diagnostic_requested"] = True; return context
     except Exception as exc: return {"reference_url": target, "diagnostic_requested": True, "fetch_error": type(exc).__name__}
 
-
-def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str, customer_name: str, last_name: str, conversation_id: str | None, language: str, preferred_contact_channel: str | None) -> dict[str, Any]:
+def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str, customer_name: str, last_name: str, conversation_id: str | None, external_message_id: str | None, language: str, preferred_contact_channel: str | None) -> dict[str, Any]:
     identity_phone, external_identity = _channel_identity(channel, phone, conversation_id)
     customer = get_or_create_customer(company_id=company_id, phone=identity_phone, email=str(email or "").strip(), name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer", channel=channel, external_id=external_identity)
     customer_id = customer.get("id") if isinstance(customer, dict) else None
@@ -87,19 +82,18 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
     if preferred_contact_channel: result["preferred_contact_channel"]=preferred_contact_channel
     return result
 
-
-def handle_message(*, company_id: int, message: str, channel: str = "website", phone: str = "", email: str = "", customer_name: str = "Customer", last_name: str = "", conversation_id: str | None = None, language_preference: str = "auto", preferred_contact_channel: str | None = None) -> dict[str, Any]:
+def handle_message(*, company_id: int, message: str, channel: str = "website", phone: str = "", email: str = "", customer_name: str = "Customer", last_name: str = "", conversation_id: str | None = None, external_message_id: str | None = None, language_preference: str = "auto", preferred_contact_channel: str | None = None) -> dict[str, Any]:
     normalized_channel = normalize_channel(channel)
     if not str(message or "").strip(): return _public_result({"success":False,"response":"Escribe un mensaje para continuar."})
-
-    # WhatsApp now uses the canonical Bitey Core flow so problem identity,
-    # ticket continuity and customer memory are applied to real webhook traffic.
-    # Telegram and all other existing channels keep their current gateway path.
-    if normalized_channel == "whatsapp":
-        from app.core.bitey import process_message
-        result = process_message(company_id=company_id,message=str(message).strip(),phone=phone,email=email,customer_name=customer_name,last_name=last_name,channel="whatsapp",conversation_id=conversation_id,language_preference=language_preference)
+    identity = IdentityScope(company_id=company_id, channel=normalized_channel, conversation_id=str(conversation_id or "anonymous"), user_id=phone or email or None, external_message_id=external_message_id)
+    if external_message_id:
+        claim = claim_message(company_id=company_id, channel=normalized_channel, conversation_id=str(conversation_id or "anonymous"), user_id=phone or email or None, external_message_id=external_message_id, fingerprint=request_fingerprint(identity.key(), message))
+        if claim and not claim.get("claimed"):
+            if claim.get("status") == "completed" and claim.get("response_json"):
+                return claim["response_json"]
+            return _public_result({"success":True,"response":"Este mensaje ya está siendo procesado."})
+        result = _try_external_ai(company_id=company_id,message=message,channel=normalized_channel,phone=phone,email=email,customer_name=customer_name,last_name=last_name,conversation_id=conversation_id,external_message_id=external_message_id,language=language_preference,preferred_contact_channel=preferred_contact_channel)
+        if claim and claim.get("row_id"):
+            complete_message(row_id=claim["row_id"], response=result)
         return _public_result(result)
-
-    language = language_preference if language_preference not in (None,"","auto") else "es"
-    result = _try_external_ai(company_id=company_id,message=str(message).strip(),channel=normalized_channel,phone=phone,email=email,customer_name=customer_name,last_name=last_name,conversation_id=conversation_id,language=language,preferred_contact_channel=preferred_contact_channel)
-    return _public_result(result)
+    return _public_result(_try_external_ai(company_id=company_id,message=message,channel=normalized_channel,phone=phone,email=email,customer_name=customer_name,last_name=last_name,conversation_id=conversation_id,external_message_id=external_message_id,language=language_preference,preferred_contact_channel=preferred_contact_channel))

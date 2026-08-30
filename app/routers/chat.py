@@ -21,11 +21,11 @@ def chat(request: ChatRequest):
             last_name=request.last_name or "",
             channel=request.channel,
             conversation_id=request.conversation_id,
+            external_message_id=request.external_message_id,
             language_preference=request.language_preference,
             preferred_contact_channel=request.preferred_contact_channel,
         )
     except Exception as error:
-        # Keep internal exception details out of the public API response.
         print("[CHAT ERROR]", type(error).__name__)
         raise HTTPException(
             status_code=500,
