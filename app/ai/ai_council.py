@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Sequence
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.contextual_resolution import resolve_context, contextual_directive
 from app.ai.provider_health import probe_provider_spec, classify_exception
+from app.cognitive.evidence_guard import partition_claims
 
 RECTOR_DIRECTIVES = """
 You are the reasoning engine serving a specific company and a specific customer conversation.
@@ -149,12 +150,33 @@ async def _ask_provider(spec: Any, message: str, language: str, context: Dict[st
         answer = await spec.provider.generate(prompt)
         if not answer:
             return {"_error": {"category": "empty_response", "http_status": None}, "provider": spec.name}
+
+        # HARD EVIDENCE BOUNDARY: the provider's natural-language answer is
+        # a candidate response, never a source of canonical facts. Only
+        # explicitly grounded tool/user/system evidence can enter state.
+        tool_evidence = []
+        web = tool_context.get("web_search") or {}
+        for item in web.get("results") or []:
+            if isinstance(item, dict):
+                grounded = dict(item)
+                grounded.setdefault("source", "search")
+                grounded["verified"] = bool(web.get("verified"))
+                tool_evidence.append(grounded)
+        evidence_partition = partition_claims(tool_evidence)
+        guarded = {
+            "state_update_allowed": False,
+            "llm_answer_is_fact": False,
+            "canonical_facts": evidence_partition["facts"],
+            "hypotheses": evidence_partition["hypotheses"],
+            "policy": "LLM output may reason and propose, but cannot create canonical facts without explicit evidence.",
+        }
         return {
             "provider": spec.name, "answer": str(answer).strip(), "cost_class": spec.cost_class,
             "capabilities": list(spec.capabilities), "tool_use": {"web_search": bool(tool_context.get("web_search", {}).get("requested"))},
             "evidence": tool_context.get("web_search", {}).get("results", []),
             "search_query": tool_context.get("web_search", {}).get("query"), "search_verified": bool(tool_context.get("web_search", {}).get("verified")),
             "contextual_state": state,
+            "evidence_guard": guarded,
         }
     except Exception as exc:
         diagnostic = classify_exception(exc)
@@ -194,9 +216,6 @@ def consult(message: str, *, language: str, context: Dict[str, Any], max_provide
         if not healthy:
             return []
 
-        # Ask every healthy selected provider independently. Their outputs are
-        # deliberately kept separate so consultation_service can score them
-        # against the same enterprise context and problem state.
         results = await asyncio.gather(
             *(_ask_provider(spec, message, language, context) for spec, _health in healthy),
             return_exceptions=True,
@@ -210,7 +229,7 @@ def consult(message: str, *, language: str, context: Dict[str, Any], max_provide
             if result and result.get("answer"):
                 result["provider_health"] = health
                 accepted.append(result)
-                print(f"[AI REASONING] provider={spec.name} status=candidate")
+                print(f"[AI REASONING] provider={spec.name} status=candidate evidence_guard=active")
         return accepted
 
     try:
