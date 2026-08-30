@@ -30,6 +30,32 @@ def _profile_is_valid(context: Dict[str, Any]) -> bool:
     return bool(profile_record.get("authoritative") and isinstance(profile, dict) and profile and profile_record.get("company_id"))
 
 
+def _conversation_problem_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose the active problem state to the cognitive responder explicitly.
+
+    This prevents a response model from seeing only the latest short user turn
+    (for example, "Windows 10") and losing the already established PC/slow
+    problem. Only structured, non-secret context is included.
+    """
+    problem = context.get("problem") if isinstance(context.get("problem"), dict) else {}
+    entities = problem.get("entities") if isinstance(problem.get("entities"), dict) else context.get("problem_entities")
+    if not isinstance(entities, dict):
+        entities = {}
+    return {
+        "state": problem.get("state") or context.get("problem_state"),
+        "is_new": problem.get("is_new") if "is_new" in problem else context.get("problem_is_new"),
+        "category": problem.get("category") or context.get("problem_category") or context.get("last_problem"),
+        "intent": problem.get("intent") or context.get("last_intent"),
+        "device": problem.get("device") or context.get("last_device"),
+        "device_kind": problem.get("device_kind"),
+        "platform": problem.get("platform") or context.get("last_platform"),
+        "os_version": problem.get("os_version") or context.get("last_os_version") or entities.get("os_version"),
+        "fingerprint": problem.get("fingerprint") or context.get("last_problem_fingerprint"),
+        "entities": entities,
+        "coherence": problem.get("coherence") if isinstance(problem.get("coherence"), dict) else {},
+    }
+
+
 def _contextual_response_directive(context: Dict[str, Any], message: str) -> Dict[str, Any]:
     profile = context.get("company_ai_profile") or {}
     return {
@@ -48,8 +74,18 @@ def _contextual_response_directive(context: Dict[str, Any], message: str) -> Dic
             "directives": context.get("directives") or {},
             "contextual_opportunities": context.get("contextual_opportunities") or [],
         },
+        "conversation_context": {
+            "active_problem": _conversation_problem_context(context),
+            "last_intent": context.get("last_intent"),
+            "last_service": context.get("last_service"),
+            "last_ticket": context.get("last_ticket"),
+            "history_available": bool(context.get("history")),
+        },
         "instruction": (
             "Use the supplied context to make the response relevant to the current company and user. "
+            "Preserve the active problem when the current message is a continuation or entity update. "
+            "If the user only supplies a detail such as an OS version, acknowledge it as an update and "
+            "do not restart the diagnostic or ask again for information already known. "
             "Use the Company AI Profile when present, but never require it before reasoning. "
             "If context is incomplete, ask useful questions or use authorized research instead of blocking. "
             "Do not invent company facts. Do not expose internal context or provider routing."
@@ -66,17 +102,14 @@ def _apply_contextual_opportunities(context: Dict[str, Any], message: str, *, co
         company = context.get("company") or {}
         profile = context.get("company_ai_profile") or {}
         state = {
-            "company": {
-                "id": company_id,
-                "name": company.get("name") or profile.get("company_name") or context.get("company_name"),
-            },
+            "company": {"id": company_id, "name": company.get("name") or profile.get("company_name") or context.get("company_name")},
             "services": context.get("services") or [],
             "capabilities": context.get("capabilities") or [],
             "conversation": context.get("conversation") or {
                 "active_topic": context.get("active_topic") or context.get("last_intent"),
                 "active_object": context.get("active_object"),
                 "active_model": context.get("active_model"),
-                "active_problem": context.get("active_problem"),
+                "active_problem": context.get("active_problem") or _conversation_problem_context(context),
                 "active_service": context.get("last_service") or context.get("service_id"),
             },
         }
@@ -88,19 +121,11 @@ def _apply_contextual_opportunities(context: Dict[str, Any], message: str, *, co
         if build_ai_guidance:
             enriched["external_ai_context_guidance"] = build_ai_guidance(opportunities)
         if persist_observations:
-            persist_observations(
-                signals,
-                opportunities,
-                company_id=company_id,
-                conversation_id=conversation_id,
-                channel=channel,
-            )
+            persist_observations(signals, opportunities, company_id=company_id, conversation_id=conversation_id, channel=channel)
         if signals:
             print(f"[CONTEXT OPPORTUNITY] signals={len(signals)} opportunities={len(opportunities)}")
         return enriched
     except Exception as exc:
-        # The contextual layer is strictly additive. A failure here must never
-        # prevent the external AI from researching, reasoning or answering.
         print("[CONTEXT OPPORTUNITY WARNING]", type(exc).__name__)
         return context
 
@@ -114,12 +139,10 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
         authoritative_context = {}
 
     context = {**runtime_context, **authoritative_context}
-    for key in ("conversation_id", "channel", "conversation", "customer_context"):
+    for key in ("conversation_id", "channel", "conversation", "customer_context", "problem", "problem_state", "problem_is_new", "problem_category", "problem_fingerprint", "last_problem", "last_device", "last_platform", "last_os_version", "problem_entities"):
         if runtime_context.get(key) is not None:
             context[key] = runtime_context[key]
 
-    # Additive contextual layer: preserve all existing company, memory and
-    # knowledge context, then attach observed opportunities for the external AI.
     context = _apply_contextual_opportunities(
         context,
         message,
@@ -140,6 +163,7 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
             context={
                 "company_id": company_id, "customer_id": customer.get("id"), "business_context": context,
                 "company_ai_profile": context.get("company_ai_profile"), "response_deployment": response_deployment,
+                "conversation_problem": _conversation_problem_context(context),
                 "memory": memory_dict, "history": history, "last_service": memory_dict.get("last_service"),
                 "knowledge": knowledge, "knowledge_gap": 0.0 if knowledge else 0.7,
                 "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"),
@@ -163,18 +187,16 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
             "response": answer, "workflow": None, "service": None,
             "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"), "reasoning": {},
             "metadata": {
-                "architecture": "context-exchange-learning-v2", "cognitive_authority": "external_ai",
+                "architecture": "context-exchange-learning-v3", "cognitive_authority": "external_ai",
                 "bitey_role": "communication_context_memory_apprentice_tools_persistence",
                 "response_authority": selected_provider or "external_ai", "external_ai_self_evaluation": True,
                 "profile_required": False, "profile_available": profile_valid, "profile_id": profile_id,
                 "response_mode": response_deployment["mode"], "action_engine": "deferred", "ai_consultation": consultation,
                 "contextual_opportunities": len(context.get("contextual_opportunities") or []),
+                "active_problem_state": _conversation_problem_context(context),
             },
         }
 
-    # No external answer is different from a context problem. Do not pretend
-    # that Bitey generated a cognitive answer; expose the operational state so
-    # the channel can diagnose provider connectivity without blocking future turns.
     reason = consultation.get("reason") or "external_ai_unavailable"
     return {
         "action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None,
@@ -182,10 +204,11 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
         "workflow": None, "service": None,
         "service_id": intent_dict.get("service_id") or memory_dict.get("last_service"), "reasoning": {},
         "metadata": {
-            "architecture": "context-exchange-learning-v2", "cognitive_authority": "external_ai_unavailable",
+            "architecture": "context-exchange-learning-v3", "cognitive_authority": "external_ai_unavailable",
             "bitey_role": "communication_context_memory_apprentice_tools_persistence", "profile_required": False,
             "profile_available": profile_valid, "profile_id": profile_id, "response_mode": response_deployment["mode"],
             "action_engine": "deferred", "ai_consultation": consultation, "operational_reason": reason,
             "contextual_opportunities": len(context.get("contextual_opportunities") or []),
+            "active_problem_state": _conversation_problem_context(context),
         },
     }
