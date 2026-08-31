@@ -8,7 +8,7 @@ The existing FastAPI + Supabase + Render architecture is preserved and extended 
 
 BiteFixes.com remains a public business website. **Authentication is required only for the private Support Portal**, where authorized BiteFixes personnel manage customers, employees, conversations, tickets, services and sales.
 
-Customers do not authenticate to the administrative Support Portal. They reach the business through the three customer channels:
+Customers do not authenticate to the administrative Support Portal. They reach the business through three customer channels:
 
 - WhatsApp
 - Telegram
@@ -18,7 +18,6 @@ Customers do not authenticate to the administrative Support Portal. They reach t
 Public BiteFixes.com
        │
        ├── services / sales / contact
-       │
        └── Support Portal (private)
                  │
                  └── authenticated staff
@@ -41,19 +40,45 @@ Customer channels
 
 ## SaaS evolution
 
-BiteFixes is the first real production tenant. The same engine is being made configurable for other companies without changing the core architecture.
+BiteFixes is the first production tenant. The same engine is being generalized for other companies without replacing the proven BiteFixes workflow.
 
-Each tenant can eventually define its own:
+Each tenant can define its own company identity, assistant name, logo, language/currency, services, knowledge, employees, roles and enabled customer channels. The internal intelligence engine remains Bitey while the customer-facing assistant and Portal can be white-label.
 
-- company/display name
-- assistant name
-- logo and visual identity
-- language and currency
-- services and business knowledge
-- authorized employees and roles
-- enabled customer channels
+## Enterprise onboarding flow
 
-The internal engine remains **Bitey**, while the customer-facing assistant name and Portal branding can be different for each tenant (white-label capable).
+A future customer does not need to understand the internal schema. Bitey guides the business through an assessment using the same Web, WhatsApp or Telegram conversation channels. The company can also upload a business document as an input artifact.
+
+```text
+Company request
+      ↓
+Guided assessment
+      ↓
+Business evidence / documents
+      ↓
+Profile + missing information
+      ↓
+AI analysis and recommendations
+      ↓
+Solution plan
+      ↓
+Configuration preview
+      ↓
+Customer approval
+      ↓
+Versioned tenant configuration
+      ↓
+Install / activate channels and Portal
+```
+
+The backend never invents missing business facts. The assessment identifies what is missing and generates the next questions. Business rules, permissions and secrets remain controlled by the backend.
+
+### Enterprise configuration endpoints
+
+- `POST /company-profile/import` — securely ingest an approved PDF, DOCX, TXT, CSV, JSON or Markdown company document.
+- `POST /company-profile/assessment` — evaluate the supplied enterprise profile and return missing sections, next questions and implementation recommendations.
+- `POST /company-profile/configuration-preview` — compile a non-secret tenant manifest only when the assessment is complete.
+
+The manifest is a **configuration artifact**, not a replacement for Bitey Core. It can later be versioned, reviewed, installed and rolled back.
 
 ## Data boundary
 
@@ -94,11 +119,11 @@ Bitey should turn channel conversations into authorized CRM actions rather than 
 - Bitey remains the intelligence/conversation engine.
 - WhatsApp, Telegram and Web are the primary customer ingress channels.
 - The Support Portal is the private operational interface for company personnel.
-- Tenant configuration is additive and backward-compatible with the BiteFixes pilot.
+- Enterprise configuration is additive and backward-compatible with the BiteFixes pilot.
 
 ## API configuration metadata
 
-`/info` and `/gateway/status` expose non-secret tenant presentation metadata and the canonical three customer channels. Secrets and authoritative business data remain server-side.
+`/info` and `/gateway/status` expose non-secret tenant presentation metadata and the canonical customer channels. Secrets and authoritative business data remain server-side.
 
 Environment-backed presentation values include:
 
