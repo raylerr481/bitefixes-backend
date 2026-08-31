@@ -16,6 +16,7 @@ from app.database.supabase import supabase_manager
 from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
+from app.ai.cme_research import BiteyCME
 from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
 
 
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
     print("AI Providers : " + (", ".join(available) if available else "NONE"))
     print(f"AI Free-Only : {'ENABLED' if FREE_ONLY else 'DISABLED'}")
     print("Web Intelligence : ENABLED")
+    print(f"Bitey CME Research Ranking : ENABLED ({BiteyCME.VERSION})")
     print("Bitey Gateway : ENABLED")
     print("Bitey Trainer : ENABLED")
     await _register_telegram_webhook()
@@ -86,22 +88,22 @@ app.include_router(portal.router)
 
 @app.get("/")
 def root():
-    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer"}
+    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer", "cme_research": BiteyCME.VERSION}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud", "bitey_trainer": "ready"}
+    return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud", "bitey_trainer": "ready", "cme_research": BiteyCME.VERSION}
 
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "status": "running"}
+    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "cme_research": BiteyCME.VERSION, "status": "running"}
 
 
 @app.get("/gateway/status")
 def gateway_status():
-    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/portal", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "identity": "centralized-customer-conversation-memory"}
+    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/portal", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "identity": "centralized-customer-conversation-memory", "cme_research": BiteyCME.VERSION}
 
 
 @app.get("/ai/status")
@@ -110,7 +112,7 @@ def ai_status():
     providers = []
     for spec in orchestrator.registry._providers.values():
         providers.append({"name": spec.name, "enabled": bool(spec.enabled and spec.provider), "cost_class": spec.cost_class, "eligible": bool(spec.enabled and spec.provider and spec.cost_class == "free"), "capabilities": list(spec.capabilities)})
-    return {"engine": "Bitey", "status": "ready", "gateway": "ready", "supabase": bool(supabase_manager.check_connection()), "web_intelligence": {"enabled": True, "service": "bitey-search-core"}, "external_ai": {"providers": providers, "available_general_reasoning": [p["name"] for p in providers if p["eligible"] and "general_reasoning" in p["capabilities"]]}, "policy": {"free_only": FREE_ONLY, "consult_min_confidence": float(os.getenv("AI_CONSULT_MIN_CONFIDENCE", "0.78")), "max_estimated_cost": max_estimated_cost(), "max_providers": int(os.getenv("AI_COUNCIL_MAX_PROVIDERS", "2"))}}
+    return {"engine": "Bitey", "status": "ready", "gateway": "ready", "supabase": bool(supabase_manager.check_connection()), "web_intelligence": {"enabled": True, "service": "bitey-search-core", "research_result": True, "ranking": BiteyCME.VERSION}, "external_ai": {"providers": providers, "available_general_reasoning": [p["name"] for p in providers if p["eligible"] and "general_reasoning" in p["capabilities"]]}, "policy": {"free_only": FREE_ONLY, "consult_min_confidence": float(os.getenv("AI_CONSULT_MIN_CONFIDENCE", "0.78")), "max_estimated_cost": max_estimated_cost(), "max_providers": int(os.getenv("AI_COUNCIL_MAX_PROVIDERS", "2"))}}
 
 
 @app.get("/test-supabase")

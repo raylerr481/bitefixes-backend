@@ -1,0 +1,26 @@
+name: Test CME continuity multi-company
+
+on:
+  push:
+    branches:
+      - research-result-cme-multitenant
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  cme-continuity:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: "https://unit-test.supabase.local"
+      SUPABASE_KEY: "unit-test-key"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt pytest
+      - name: Run continuity, multi-company and chat integration tests
+        run: python -m pytest -q tests/test_cme_continuity_multicompany.py tests/test_cme_research_multitenant.py tests/test_chat_cme_research_integration.py

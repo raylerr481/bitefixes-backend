@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 from app.ai.bitey_search import search as bitey_search
+from app.ai.cme_research import BiteyCME
+from app.ai.research_result import ResearchResult
 from app.services.web_memory_service import build_context, record_search, search_memory, store_document
 CURRENT_MARKERS={"today","latest","current","now","recent","price","prices","version","release","update","news","2026","2025","regulation","law","licence","license","availability","weather","stock"}
 PROCEDURAL_MARKERS={"como","cómo","how","trocar","cambiar","reemplazar","reparar","arreglar","instalar","desmontar","montar","abrir","quitar","poner","pantalla","tela","screen","display","bateria","batería","conector","camara","cámara","teclado"}
@@ -39,18 +41,20 @@ def _domain_score(url:str)->float:
     if host.startswith("docs."):return .90
     return .55
 def _tokenise(text:str)->set[str]:return{t for t in re.findall(r"[a-z0-9À-ÿ]{3,}",(text or "").lower()) if t not in {"the","and","for","with","from","this","that","para","com","uma","que"}}
-def _normalise_result(item:Dict[str,Any],query:str)->Optional[Dict[str,Any]]:
+def _normalise_result(item:Dict[str,Any],query:str,company_id:Optional[int]=None)->Optional[Dict[str,Any]]:
     url=str(item.get("url") or item.get("link") or "").strip(); title=str(item.get("title") or "").strip(); snippet=str(item.get("snippet") or item.get("content") or item.get("description") or item.get("body") or "").strip()
     if not url or not title:return None
     relevance_tokens=len(_tokenise(query)&_tokenise(f"{title} {snippet}")); relevance=min(1.0,relevance_tokens/max(3,len(_tokenise(query))*.35)); authority=_domain_score(url)
-    return {"url":url,"title":title,"snippet":snippet[:2500],"content":snippet[:12000],"domain":_domain(url),"authority_score":round(authority,3),"relevance_score":round(relevance,3),"score":round(.55*relevance+.45*authority,3),"retrieved_at":item.get("retrieved_at") or datetime.now(timezone.utc).isoformat()}
+    return {"url":url,"title":title,"snippet":snippet[:2500],"content":snippet[:12000],"domain":_domain(url),"authority_score":round(authority,3),"relevance_score":round(relevance,3),"score":round(.55*relevance+.45*authority,3),"retrieved_at":item.get("retrieved_at") or datetime.now(timezone.utc).isoformat(),"company_id":company_id}
+def _to_research_result(item:Dict[str,Any],verification_score:float=0.0)->ResearchResult:
+    return ResearchResult(title=str(item.get("title") or ""),url=str(item.get("url") or ""),snippet=str(item.get("snippet") or ""),content=str(item.get("content") or item.get("snippet") or ""),domain=str(item.get("domain") or ""),company_id=item.get("company_id"),relevance_score=float(item.get("relevance_score") or 0),authority_score=float(item.get("authority_score") or 0),verification_score=verification_score,freshness_score=float(item.get("freshness_score") or 1),retrieved_at=str(item.get("retrieved_at") or ""),metadata=dict(item.get("metadata") or {}))
 def _deduplicate(results:Iterable[Dict[str,Any]])->List[Dict[str,Any]]:
     seen=set();output=[]
     for item in results:
-        key=hashlib.sha256((item["url"].rstrip("/")+"|"+item["title"].lower()).encode()).hexdigest()
+        key=hashlib.sha256((str(item["url"]).rstrip("/")+"|"+str(item["title"]).lower()).encode()).hexdigest()
         if key not in seen:seen.add(key);output.append(item)
     return output
-def _cache_key(message:str,queries:List[str],intent:Optional[str])->str:return hashlib.sha256(json.dumps({"message":message.strip().lower(),"queries":queries,"intent":intent},sort_keys=True).encode()).hexdigest()
+def _cache_key(message:str,queries:List[str],intent:Optional[str],company_id:Optional[int])->str:return hashlib.sha256(json.dumps({"company_id":company_id,"message":message.strip().lower(),"queries":queries,"intent":intent},sort_keys=True).encode()).hexdigest()
 def _cache_get(key:str)->Optional[Dict[str,Any]]:
     entry=_CACHE.get(key)
     if not entry:return None
@@ -65,17 +69,24 @@ def _verify(results:List[Dict[str,Any]],query:str)->Dict[str,Any]:
         for token_set in token_sets[1:]:common&=token_set
         corroborated=len(common)>=3
     return {"verified":bool(corroborated and len(domains)>=2 and len(strong)>=2),"corroborated":corroborated,"independent_domains":len(domains),"strong_sources":len(strong),"verification_score":round(min(1.0,len(strong)/3*.4+len(domains)/3*.3+(.3 if corroborated else 0)),3),"note":"corroboration is evidence, not a guarantee of factual correctness","query":query}
+def _rank_results(results:List[Dict[str,Any]],company_id:Optional[int],verification_score:float=0.0)->List[Dict[str,Any]]:
+    evidence=[_to_research_result(item,verification_score) for item in results]
+    ranked=BiteyCME.rank(evidence,company_id=company_id,limit=POLICY.max_results)
+    for item in ranked:item["score"]=item["rank_score"]
+    return ranked
 def _memory_response(memory:Dict[str,Any],message:str,company_id:int)->Dict[str,Any]:
     context=build_context(memory);results=[]
-    for row in memory.get("results",[]):results.append({"url":row.get("canonical_url"),"title":row.get("title"),"snippet":row.get("summary") or row.get("content") or "","domain":row.get("source_domain"),"authority_score":row.get("authority_score",0),"verification_score":row.get("verification_score",0),"score":round(float(row.get("authority_score",0))*.45+float(row.get("verification_score",0))*.55,3),"from_memory":True,"fetched_at":row.get("fetched_at")})
-    return {"used":True,"memory_hit":True,"memory_fresh":True,"external_used":False,"queries":[message],"results":results,"providers":["bitey_web_memory"],"grounding_status":"memory_grounded","verification":{"verified":True,"verification_score":max((r.get("verification_score",0) for r in results),default=0),"note":"reused previously verified web evidence"},"context":context,"cache_hit":False,"learning_candidate":False,"company_id":company_id}
+    for row in memory.get("results",[]):
+        results.append({"url":row.get("canonical_url"),"title":row.get("title"),"snippet":row.get("summary") or row.get("content") or "","content":row.get("content") or row.get("summary") or "","domain":row.get("source_domain"),"authority_score":row.get("authority_score",0),"relevance_score":row.get("relevance_score",0),"verification_score":row.get("verification_score",0),"freshness_score":1.0,"retrieved_at":row.get("fetched_at"),"company_id":company_id})
+    ranked=_rank_results(results,company_id)
+    return {"used":True,"memory_hit":True,"memory_fresh":True,"external_used":False,"queries":[message],"results":ranked,"providers":["bitey_web_memory"],"grounding_status":"memory_grounded","verification":{"verified":True,"verification_score":max((r.get("verification_score",0) for r in ranked),default=0),"note":"reused previously verified web evidence"},"context":context,"cache_hit":False,"learning_candidate":False,"company_id":company_id,"cme":BiteyCME.VERSION}
 def search_web(message:str,*,intent:Optional[str]=None,limit:int|None=None,company_id:Optional[int]=None)->Dict[str,Any]:
     queries=build_queries(message,intent=intent);max_results=limit or POLICY.max_results
     if company_id and not(set(re.findall(r"[a-z0-9À-ÿ-]+",message.lower()))&CURRENT_MARKERS):
         memory=search_memory(company_id,message,POLICY.memory_max_results)
         if memory.get("fresh"):
             record_search(company_id,message,"bitey_web_memory",local_hit_count=len(memory.get("results",[])),freshness_required=False);return _memory_response(memory,message,company_id)
-    key=_cache_key(message,queries,intent);cached=_cache_get(key)
+    key=_cache_key(message,queries,intent,company_id);cached=_cache_get(key)
     if cached:return cached
     raw=[];errors=[];providers=[]
     for query in queries:
@@ -83,10 +94,11 @@ def search_web(message:str,*,intent:Optional[str]=None,limit:int|None=None,compa
             result=bitey_search(query,max_results);raw.extend(result.get("results") or [])
             if result.get("provider") and result["provider"] not in providers:providers.append(result["provider"])
         except Exception as exc:errors.append(type(exc).__name__)
-    results=[n for item in raw if(n:=_normalise_result(item,message))];results=sorted(_deduplicate(results),key=lambda item:item["score"],reverse=True)[:max_results];verification=_verify(results,message)
-    if company_id and results:
-        for item in results:store_document(company_id,item,verification_score=verification["verification_score"],authority_score=item["authority_score"],freshness_ttl_seconds=POLICY.memory_ttl_seconds)
-    response={"used":bool(results),"memory_hit":False,"memory_fresh":False,"external_used":bool(results),"queries":queries,"results":results,"errors":errors,"providers":providers,"provider_configured":bool(providers),"grounding_status":"verified" if verification["verified"] else ("grounded" if results else "unavailable"),"verification":verification,"cache_hit":False,"learning_candidate":bool(verification["verified"] and results),"context":"\n\n".join(f"SOURCE: {r['title']}\nURL: {r['url']}\nCONTENT: {r['snippet']}" for r in results)}
+    results=[n for item in raw if(n:=_normalise_result(item,message,company_id))];results=_deduplicate(results)
+    verification=_verify(results,message);ranked=_rank_results(results,company_id,verification["verification_score"])[:max_results]
+    if company_id and ranked:
+        for item in ranked:store_document(company_id,item,verification_score=verification["verification_score"],authority_score=item["authority_score"],freshness_ttl_seconds=POLICY.memory_ttl_seconds)
+    response={"used":bool(ranked),"memory_hit":False,"memory_fresh":False,"external_used":bool(ranked),"queries":queries,"results":ranked,"errors":errors,"providers":providers,"provider_configured":bool(providers),"grounding_status":"verified" if verification["verified"] else ("grounded" if ranked else "unavailable"),"verification":verification,"cache_hit":False,"learning_candidate":bool(verification["verified"] and ranked),"context":"\n\n".join(f"SOURCE: {r['title']}\nURL: {r['url']}\nCONTENT: {r['snippet']}" for r in ranked),"company_id":company_id,"cme":BiteyCME.VERSION}
     _cache_put(key,response)
-    if company_id:record_search(company_id,message,providers[0] if providers else "unavailable",local_hit_count=0,external_used=bool(results),freshness_required=True)
+    if company_id:record_search(company_id,message,providers[0] if providers else "unavailable",local_hit_count=0,external_used=bool(ranked),freshness_required=True)
     return response
