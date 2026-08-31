@@ -5,10 +5,14 @@ from app.services.problem_state_service import build_problem_state
 def _turns(*messages):
     history = []
     states = []
-    for message in messages:
+    for item in messages:
+        if isinstance(item, tuple):
+            sender, message = item
+        else:
+            sender, message = "customer", item
         state = build_problem_state(history, message)
         states.append(state)
-        history.append({"sender_type": "customer", "message_content": message})
+        history.append({"sender_type": sender, "message_content": message})
     return states
 
 
@@ -83,7 +87,7 @@ def test_unrelated_object_request_does_not_inherit_old_problem():
 
 
 def test_broken_phone_screen_dialogue_preserves_goal_and_problem():
-    """Regression for the reported bug: 'Redmi 9A' must not become connectivity."""
+    """Regression: a model/detail reply must not become connectivity."""
     states = _turns(
         "Tengo un movil con pantalla rota deseo arreglarlo.",
         "Redmi 9A deseo saber como se hace para si puedo ser capaz de hacerlo.",
@@ -93,9 +97,28 @@ def test_broken_phone_screen_dialogue_preserves_goal_and_problem():
     )
     assert states[0]["active_category"] == "display"
     assert states[0]["active_problem"] is not None
-    # Model/detail turns must not manufacture a connectivity problem.
-    assert states[1]["active_category"] != "connectivity"
-    assert states[2]["active_category"] != "connectivity"
+    assert states[1]["active_category"] == "display"
+    assert states[2]["active_category"] == "display"
     assert states[3]["active_category"] == "display"
-    assert states[4]["active_category"] != "connectivity"
+    assert states[4]["active_category"] == "display"
     assert states[4]["active_problem"] != "problema de conectividad"
+
+
+def test_pending_model_question_resolves_short_reply():
+    """A short answer is resolved against the assistant's pending question."""
+    states = _turns(
+        "Tengo un Redmi roto, la pantalla se quebró. ¿Ustedes lo reparan?",
+        ("assistant", "Sí. ¿Cuál es el modelo exacto de tu Redmi?"),
+        "9a",
+    )
+    assert states[2]["pending_question"]["field"] == "model"
+    assert states[2]["active_category"] == "display"
+    assert states[2]["active_model"] is not None
+    assert states[2]["state"] == "ENTITY_UPDATE"
+    assert states[2]["active_category"] != "connectivity"
+
+
+def test_short_reply_without_context_does_not_invent_problem():
+    states = _turns("9a")
+    assert states[0]["active_problem"] is None
+    assert states[0]["active_category"] is None
