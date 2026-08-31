@@ -1,20 +1,12 @@
-"""Protected Support Portal read API.
-
-The browser talks to BiteFixes Backend; privileged Supabase credentials never
-leave the server. Portal data is available only to authenticated administrators.
-"""
+"""Protected Support Portal read API."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database.supabase import supabase_manager
-from app.routers.portal_auth import require_portal_admin
+from app.routers.portal_auth import require_portal_admin, require_portal_user
 
-router = APIRouter(
-    prefix="/portal",
-    tags=["Support Portal"],
-    dependencies=[Depends(require_portal_admin)],
-)
+router = APIRouter(prefix="/portal", tags=["Support Portal"])
 
 
 def _rows(table: str, *, select: str = "*", filters: dict | None = None,
@@ -31,8 +23,8 @@ def _rows(table: str, *, select: str = "*", filters: dict | None = None,
     return response.data or []
 
 
-def _one(table: str, record_id: int, select: str = "*"):
-    rows = _rows(table, select=select, filters={"id": record_id}, limit=1)
+def _one_for_company(table: str, record_id: int, company_id: int, select: str = "*"):
+    rows = _rows(table, select=select, filters={"id": record_id, "company_id": company_id}, limit=1)
     return rows[0] if rows else None
 
 
@@ -51,7 +43,7 @@ def _signal_evidence(signal: dict) -> str | None:
 
 
 @router.get("/status")
-def portal_status():
+def portal_status(context=Depends(require_portal_user)):
     return {
         "status": "ready",
         "portal": "bitefixes-support",
@@ -59,73 +51,110 @@ def portal_status():
         "canonical_database": "supabase",
         "supabase_connected": bool(supabase_manager.check_connection()),
         "cognitive_projection": "enabled",
+        "company_id": context["company_id"],
+        "role": context["role"],
     }
 
 
 @router.get("/customers")
-def portal_customers(company_id: int = Query(1), limit: int = Query(50, ge=1, le=200)):
-    return {"status": "success", "customers": _rows(
-        "customers", filters={"company_id": company_id, "is_active": True},
+def portal_customers(
+    company_id: int | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    context=Depends(require_portal_user),
+):
+    effective_company_id = context["company_id"]
+    if company_id is not None and company_id != effective_company_id:
+        raise HTTPException(status_code=403, detail="Cross-company access is not allowed")
+    return {"status": "success", "company_id": effective_company_id, "customers": _rows(
+        "customers", filters={"company_id": effective_company_id, "is_active": True},
         order="updated_at:true", limit=limit,
     )}
 
 
 @router.get("/customers/{customer_id}")
-def portal_customer(customer_id: int):
-    customer = _one("customers", customer_id)
+def portal_customer(customer_id: int, context=Depends(require_portal_user)):
+    customer = _one_for_company("customers", customer_id, context["company_id"])
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-    return {"status": "success", "customer": customer}
+    return {"status": "success", "company_id": context["company_id"], "customer": customer}
 
 
 @router.get("/tickets")
-def portal_tickets(company_id: int = Query(1), status: str | None = None,
-                  limit: int = Query(50, ge=1, le=200)):
-    filters = {"company_id": company_id}
+def portal_tickets(
+    company_id: int | None = Query(None),
+    status: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    context=Depends(require_portal_user),
+):
+    effective_company_id = context["company_id"]
+    if company_id is not None and company_id != effective_company_id:
+        raise HTTPException(status_code=403, detail="Cross-company access is not allowed")
+    filters = {"company_id": effective_company_id}
     if status:
         filters["status"] = status
-    return {"status": "success", "tickets": _rows(
+    return {"status": "success", "company_id": effective_company_id, "tickets": _rows(
         "tickets", filters=filters, order="updated_at:true", limit=limit,
     )}
 
 
 @router.get("/tickets/{ticket_id}")
-def portal_ticket(ticket_id: int):
-    ticket = _one("tickets", ticket_id)
+def portal_ticket(ticket_id: int, context=Depends(require_portal_user)):
+    ticket = _one_for_company("tickets", ticket_id, context["company_id"])
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    messages = _rows("messages", filters={"ticket_id": ticket_id}, order="created_at:false", limit=100)
-    return {"status": "success", "ticket": ticket, "messages": messages}
+    messages = _rows(
+        "messages",
+        filters={"ticket_id": ticket_id, "company_id": context["company_id"]},
+        order="created_at:false",
+        limit=100,
+    )
+    return {"status": "success", "company_id": context["company_id"], "ticket": ticket, "messages": messages}
 
 
 @router.get("/conversations")
-def portal_conversations(company_id: int = Query(1), customer_id: int | None = None,
-                         limit: int = Query(50, ge=1, le=200)):
-    filters = {}
+def portal_conversations(
+    company_id: int | None = Query(None),
+    customer_id: int | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    context=Depends(require_portal_user),
+):
+    effective_company_id = context["company_id"]
+    if company_id is not None and company_id != effective_company_id:
+        raise HTTPException(status_code=403, detail="Cross-company access is not allowed")
+    filters = {"company_id": effective_company_id}
     if customer_id is not None:
+        customer = _one_for_company("customers", customer_id, effective_company_id, select="id")
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
         filters["customer_id"] = customer_id
     rows = _rows("conversations", filters=filters, order="updated_at:true", limit=limit)
-    return {"status": "success", "company_id": company_id, "conversations": rows}
+    return {"status": "success", "company_id": effective_company_id, "conversations": rows}
 
 
 @router.get("/conversations/{conversation_id}")
-def portal_conversation(conversation_id: int):
-    conversation = _one("conversations", conversation_id)
+def portal_conversation(conversation_id: int, context=Depends(require_portal_user)):
+    conversation = _one_for_company("conversations", conversation_id, context["company_id"])
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    messages = _rows("messages", filters={"conversation_id": conversation_id}, order="created_at:false", limit=100)
-    return {"status": "success", "conversation": conversation, "messages": messages}
+    messages = _rows(
+        "messages",
+        filters={"conversation_id": conversation_id, "company_id": context["company_id"]},
+        order="created_at:false",
+        limit=100,
+    )
+    return {"status": "success", "company_id": context["company_id"], "conversation": conversation, "messages": messages}
 
 
 @router.get("/cognitive/{conversation_id}")
-def portal_cognitive(conversation_id: int):
-    conversation = _one("conversations", conversation_id)
+def portal_cognitive(conversation_id: int, context=Depends(require_portal_user)):
+    company_id = context["company_id"]
+    conversation = _one_for_company("conversations", conversation_id, company_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    problems = _rows("bitey_problems", filters={"conversation_id": conversation_id}, order="updated_at:true", limit=20)
-    commitments = _rows("conversation_commitments", filters={"conversation_id": conversation_id}, order="updated_at:true", limit=20)
-    signals = _rows("contextual_signals", filters={"conversation_id": str(conversation_id)}, order="created_at:true", limit=50)
+    problems = _rows("bitey_problems", filters={"conversation_id": conversation_id, "company_id": company_id}, order="updated_at:true", limit=20)
+    commitments = _rows("conversation_commitments", filters={"conversation_id": conversation_id, "company_id": company_id}, order="updated_at:true", limit=20)
+    signals = _rows("contextual_signals", filters={"conversation_id": str(conversation_id), "company_id": str(company_id)}, order="created_at:true", limit=50)
 
     active_problem = next((p for p in problems if p.get("state") not in {"resolved", "closed"}), None)
     active_commitment = next((c for c in commitments if c.get("state") not in {"resolved", "closed"}), None)
@@ -157,6 +186,7 @@ def portal_cognitive(conversation_id: int):
 
     return {
         "status": "success",
+        "company_id": company_id,
         "conversation_id": conversation_id,
         "customer_id": conversation.get("customer_id"),
         "ticket_id": conversation.get("ticket_id"),
@@ -172,3 +202,12 @@ def portal_cognitive(conversation_id: int):
         "commitments": commitments,
         "signals": signals,
     }
+
+
+@router.get("/employees")
+def portal_employees(context=Depends(require_portal_admin)):
+    company_id = context["company_id"]
+    people = _rows("company_people", filters={"company_id": company_id, "is_active": True}, order="full_name:false", limit=200)
+    for person in people:
+        person["roles"] = _rows("company_person_roles", filters={"company_person_id": person["id"], "is_active": True}, order="authority_level:true", limit=20)
+    return {"status": "success", "company_id": company_id, "employees": people}
