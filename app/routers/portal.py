@@ -28,6 +28,11 @@ def _one_for_company(table: str, record_id: int, company_id: int, select: str = 
     return rows[0] if rows else None
 
 
+def _customer_ids(company_id: int) -> set[int]:
+    rows = _rows("customers", select="id", filters={"company_id": company_id, "is_active": True}, limit=10000)
+    return {int(row["id"]) for row in rows if row.get("id") is not None}
+
+
 def _signal_evidence(signal: dict) -> str | None:
     evidence = signal.get("evidence")
     if not evidence:
@@ -121,34 +126,45 @@ def portal_conversations(
     effective_company_id = context["company_id"]
     if company_id is not None and company_id != effective_company_id:
         raise HTTPException(status_code=403, detail="Cross-company access is not allowed")
-    filters = {"company_id": effective_company_id}
+    customer_ids = _customer_ids(effective_company_id)
     if customer_id is not None:
-        customer = _one_for_company("customers", customer_id, effective_company_id, select="id")
-        if not customer:
+        if customer_id not in customer_ids:
             raise HTTPException(status_code=404, detail="Customer not found")
-        filters["customer_id"] = customer_id
-    rows = _rows("conversations", filters=filters, order="updated_at:true", limit=limit)
+        customer_ids = {customer_id}
+    if not customer_ids:
+        return {"status": "success", "company_id": effective_company_id, "conversations": []}
+    rows = _rows("conversations", order="updated_at:true", limit=min(max(limit * 3, limit), 500))
+    rows = [row for row in rows if row.get("customer_id") in customer_ids][:limit]
     return {"status": "success", "company_id": effective_company_id, "conversations": rows}
 
 
 @router.get("/conversations/{conversation_id}")
 def portal_conversation(conversation_id: int, context=Depends(require_portal_user)):
-    conversation = _one_for_company("conversations", conversation_id, context["company_id"])
+    company_id = context["company_id"]
+    conversation = next(
+        (row for row in _rows("conversations", filters={"id": conversation_id}, limit=1)
+         if row.get("customer_id") in _customer_ids(company_id)),
+        None,
+    )
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     messages = _rows(
         "messages",
-        filters={"conversation_id": conversation_id, "company_id": context["company_id"]},
+        filters={"conversation_id": conversation_id, "company_id": company_id},
         order="created_at:false",
         limit=100,
     )
-    return {"status": "success", "company_id": context["company_id"], "conversation": conversation, "messages": messages}
+    return {"status": "success", "company_id": company_id, "conversation": conversation, "messages": messages}
 
 
 @router.get("/cognitive/{conversation_id}")
 def portal_cognitive(conversation_id: int, context=Depends(require_portal_user)):
     company_id = context["company_id"]
-    conversation = _one_for_company("conversations", conversation_id, company_id)
+    conversation = next(
+        (row for row in _rows("conversations", filters={"id": conversation_id}, limit=1)
+         if row.get("customer_id") in _customer_ids(company_id)),
+        None,
+    )
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
