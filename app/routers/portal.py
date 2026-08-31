@@ -1,16 +1,20 @@
-"""Support Portal read API.
+"""Protected Support Portal read API.
 
 The browser talks to BiteFixes Backend; privileged Supabase credentials never
-leave the server. This router exposes a compact, read-only projection for the
-WordPress Support Portal and the Bitey cognitive state panel.
+leave the server. Portal data is available only to authenticated administrators.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database.supabase import supabase_manager
+from app.routers.portal_auth import require_portal_admin
 
-router = APIRouter(prefix="/portal", tags=["Support Portal"])
+router = APIRouter(
+    prefix="/portal",
+    tags=["Support Portal"],
+    dependencies=[Depends(require_portal_admin)],
+)
 
 
 def _rows(table: str, *, select: str = "*", filters: dict | None = None,
@@ -36,8 +40,6 @@ def _signal_evidence(signal: dict) -> str | None:
     evidence = signal.get("evidence")
     if not evidence:
         return None
-    # Existing rows can contain mojibake from an earlier encoding boundary.
-    # Decode only when the round-trip is clearly reversible; never invent text.
     if "Ã" in evidence or "â" in evidence:
         try:
             repaired = evidence.encode("latin-1").decode("utf-8")
@@ -135,8 +137,6 @@ def portal_cognitive(conversation_id: int):
             if value:
                 known_facts.append(f"{label}: {value}" if label else value)
 
-    # If no formal problem/commitment exists yet, derive only observable facts
-    # from detected signals. This is a projection, not a new inference.
     if not known_facts:
         for signal in reversed(signals):
             value = signal.get("signal_value")
@@ -148,14 +148,9 @@ def portal_cognitive(conversation_id: int):
 
     missing = active_commitment.get("missing_requirements", []) if active_commitment else []
     next_action = active_commitment.get("next_action") if active_commitment else None
-
-    # Do not invent objective/problem/action. Only expose values persisted in
-    # the canonical cognitive records or directly observable signals.
     active_objective = active_commitment.get("objective") if active_commitment else None
     current_problem = active_problem.get("problem_summary") if active_problem else None
-    evidence = active_problem.get("evidence") if active_problem else [
-        _signal_evidence(s) for s in signals if _signal_evidence(s)
-    ]
+    evidence = active_problem.get("evidence") if active_problem else [_signal_evidence(s) for s in signals if _signal_evidence(s)]
     evidence = list(dict.fromkeys(evidence))
     contradictions = [s for s in signals if str(s.get("signal_type", "")).lower() in {"contradiction", "conflict"}]
     confidence = (active_problem or active_commitment or {}).get("confidence")
