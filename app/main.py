@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.core.tenant import tenant_config
 from app.database.supabase import supabase_manager
 from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal, portal_auth
 from app.ai.runtime import build_ai_orchestrator
@@ -87,7 +88,8 @@ app.include_router(portal.router)
 
 @app.get("/")
 def root():
-    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer"}
+    tenant = tenant_config()
+    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "tenant": tenant["tenant_key"], "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer"}
 
 
 @app.get("/health")
@@ -97,12 +99,14 @@ def health():
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "support_portal_auth": "/portal/auth", "status": "running"}
+    tenant = tenant_config()
+    return {"company": tenant["company_name"], "assistant": tenant["assistant_name"], "ai_engine": "Bitey", "database": "Supabase", "runtime": "Render", "architecture": "single-cloud-brain-multi-tenant", "customer_channels": tenant["customer_channels"], "tenant": tenant, "portal": {"public_site_login": False, "internal_portal_login": True, "authorized_roles": ["owner", "admin", "technician", "worker"]}, "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "support_portal_auth": "/portal/auth", "status": "running"}
 
 
 @app.get("/gateway/status")
 def gateway_status():
-    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/portal", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "identity": "centralized-customer-conversation-memory"}
+    tenant = tenant_config()
+    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/portal", "customer_channels": tenant["customer_channels"], "tenant": tenant["tenant_key"], "identity": "centralized-customer-conversation-memory-with-tenant-isolation"}
 
 
 @app.get("/ai/status")
