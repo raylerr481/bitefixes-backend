@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal
+from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal, portal_auth
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
@@ -81,6 +81,7 @@ app.include_router(webhooks.router)
 app.include_router(company_profile.router)
 app.include_router(bitey_trainer.router)
 app.include_router(supportcandy.router)
+app.include_router(portal_auth.router)
 app.include_router(portal.router)
 
 
@@ -96,7 +97,7 @@ def health():
 
 @app.get("/info")
 def info():
-    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "status": "running"}
+    return {"company": "BiteFixes", "ai_engine": "Bitey", "database": "Supabase", "architecture": "single-cloud-brain-multi-channel", "channels": ["website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api", "portal"], "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "support_portal_auth": "/portal/auth", "status": "running"}
 
 
 @app.get("/gateway/status")
