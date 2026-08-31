@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.tenant import tenant_config
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal, portal_auth
+from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal, portal_auth, crm
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
     print("Web Intelligence : ENABLED")
     print("Bitey Gateway : ENABLED")
     print("Bitey Trainer : ENABLED")
+    print("CRM Core : ENABLED")
     await _register_telegram_webhook()
     yield
     print("BiteFixes Backend shutting down...")
@@ -84,29 +85,30 @@ app.include_router(bitey_trainer.router)
 app.include_router(supportcandy.router)
 app.include_router(portal_auth.router)
 app.include_router(portal.router)
+app.include_router(crm.router)
 
 
 @app.get("/")
 def root():
     tenant = tenant_config()
-    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "tenant": tenant["tenant_key"], "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer"}
+    return {"project": settings.PROJECT_NAME, "version": settings.VERSION, "engine": settings.ENGINE, "status": "online", "tenant": tenant["tenant_key"], "architecture": "Bitey Cloud Gateway + Bitey Core + Supabase + governed free-only AI providers + Bitey Trainer + CRM Core"}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud", "bitey_trainer": "ready"}
+    return {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud", "bitey_trainer": "ready", "crm": "ready"}
 
 
 @app.get("/info")
 def info():
     tenant = tenant_config()
-    return {"company": tenant["company_name"], "assistant": tenant["assistant_name"], "ai_engine": "Bitey", "database": "Supabase", "runtime": "Render", "architecture": "single-cloud-brain-multi-tenant", "customer_channels": tenant["customer_channels"], "tenant": tenant, "portal": {"public_site_login": False, "internal_portal_login": True, "authorized_roles": ["owner", "admin", "technician", "worker"]}, "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "support_portal_auth": "/portal/auth", "status": "running"}
+    return {"company": tenant["company_name"], "assistant": tenant["assistant_name"], "ai_engine": "Bitey", "database": "Supabase", "runtime": "Render", "architecture": "single-cloud-brain-multi-tenant", "customer_channels": tenant["customer_channels"], "tenant": tenant, "portal": {"public_site_login": False, "internal_portal_login": True, "authorized_roles": ["owner", "admin", "technician", "worker"]}, "crm": {"lifecycle": ["customer", "conversation", "lead", "opportunity", "sale", "service", "ticket"], "entrypoint": "/portal/crm"}, "chat_gateway": "/chat", "webhook_gateway": "/webhooks/{channel}", "company_profile_ingestion": "/company-profile/import", "trainer_gateway": "/bitey-trainer", "support_portal_sync": "/integrations/supportcandy/sync", "support_portal_api": "/portal", "support_portal_auth": "/portal/auth", "status": "running"}
 
 
 @app.get("/gateway/status")
 def gateway_status():
     tenant = tenant_config()
-    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/portal", "customer_channels": tenant["customer_channels"], "tenant": tenant["tenant_key"], "identity": "centralized-customer-conversation-memory-with-tenant-isolation"}
+    return {"gateway": "bitey-cloud", "status": "ready", "brain": "bitey-core", "single_entrypoint": "/chat", "webhook_entrypoint": "/webhooks/{channel}", "trainer_entrypoint": "/bitey-trainer", "support_portal_entrypoint": "/portal", "crm_entrypoint": "/portal/crm", "customer_channels": tenant["customer_channels"], "tenant": tenant["tenant_key"], "identity": "centralized-customer-conversation-memory-with-tenant-isolation-and-crm-lifecycle"}
 
 
 @app.get("/ai/status")
