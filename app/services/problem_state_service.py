@@ -1,9 +1,4 @@
-"""General semantic conversation/problem state for Bitey.
-
-The resolver is context-first: pending questions and explicit service goals are
-resolved before classifying isolated words. Object/model mentions are evidence,
-not symptoms, and signal matching never uses unsafe substring matches.
-"""
+"""Context-first cognitive problem/goal state resolver for Bitey."""
 from __future__ import annotations
 import re
 from typing import Any
@@ -34,11 +29,13 @@ _MODEL_PATTERNS = (
 _OBJECTS = {
     "phone": ("telefono", "teléfono", "movil", "móvil", "celular", "smartphone", "android", "iphone"),
     "computer": ("notebook", "laptop", "computadora", "ordenador", "pc", "windows", "macbook", "linux"),
-    "tablet": ("tablet", "ipad"), "network": ("router", "switch", "wifi", "wi-fi", "red", "access point", "punto de acceso"),
-    "server": ("servidor", "server", "windows server", "proxmox"), "printer": ("impresora", "printer"),
-    "camera": ("camara", "cámara", "cctv", "dvr", "nvr"), "business_system": ("crm", "saas", "wordpress", "woocommerce", "empresa", "negocio"),
+    "tablet": ("tablet", "ipad"),
+    "network": ("router", "switch", "wifi", "wi-fi", "red", "access point", "punto de acceso"),
+    "server": ("servidor", "server", "windows server", "proxmox"),
+    "printer": ("impresora", "printer"),
+    "camera": ("camara", "cámara", "cctv", "dvr", "nvr"),
+    "business_system": ("crm", "saas", "wordpress", "woocommerce", "empresa", "negocio"),
 }
-
 _REQUEST_PATTERNS = re.compile(r"\b(?:quiero|quisiera|deseo|necesito|me gustaria|me gustaría|busco|solicito|pretendo)\b.*\b(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|implementar|poner|arreglar|reparar|cambiar)\b", re.I)
 _REQUEST_PATTERNS_2 = re.compile(r"\b(?:instalar|crear|configurar|comprar|contratar|montar|adquirir|implementar|poner|arreglar|reparar|cambiar)\b", re.I)
 _SYMPTOM_PATTERNS = re.compile(r"\b(?:no funciona|no muestra|no se ve|se corta|falla|fallando|falló|fallo|problema|problemas|aver[ií]a|averiado|roto|dañado|lento|lenta|no enciende|no inicia|no conecta|no carga|quebrada|quebrado)\b", re.I)
@@ -51,7 +48,6 @@ _PENDING_FIELD_PATTERNS = (
 )
 
 def _contains(text: str, terms: tuple[str, ...]) -> bool:
-    """Match complete words/phrases; never allow `red` to match `redmi`."""
     return any(re.search(r"(?<![\wÀ-ÿ])" + re.escape(term) + r"(?![\wÀ-ÿ])", text, re.I) for term in terms)
 
 def _score_signals(text: str) -> dict[str, int]:
@@ -82,7 +78,6 @@ def _extract_objects(text: str) -> list[str]:
     return [name for name, terms in _OBJECTS.items() if _contains(text, terms)]
 
 def _pending_question(history: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Infer the latest unanswered field requested by Bitey."""
     for row in reversed(history[-6:]):
         sender = str(row.get("sender_type") or row.get("role") or "").lower()
         if sender not in {"assistant", "agent", "bot"}:
@@ -100,6 +95,9 @@ def _pending_question(history: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _is_explicit_service_request(text: str) -> bool:
     return bool(_REQUEST_PATTERNS.search(text) or _REQUEST_PATTERNS_2.search(text))
 
+def _previous_service_goal(user_texts: list[str]) -> bool:
+    return any(_is_explicit_service_request(text) for text in user_texts)
+
 def build_problem_state(history: list[dict[str, Any]], current_message: str) -> dict[str, Any]:
     recent = history[-16:]
     user_rows = [r for r in recent if str(r.get("sender_type") or r.get("role") or "").lower() in {"customer", "user"}]
@@ -107,7 +105,6 @@ def build_problem_state(history: list[dict[str, Any]], current_message: str) -> 
     current = str(current_message or "").strip()
     prior_user = " ".join(user_texts)
     all_user = " ".join(user_texts + [current])
-
     current_signals_scores = _score_signals(current)
     prior_signals_scores = _score_signals(prior_user)
     current_signals = list(current_signals_scores)
@@ -120,9 +117,6 @@ def build_problem_state(history: list[dict[str, Any]], current_message: str) -> 
     pending = _pending_question(recent)
     request_present = _is_explicit_service_request(current)
     auxiliary_request = bool(_AUXILIARY_REQUEST_PATTERNS.search(current))
-
-    # A short answer to a pending field is contextual evidence. Explicit symptom
-    # evidence wins because it can legitimately indicate a new problem.
     pending_answer = bool(pending and not current_explicit_symptom and not current_signals)
     detail_only = bool(user_texts and not current_explicit_symptom and not current_signals and (current_objects or model or location or pending or auxiliary_request))
 
@@ -136,9 +130,6 @@ def build_problem_state(history: list[dict[str, Any]], current_message: str) -> 
         active_category = None
 
     labels = {"security":"posible problema de seguridad","performance":"problema de rendimiento","startup":"problema de inicio/arranque","connectivity":"problema de conectividad","power":"problema de energía/batería","display":"problema de pantalla/interfaz","audio":"problema de audio","camera":"problema de cámara/vídeo","printing":"problema de impresión","accounts":"problema de acceso/cuenta","data":"problema de datos/recuperación","physical_damage":"posible daño físico","business_ai":"problema o necesidad de sistema empresarial/IA"}
-
-    # Explicit service goals are not themselves failures/problems. The mentioned
-    # object remains useful context, but the active_problem must stay empty.
     active_problem = None if (request_present and not current_explicit_symptom) else (labels.get(active_category) if active_category else None)
     active_object = current_objects[0] if current_objects else (objects[0] if objects else None)
 
@@ -148,22 +139,26 @@ def build_problem_state(history: list[dict[str, Any]], current_message: str) -> 
     elif re.search(r"\b(taller|llevarlo|llevar el equipo|presencial)\b", all_user, re.I): customer_goal = "WORKSHOP"
     elif re.search(r"\b(cuanto cuesta|cuánto cuesta|precio|presupuesto|cotizacion|cotización)\b", all_user, re.I): customer_goal = "QUOTE"
 
-    # Explicit service goals have priority over category signals. A goal can
-    # coexist with an existing problem only when the current turn explicitly
-    # describes a symptom.
     different_problem = bool(active_category and prior_signals and current_signals and set(current_signals).isdisjoint(set(prior_signals)))
+    prior_service_goal = _previous_service_goal(user_texts)
+
     if request_present and not current_explicit_symptom:
         state, active_goal = "GOAL_REQUEST", "REQUEST_SERVICE"
     elif different_problem:
         state, active_goal = "NEW_PROBLEM", "SOLVE_PROBLEM"
     elif detail_only or pending_answer or auxiliary_request:
         state = "ENTITY_UPDATE" if pending and pending.get("field") == "model" else "CONTINUATION"
-        active_goal = "SOLVE_PROBLEM" if active_problem else ("REQUEST_SERVICE" if user_texts else None)
+        if active_problem:
+            active_goal = "SOLVE_PROBLEM"
+        elif prior_service_goal:
+            active_goal = "REQUEST_SERVICE"
+        else:
+            active_goal = None
     elif active_category:
         state, active_goal = "PROBLEM_UPDATE", "SOLVE_PROBLEM"
     else:
         state = "CONTINUATION" if user_texts else "NEW_TURN"
-        active_goal = "REQUEST_SERVICE" if request_present else None
+        active_goal = "REQUEST_SERVICE" if request_present or prior_service_goal else None
 
     confidence = 0.82 if active_goal == "REQUEST_SERVICE" else (0.72 if active_problem else 0.50)
     facts = []
@@ -179,12 +174,12 @@ def build_problem_state(history: list[dict[str, Any]], current_message: str) -> 
         hypotheses.append({"category":active_category,"confidence":min(0.55 + 0.10 * score,0.95),"basis":"current_evidence" if current_signals else "conversation_context"})
 
     return {
-        "state":state, "active_problem":active_problem, "active_category":active_category,
-        "active_object":active_object, "active_model":model, "active_location":location,
-        "active_goal":active_goal, "pending_question":pending, "pending_answer":pending_answer,
-        "symptoms":current_signals, "hypotheses":hypotheses, "customer_goal":customer_goal,
-        "confidence":round(confidence,3), "is_follow_up":bool(user_texts), "entity_only":detail_only,
-        "confirmed_facts":facts, "signal_scores":current_signals_scores or prior_signals_scores,
-        "problem_fingerprint":"|".join(x for x in (active_category or "",active_object or "") if x),
-        "recent_turns":recent,
+        "state": state, "active_problem": active_problem, "active_category": active_category,
+        "active_object": active_object, "active_model": model, "active_location": location,
+        "active_goal": active_goal, "pending_question": pending, "pending_answer": pending_answer,
+        "symptoms": current_signals, "hypotheses": hypotheses, "customer_goal": customer_goal,
+        "confidence": round(confidence,3), "is_follow_up": bool(user_texts), "entity_only": detail_only,
+        "confirmed_facts": facts, "signal_scores": current_signals_scores or prior_signals_scores,
+        "problem_fingerprint": "|".join(x for x in (active_category or "", active_object or "") if x),
+        "recent_turns": recent,
     }
