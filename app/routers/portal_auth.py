@@ -5,7 +5,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from supabase import create_client
 
 from app.config import settings
@@ -15,7 +15,7 @@ bearer = HTTPBearer(auto_error=False)
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
@@ -36,7 +36,6 @@ def _auth_client():
 def require_portal_admin(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
     try:
         user_response = _auth_client().auth.get_user(credentials.credentials)
         user = getattr(user_response, "user", None)
@@ -56,7 +55,7 @@ def require_portal_admin(credentials: HTTPAuthorizationCredentials | None = Depe
 @router.post("/login")
 def portal_login(payload: LoginRequest):
     allowed = _allowed_admin_emails()
-    email = str(payload.email).strip().lower()
+    email = payload.email.strip().lower()
     if not allowed or email not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Portal administrator access required")
     try:
