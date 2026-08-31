@@ -42,10 +42,22 @@ async def send_external_response(*, channel: str, response: str, event: dict[str
         return {"status": "sent", "channel": channel, "provider": "telegram", "provider_result": result}
 
     if channel == "whatsapp":
-        token = _env(channel, "ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip(); phone_id = _env(channel, "PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
-        if not token or not phone_id or not recipient: return {"status": "not_configured", "channel": channel, "reason": "whatsapp_credentials_or_recipient_missing"}
-        result = await _post_json(f"https://graph.facebook.com/v23.0/{phone_id}/messages", {"messaging_product":"whatsapp","to":recipient,"type":"text","text":{"preview_url":False,"body":text}}, {"Authorization":f"Bearer {token}"})
-        return {"status":"sent","channel":channel,"provider":"whatsapp_cloud_api","provider_result":result}
+        token = _env(channel, "ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+        phone_id = _env(channel, "PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+        graph_version = _env(channel, "GRAPH_API_VERSION", "v23.0") or "v23.0"
+        if not token or not phone_id or not recipient:
+            return {"status": "not_configured", "channel": channel, "reason": "whatsapp_credentials_or_recipient_missing"}
+        result = await _post_json(
+            f"https://graph.facebook.com/{graph_version}/{phone_id}/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": recipient,
+                "type": "text",
+                "text": {"preview_url": False, "body": text},
+            },
+            {"Authorization": f"Bearer {token}"},
+        )
+        return {"status": "sent", "channel": channel, "provider": "whatsapp_cloud_api", "graph_api_version": graph_version, "provider_result": result}
 
     if channel == "messenger":
         token = _env(channel, "PAGE_ACCESS_TOKEN") or os.getenv("MESSENGER_PAGE_ACCESS_TOKEN", "").strip()
