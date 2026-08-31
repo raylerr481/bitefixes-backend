@@ -5,12 +5,16 @@ on:
     branches: [main]
     paths:
       - "app/services/problem_state_service.py"
+      - "app/services/cognitive_evidence.py"
       - "tests/test_continuity_harness.py"
+      - "tests/test_cognitive_evidence.py"
       - ".github/workflows/test-bitey-continuity.yml"
   pull_request:
     paths:
       - "app/services/problem_state_service.py"
+      - "app/services/cognitive_evidence.py"
       - "tests/test_continuity_harness.py"
+      - "tests/test_cognitive_evidence.py"
       - ".github/workflows/test-bitey-continuity.yml"
   workflow_dispatch:
 
@@ -34,4 +38,4 @@ jobs:
           pip install pytest
 
       - name: Run continuity harness
-        run: pytest -q tests/test_continuity_harness.py
+        run: pytest -q tests/test_continuity_harness.py tests/test_cognitive_evidence.py
