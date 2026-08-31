@@ -1,85 +1,130 @@
 # BiteFixes Backend
 
-`bitefixes-backend` is the **specialized enterprise backend and intelligence system for BiteFixes.com**.
+`bitefixes-backend` is the **specialized enterprise backend and intelligence system for BiteFixes.com** and the production pilot for the configurable Bitey IA CRM SaaS.
 
-It powers BiteFixes CRM SaaS and its authorized business workflows. It is not the general Bitey IA Supracerebro.
+The existing FastAPI + Supabase + Render architecture is preserved and extended incrementally. This repository is not replaced by a new backend.
 
-## Bitey IA Empresarial
+## BiteFixes pilot model
 
-BiteFixes uses **Bitey IA Empresarial**, the contextual enterprise manifestation of Bitey IA. It maintains Bitey IA's architecture, capabilities and general intelligence while operating with authorized BiteFixes business context.
+BiteFixes.com remains a public business website. **Authentication is required only for the private Support Portal**, where authorized BiteFixes personnel manage customers, employees, conversations, tickets, services and sales.
 
-```text
-BITEY IA
-Supracerebro
-     │
-     ▼
-BITEY IA EMPRESARIAL
-     │
-     ▼
-BiteFixes Backend
-     │
-     ├── CRM
-     ├── Customers
-     ├── Tickets
-     ├── Services
-     ├── Company knowledge
-     ├── Conversations/memory
-     ├── Workflows
-     └── authorized AI capabilities
-```
+Customers do not authenticate to the administrative Support Portal. They reach the business through the three customer channels:
 
-The Bitey IA Empresarial context is used within authorized BiteFixes channels. It does not restrict or replace the general Bitey IA product.
-
-## Channels
-
-- `bitefixes-web` — BiteFixes.com website/frontend and contextual AI entry point.
-- `bitefixes-app` — BiteFixes mobile channel.
-- `bitey-ai` — WordPress enterprise integration channel.
-
-The floating assistant on BiteFixes Web/App is **Bitey IA Empresarial** and uses the authorized BiteFixes CRM/business context.
-
-## Core responsibilities
-
-- FastAPI API and enterprise runtime.
-- Supabase persistence.
-- Company AI Profile and business context.
-- Customer and conversation memory.
-- Company knowledge and retrieval.
-- Intelligent web research.
-- Intent detection and service resolution.
-- Tickets, customers, services and workflows.
-- Authorized external AI collaboration.
-- Tenant isolation and permissions.
-- Observability and production deployment.
-
-## Context boundary
-
-BiteFixes context includes authorized company/site information, CRM records, customers, tickets, services, conversations, approved documents, knowledge and workflows.
-
-This context is **scoped to BiteFixes**. Private customer/company data must never become unrestricted general Bitey IA memory or leak across tenants.
-
-Authorized, privacy-safe/generalizable knowledge or capabilities may enrich the wider Bitey IA ecosystem without exposing private operational data.
-
-## Relationship with Bitey IA
+- WhatsApp
+- Telegram
+- Configurable web Bitey widget/globe
 
 ```text
-Bitey IA
-= general AI / Supracerebro
+Public BiteFixes.com
+       │
+       ├── services / sales / contact
+       │
+       └── Support Portal (private)
+                 │
+                 └── authenticated staff
+                       ├── owner
+                       ├── admin
+                       ├── technician
+                       └── worker
 
-Bitey IA Empresarial
-= same Bitey IA architecture/capabilities + authorized enterprise context
-
-BiteFixes Backend
-= authoritative BiteFixes CRM/business backend and enterprise intelligence layer
+Customer channels
+   ├── WhatsApp ─┐
+   ├── Telegram ─┼──> Bitey Conversation Engine
+   └── Web widget┘            │
+                              ▼
+                         CRM + IA + Memory
+                              │
+                           Supabase
+                              │
+                           Render
 ```
 
-The systems relate and can enrich one another through explicit APIs/contracts, but BiteFixes does not replace or limit the general Bitey IA Supracerebro.
+## SaaS evolution
+
+BiteFixes is the first real production tenant. The same engine is being made configurable for other companies without changing the core architecture.
+
+Each tenant can eventually define its own:
+
+- company/display name
+- assistant name
+- logo and visual identity
+- language and currency
+- services and business knowledge
+- authorized employees and roles
+- enabled customer channels
+
+The internal engine remains **Bitey**, while the customer-facing assistant name and Portal branding can be different for each tenant (white-label capable).
+
+## Data boundary
+
+The backend treats the authenticated employee context as authoritative for private Portal access. Customer records and operational data are scoped to the employee's company/tenant.
+
+```text
+Tenant A → customers, conversations, tickets, services, sales
+Tenant B → customers, conversations, tickets, services, sales
+
+Tenant A data MUST NOT be visible to Tenant B.
+```
+
+## Core CRM flow
+
+```text
+Customer
+  ↓
+Conversation
+  ↓
+Lead / Opportunity
+  ↓
+Sale
+  ↓
+Service
+  ↓
+Ticket / Resolution
+  ↓
+History + Memory
+```
+
+Bitey should turn channel conversations into authorized CRM actions rather than acting only as a chatbot.
+
+## Architecture
+
+- FastAPI backend remains the authoritative business/API layer.
+- Supabase remains the canonical persistence layer.
+- Render remains the production runtime.
+- Bitey remains the intelligence/conversation engine.
+- WhatsApp, Telegram and Web are the primary customer ingress channels.
+- The Support Portal is the private operational interface for company personnel.
+- Tenant configuration is additive and backward-compatible with the BiteFixes pilot.
+
+## API configuration metadata
+
+`/info` and `/gateway/status` expose non-secret tenant presentation metadata and the canonical three customer channels. Secrets and authoritative business data remain server-side.
+
+Environment-backed presentation values include:
+
+- `TENANT_KEY`
+- `TENANT_DISPLAY_NAME`
+- `TENANT_ASSISTANT_NAME`
+- `TENANT_LOGO_URL`
+- `TENANT_WHITE_LABEL`
+
+These settings do not replace database authorization or tenant isolation.
 
 ## Security
 
 - Provider credentials remain server-side.
-- Tenant and permission boundaries are mandatory.
-- Client applications never hold authoritative business intelligence.
-- External providers are collaborators, not the source of truth.
+- Public website pages do not require Portal authentication.
+- Private Portal endpoints require an authenticated authorized employee.
+- Owner/Admin permissions are required for employee-management views.
+- Tenant/company boundaries are mandatory.
+- Browser-supplied company identity is never authoritative.
+- Customer/company private data must not leak across tenants.
 - Business-critical decisions remain controlled by the backend.
-- Tests must cover API, security, memory, workflows and integrations.
+
+## Related repositories
+
+- `bitefixes-web` — public BiteFixes website/frontend and Web channel.
+- `bitey-ai` — configurable WordPress enterprise/Web widget integration.
+- `bitefixes-app` — mobile channel; future customer/employee experiences can use the same authorized APIs.
+
+The goal is to **improve and generalize the existing BiteFixes product into Bitey IA CRM SaaS**, not to replace the working system or remove existing capabilities.
