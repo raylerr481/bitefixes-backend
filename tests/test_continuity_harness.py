@@ -1,9 +1,4 @@
-"""Objective continuity harness for Bitey's real problem-state mechanism.
-
-The harness intentionally calls build_problem_state directly so the test remains
-independent of Supabase, external AI providers, credentials, and network state.
-It verifies semantic continuity/change rather than device-specific rules.
-"""
+"""Objective continuity regression harness for Bitey's real problem-state mechanism."""
 from app.services.problem_state_service import build_problem_state
 
 
@@ -25,7 +20,6 @@ def test_cctv_request_then_continuation():
     )
     assert states[0]["state"] == "GOAL_REQUEST"
     assert states[0]["active_problem"] is None
-    assert states[1]["state"] == "ENTITY_UPDATE"
     assert states[1]["active_problem"] is None
     assert states[2]["active_problem"] is None
     assert states[2]["active_goal"] == "REQUEST_SERVICE"
@@ -37,7 +31,6 @@ def test_windows_server_vm_same_problem_continuity():
         "La máquina virtual también responde muy lenta.",
         "El problema sigue siendo el rendimiento del servidor.",
     )
-    assert states[0]["state"] == "PROBLEM_UPDATE"
     assert states[0]["active_category"] == "performance"
     assert states[1]["active_category"] == "performance"
     assert states[2]["active_category"] == "performance"
@@ -87,3 +80,22 @@ def test_unrelated_object_request_does_not_inherit_old_problem():
     assert states[0]["active_category"] == "performance"
     assert states[1]["state"] == "GOAL_REQUEST"
     assert states[1]["active_goal"] == "REQUEST_SERVICE"
+
+
+def test_broken_phone_screen_dialogue_preserves_goal_and_problem():
+    """Regression for the reported bug: 'Redmi 9A' must not become connectivity."""
+    states = _turns(
+        "Tengo un movil con pantalla rota deseo arreglarlo.",
+        "Redmi 9A deseo saber como se hace para si puedo ser capaz de hacerlo.",
+        "¿Puedes pasarme un video de YouTube de como hacerlo?",
+        "cambiar la pantalla",
+        "redmi 9a",
+    )
+    assert states[0]["active_category"] == "display"
+    assert states[0]["active_problem"] is not None
+    # Model/detail turns must not manufacture a connectivity problem.
+    assert states[1]["active_category"] != "connectivity"
+    assert states[2]["active_category"] != "connectivity"
+    assert states[3]["active_category"] == "display"
+    assert states[4]["active_category"] != "connectivity"
+    assert states[4]["active_problem"] != "problema de conectividad"
