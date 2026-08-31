@@ -1,0 +1,37 @@
+name: Test Bitey Continuity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/services/problem_state_service.py"
+      - "tests/test_continuity_harness.py"
+      - ".github/workflows/test-bitey-continuity.yml"
+  pull_request:
+    paths:
+      - "app/services/problem_state_service.py"
+      - "tests/test_continuity_harness.py"
+      - ".github/workflows/test-bitey-continuity.yml"
+  workflow_dispatch:
+
+jobs:
+  continuity:
+    name: Bitey Continuity Harness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
+      - name: Run continuity harness
+        run: pytest -q tests/test_continuity_harness.py
