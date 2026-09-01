@@ -1,10 +1,13 @@
-"""Protected Support Portal read API."""
+"""Protected Support Portal API."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.database.supabase import supabase_manager
 from app.routers.portal_auth import require_portal_admin, require_portal_user
+from app.services.ticket_service import process_ticket, update_ticket
 
 router = APIRouter(prefix="/portal", tags=["Support Portal"])
 
@@ -114,6 +117,104 @@ def portal_ticket(ticket_id: int, context=Depends(require_portal_user)):
         limit=100,
     )
     return {"status": "success", "company_id": context["company_id"], "ticket": ticket, "messages": messages}
+
+
+@router.post("/tickets", status_code=201)
+def portal_create_ticket(
+    payload: dict[str, Any] = Body(...),
+    context=Depends(require_portal_user),
+):
+    """Create a ticket from the protected portal tenant context.
+
+    company_id is deliberately taken from the authenticated context rather
+    than from the client payload. Related records are checked against the
+    same company before the shared ticket service is called.
+    """
+    company_id = context["company_id"]
+
+    customer_id = payload.get("customer_id")
+    if customer_id is None:
+        raise HTTPException(status_code=422, detail="customer_id is required")
+    try:
+        customer_id = int(customer_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="customer_id must be an integer")
+
+    customer = _one_for_company("customers", customer_id, company_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found for this company")
+
+    service_id = payload.get("service_id")
+    if service_id is not None:
+        try:
+            service_id = int(service_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="service_id must be an integer")
+        if not _one_for_company("services", service_id, company_id):
+            raise HTTPException(status_code=404, detail="Service not found for this company")
+
+    device_id = payload.get("device_id")
+    if device_id is not None:
+        try:
+            device_id = int(device_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="device_id must be an integer")
+        device = _one_for_company("customer_devices", device_id, company_id)
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found for this company")
+        if device.get("customer_id") not in {customer_id, str(customer_id)}:
+            raise HTTPException(status_code=409, detail="Device does not belong to the selected customer")
+
+    technician_id = payload.get("technician_id")
+    if technician_id is not None:
+        try:
+            technician_id = int(technician_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="technician_id must be an integer")
+        technician = _one_for_company("company_people", technician_id)
+        if not technician or not technician.get("is_active", True):
+            raise HTTPException(status_code=404, detail="Technician not found for this company")
+
+    description = str(payload.get("description") or "").strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="description is required")
+
+    ticket = process_ticket(
+        company_id=company_id,
+        customer_id=customer_id,
+        service_id=service_id,
+        intent=payload.get("intent"),
+        description=description,
+        title=str(payload.get("title") or "Solicitud de soporte").strip(),
+        language=str(payload.get("language") or "es"),
+        channel=str(payload.get("channel") or "portal"),
+        ticket_type=str(payload.get("ticket_type") or "technical_support"),
+    )
+    if not ticket:
+        raise HTTPException(status_code=500, detail="Unable to create or retrieve ticket")
+
+    ticket_id = ticket.get("id")
+    extra = {}
+    if technician_id is not None:
+        extra["technician_id"] = technician_id
+    if device_id is not None:
+        extra["device_id"] = device_id
+    if payload.get("priority"):
+        extra["priority"] = payload["priority"]
+    if payload.get("notes"):
+        extra["notes"] = payload["notes"]
+    if extra and ticket_id is not None:
+        updated = update_ticket(ticket_id, extra)
+        if updated:
+            ticket = updated
+
+    return {
+        "status": "success",
+        "company_id": company_id,
+        "ticket": ticket,
+        "created_by": context.get("user_id"),
+        "cognitive_projection": "enabled",
+    }
 
 
 @router.get("/conversations")
