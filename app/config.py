@@ -25,7 +25,7 @@ class Settings:
 
     CORS_ORIGINS = [
         origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "https://www.bitefixes.com").split(",")
+        for origin in os.getenv("CORS_ORIGINS", "https://bitefixes.com,https://www.bitefixes.com").split(",")
         if origin.strip()
     ]
 
