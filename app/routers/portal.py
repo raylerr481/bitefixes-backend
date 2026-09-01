@@ -26,6 +26,14 @@ def _rows(table: str, *, select: str = "*", filters: dict | None = None,
     return response.data or []
 
 
+def _count(table: str, *, filters: dict | None = None) -> int:
+    query = supabase_manager.table(table).select("id", count="exact", head=True)
+    for column, value in (filters or {}).items():
+        query = query.eq(column, value)
+    response = query.execute()
+    return int(response.count or 0)
+
+
 def _one_for_company(table: str, record_id: int, company_id: int, select: str = "*"):
     rows = _rows(table, select=select, filters={"id": record_id, "company_id": company_id}, limit=1)
     return rows[0] if rows else None
@@ -61,6 +69,39 @@ def portal_status(context=Depends(require_portal_user)):
         "cognitive_projection": "enabled",
         "company_id": context["company_id"],
         "role": context["role"],
+    }
+
+
+@router.get("/summary")
+def portal_summary(context=Depends(require_portal_user)):
+    """Return exact tenant-scoped totals for the dashboard.
+
+    Counts are calculated in Supabase rather than from paginated API payloads,
+    so the dashboard never mistakes a request limit for the real total.
+    """
+    company_id = context["company_id"]
+    customers = _count("customers", filters={"company_id": company_id, "is_active": True})
+    tickets = _count("tickets", filters={"company_id": company_id})
+    tickets_open = _count("tickets", filters={"company_id": company_id, "status": "open"})
+    tickets_closed = _count("tickets", filters={"company_id": company_id, "status": "closed"})
+    employees = _count("company_people", filters={"company_id": company_id, "is_active": True})
+
+    customer_ids = _customer_ids(company_id)
+    conversations = 0
+    if customer_ids:
+        query = supabase_manager.table("conversations").select("id", count="exact", head=True)
+        query = query.in_("customer_id", list(customer_ids))
+        conversations = int(query.execute().count or 0)
+
+    return {
+        "status": "success",
+        "company_id": company_id,
+        "customers_total": customers,
+        "tickets_total": tickets,
+        "tickets_open": tickets_open,
+        "tickets_closed": tickets_closed,
+        "conversations_total": conversations,
+        "employees_total": employees,
     }
 
 
