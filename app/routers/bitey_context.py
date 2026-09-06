@@ -3,11 +3,15 @@
 This endpoint exposes only tenant-scoped enterprise context requested by Bitey.
 It does not change the existing BiteFixes chat/CRM context pipeline.
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database.supabase import supabase_manager
 from app.security.bitey_context_auth import require_bitey_context_key
 
-router = APIRouter(prefix="/bitey-context", tags=["bitey-context"])
+router = APIRouter(
+    prefix="/bitey-context",
+    tags=["bitey-context"],
+    dependencies=[Depends(require_bitey_context_key)],
+)
 
 
 def _rows(table: str, company_id: str, limit: int = 1):
@@ -26,7 +30,6 @@ def _rows(table: str, company_id: str, limit: int = 1):
 
 @router.get("/company/{company_id}")
 def company_context(company_id: str, include_profile: bool = Query(True)):
-    require_bitey_context_key
     company = _rows("companies", company_id)
     profile = _rows("company_ai_profiles", company_id) if include_profile else []
     if not company and not profile:
