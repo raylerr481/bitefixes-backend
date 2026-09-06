@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.tenant import tenant_config
 from app.database.supabase import supabase_manager
-from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal, portal_auth, crm
+from app.routers import business_context, chat, customers, tickets, ai, webhooks, company_profile, bitey_trainer, supportcandy, portal, portal_auth, crm, bitey_context
 from app.ai.runtime import build_ai_orchestrator
 from app.ai.free_policy import FREE_ONLY, max_estimated_cost
 from app.integrations.woocommerce import check_connection as check_woocommerce_connection, WooCommerceConfigurationError
@@ -86,6 +86,7 @@ app.include_router(supportcandy.router)
 app.include_router(portal_auth.router)
 app.include_router(portal.router)
 app.include_router(crm.router)
+app.include_router(bitey_context.router)
 
 
 @app.get("/")
