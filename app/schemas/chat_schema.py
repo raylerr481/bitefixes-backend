@@ -14,6 +14,9 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     language_preference: str = "auto"
     preferred_contact_channel: str | None = None
+    product: str = "bitey-enterprise"
+    context_scope: str = "bitefixes"
+    source: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -25,3 +28,5 @@ class ChatResponse(BaseModel):
     language: str | None = None
     language_source: str | None = None
     preferred_contact_channel: str | None = None
+    product: str | None = None
+    context_scope: str | None = None
