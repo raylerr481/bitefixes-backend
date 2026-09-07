@@ -26,8 +26,6 @@ def _handle(request: ChatRequest, *, enterprise_only: bool = False):
         conversation_id=request.conversation_id,
         language_preference=request.language_preference,
         preferred_contact_channel=request.preferred_contact_channel,
-        product=request.product,
-        context_scope=request.context_scope,
     )
 
     if tutorial_requested(request.message) and isinstance(result, dict):
