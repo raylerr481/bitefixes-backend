@@ -1,4 +1,4 @@
-"""Free OpenRouter cognitive providers for Bitey."""
+"""Free OpenRouter cognitive provider for Bitey."""
 from __future__ import annotations
 
 import os
@@ -6,7 +6,9 @@ from typing import Any
 
 import httpx
 
-DEEPSEEK_FREE_MODEL = "deepseek/deepseek-v4-flash:free"
+OPENROUTER_FREE_MODEL = "openrouter/free"
+# Kept as a compatibility alias for older imports; DeepSeek is no longer used.
+DEEPSEEK_FREE_MODEL = OPENROUTER_FREE_MODEL
 
 
 def _extract_text(data: Any) -> str | None:
@@ -39,7 +41,7 @@ class OpenRouterProvider:
 
     def __init__(self, *, model: str | None = None) -> None:
         self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        self.model = (model or os.getenv("OPENROUTER_MODEL", DEEPSEEK_FREE_MODEL)).strip()
+        self.model = (model or os.getenv("OPENROUTER_MODEL", OPENROUTER_FREE_MODEL)).strip()
         self.timeout = float(os.getenv("AI_TIMEOUT", "20"))
         self.max_output_tokens = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "700"))
         self.free_only = os.getenv("OPENROUTER_FREE_ONLY", "true").lower() != "false"
@@ -56,7 +58,7 @@ class OpenRouterProvider:
     @staticmethod
     def is_free_model(model: str) -> bool:
         normalized = model.strip().lower()
-        return normalized == "openrouter/free" or normalized.endswith(":free")
+        return normalized == OPENROUTER_FREE_MODEL or normalized.endswith(":free")
 
     async def generate(self, prompt: str, *, context: dict[str, Any] | None = None) -> str | None:
         if not self.enabled:
