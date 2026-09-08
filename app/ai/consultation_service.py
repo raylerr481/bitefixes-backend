@@ -13,10 +13,7 @@ def _contextual_inputs(context: Dict[str, Any]) -> tuple[list[dict[str, Any]], s
     memory = context.get("memory") or {}; conversation = context.get("conversation") or {}
     state = context.get("contextual_state") or memory.get("problem_state") or {}; profile = context.get("company_ai_profile") or {}
     recent = conversation.get("recent_turns") or memory.get("recent_turns") or context.get("history") or []
-    entity = (state.get("active_problem") or conversation.get("active_problem") or memory.get("active_problem")
-              or state.get("active_object") or state.get("active_category") or conversation.get("active_object")
-              or conversation.get("active_category") or memory.get("active_object") or memory.get("active_topic")
-              or profile.get("company_name"))
+    entity = (state.get("active_problem") or conversation.get("active_problem") or memory.get("active_problem") or state.get("active_object") or state.get("active_category") or conversation.get("active_object") or conversation.get("active_category") or memory.get("active_object") or memory.get("active_topic") or profile.get("company_name"))
     goal = context.get("active_goal") or memory.get("active_goal") or state.get("active_goal") or state.get("customer_goal")
     active_url = memory.get("active_url") or state.get("active_url")
     return recent, entity, goal, active_url
@@ -25,9 +22,7 @@ def _contextual_inputs(context: Dict[str, Any]) -> tuple[list[dict[str, Any]], s
 def _research_query(message: str, context: Dict[str, Any], intent_name: str | None) -> str:
     state = context.get("contextual_state") or (context.get("memory") or {}).get("problem_state") or {}
     recent, entity, goal, active_url = _contextual_inputs(context)
-    candidates = [state.get("active_problem"), state.get("active_category"), state.get("active_object"), state.get("active_model"), state.get("active_service"),
-                  (context.get("conversation") or {}).get("active_problem"), (context.get("conversation") or {}).get("active_category"),
-                  (context.get("conversation") or {}).get("active_object"), (context.get("conversation") or {}).get("active_model"), (context.get("memory") or {}).get("last_service")]
+    candidates = [state.get("active_problem"), state.get("active_category"), state.get("active_object"), state.get("active_model"), state.get("active_service"), (context.get("conversation") or {}).get("active_problem"), (context.get("conversation") or {}).get("active_category"), (context.get("conversation") or {}).get("active_object"), (context.get("conversation") or {}).get("active_model"), (context.get("memory") or {}).get("last_service")]
     anchors=[]
     for value in candidates:
         if isinstance(value,dict): value=value.get("name") or value.get("title") or value.get("slug") or value.get("problem")
@@ -49,15 +44,21 @@ def _coherence_score(answer: str, message: str, context: Dict[str, Any]) -> tupl
     entity_only=bool(state.get("entity_only")); reasons=[]; score=1.0; answer_l=answer.lower()
     topic_terms={"security":("virus","malware","seguridad","infect","anuncio","aplicación","app"),"performance":("lento","rendimiento","memoria","cpu","optim","velocidad"),"startup":("enciende","inicia","arranca","arranque","pantalla negra","boot"),"connectivity":("wifi","internet","red","conexión","conexion","bluetooth","señal"),"power":("batería","bateria","carga","energía","energia","apaga","calienta"),"display":("pantalla","display","touch","brillo"),"audio":("audio","sonido","micrófono","microfono","altavoz"),"camera":("cámara","camara","cctv","dvr","nvr","video"),"printing":("impresora","imprime","printer","tinta","toner"),"accounts":("cuenta","contraseña","acceso","login","autentic"),"data":("datos","archivo","recuper","backup","copia"),"physical_damage":("roto","dañado","agua","golpe","pantalla"),"business_ai":("crm","saas","automat","ia","marketing","proceso")}
     request_goal=any(x in active_goal for x in ("request_service","solicitud","instalar","crear","configurar","comprar","contratar","montar","hacer","adquirir","implementar")) or str(state.get("state") or "").upper()=="GOAL_REQUEST"
-    if request_goal and not active_problem:
-        restart_markers=("qué problema","que problema","what problem","what issue","síntoma","sintoma","qué falla","que falla","avería","averia")
-        if any(term in answer_l for term in restart_markers):
-            score-=0.80; reasons.append("answer_restarts_diagnostic_for_active_request")
+    restart_markers=("qué problema","que problema","what problem","what issue","síntoma","sintoma","qué falla","que falla","avería","averia")
+    if request_goal and not active_problem and any(term in answer_l for term in restart_markers):
+        score-=0.80; reasons.append("answer_restarts_diagnostic_for_active_request")
     if entity_only and active_problem:
         allowed=topic_terms.get(category,())
         if allowed and not any(term in answer_l for term in allowed): score-=0.55; reasons.append("answer_does_not_preserve_active_problem")
-        if any(term in answer_l for term in ("qué problema","que problema","what problem","what issue")): score-=0.30; reasons.append("answer_restarts_problem_discovery")
+        if any(term in answer_l for term in restart_markers): score-=0.30; reasons.append("answer_restarts_problem_discovery")
         if active_model and active_model not in answer_l and active_object and active_object not in answer_l: score-=0.05; reasons.append("answer_drops_new_device_context")
+    # Once a startup/power problem is established, asking again for device, OS, or the basic problem is a hard continuity violation.
+    if category == "startup" or re.search(r"\b(no enciende|no prende|no arranca|no inicia)\b", active_problem):
+        repeated_fields=("qué tipo de equipo","que tipo de equipo","tipo de equipo","qué dispositivo","que dispositivo","qué sistema operativo","que sistema operativo","qué sistema","que sistema","cuál es el problema","cual es el problema","describe el problema","qué ocurre","que ocurre")
+        if any(term in answer_l for term in repeated_fields):
+            score-=0.75; reasons.append("answer_repeats_known_diagnostic_fields")
+        if any(term in answer_l for term in ("contacto","número de teléfono","numero de telefono","horario","agendar","agenda", "cita")) and not any(term in answer_l for term in ("diagnóstico","diagnostico","fuente","cable","tomacorriente","enchufe","energía","energia")):
+            score-=0.50; reasons.append("answer_requests_service_contact_before_diagnosis")
     if category=="security" and re.search(r"\b(conectividad|wifi|wi-fi|internet|datos móviles)\b",answer_l) and not re.search(r"\b(seguridad|virus|malware|anuncio|aplicación|app)\b",answer_l): score-=0.65; reasons.append("security_problem_reclassified_as_connectivity")
     return max(0.0,min(1.0,score)),reasons
 
@@ -82,7 +83,7 @@ def consult_if_valuable(*,company_id:int,message:str,language:str,intent:Dict[st
     effective_message=contextual.get("resolved_message") or message; max_providers=max(1,min(int(context.get("max_ai_providers") or 2),3)); results=consult(effective_message,language=language,context=enriched_context,max_providers=max_providers)
     if not results: return {"used":False,"reason":"no_external_ai_response","suggestions":[],"web_grounding":web,"research_query":research_query,"authority":"external_ai_council"}
     selected,evaluated=_select_coherent(results,message,enriched_context)
-    if selected is None: return {"used":False,"reason":"coherence_gate_failed","suggestions":evaluated,"web_grounding":web,"research_query":research_query,"authority":"external_ai_council","coherence_gate":{"passed":False,"rule":"reject answers that lose the active goal/problem or introduce an unrelated diagnostic domain"}}
+    if selected is None: return {"used":False,"reason":"coherence_gate_failed","suggestions":evaluated,"web_grounding":web,"research_query":research_query,"authority":"external_ai_council","coherence_gate":{"passed":False,"rule":"reject answers that lose the active goal/problem, repeat known diagnostic fields, request contact before diagnosis, or introduce an unrelated diagnostic domain"}}
     answer=str(selected.get("answer") or "").strip(); provider=str(selected.get("provider") or "unknown")
     if answer: record_candidate(company_id=company_id,message=message,provider=provider,suggestion=selected,evaluation={"authority":"external_ai_council","mode":"coherence_gated_multi_model","coherence":selected.get("coherence"),"candidate_count":len(evaluated),"bitey_is_apprentice":True},conversation_id=conversation_id)
     return {"used":True,"reason":"external_ai_council_selected","answer":answer,"provider":provider,"suggestions":evaluated,"selection":{"authority":"external_ai_council","mode":"highest_coherence_passed","provider":provider},"coherence_gate":selected.get("coherence"),"web_grounding":web,"research_query":research_query,"contextual_resolution":contextual,"process":["channel_input","enterprise_context","problem_state","contextual_resolution","web_research","multi_model_consultation","coherence_evaluation","coherence_gate","response","learning_evidence_storage","channel_output"]}
