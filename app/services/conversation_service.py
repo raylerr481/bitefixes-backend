@@ -56,7 +56,7 @@ def get_conversation(conversation_id:Any,customer_id:int|None=None):
 
 def update_conversation(conversation_id:Any,data:dict):
     try:
-        allowed_fields={"ticket_id","agent","last_intent","last_response","last_service","last_confidence","handled_by_ai","requires_human","status","closed_at","language","updated_at"}
+        allowed_fields={"ticket_id","agent","last_intent","last_response","last_service","last_confidence","handled_by_ai","requires_human","status","closed_at","language","updated_at","pending_field","pending_question","pending_options","pending_set_at","pending_expires_at"}
         clean_data={k:v for k,v in data.items() if k in allowed_fields}
         if not clean_data:return None
         clean_data["updated_at"]=_now()
@@ -64,13 +64,10 @@ def update_conversation(conversation_id:Any,data:dict):
     except Exception as error:
         print("[UPDATE CONVERSATION ERROR]",type(error).__name__,error);return None
 
-def close_conversation(conversation_id:Any):return update_conversation(conversation_id,{"status":"closed","closed_at":_now()})
+def close_conversation(conversation_id:Any):return update_conversation(conversation_id,{"status":"closed","closed_at":_now(),"pending_field":None,"pending_question":None,"pending_options":[]})
 
-def update_conversation_context(conversation_id:Any,intent:str=None,response:str=None,ticket_id:int=None,service_id:int=None,confidence:float=None,language:str=None,metadata:dict=None):
-    """Persist supported conversation fields and accept metadata for compatibility.
-    Problem state itself is persisted in bitey_problems; metadata is intentionally
-    not written to conversations because that table may not expose a metadata column.
-    """
+def update_conversation_context(conversation_id:Any,intent:str=None,response:str=None,ticket_id:int=None,service_id:int=None,confidence:float=None,language:str=None,metadata:dict=None,pending_field:str=None,pending_question:str=None,pending_options:list|None=None,pending_expires_at:str=None):
+    """Persist conversation context, including the explicit pending conversational turn."""
     data={}
     if intent:data["last_intent"]=intent
     if response:data["last_response"]=response
@@ -78,6 +75,12 @@ def update_conversation_context(conversation_id:Any,intent:str=None,response:str
     if service_id is not None:data["last_service"]=service_id
     if confidence is not None:data["last_confidence"]=float(confidence)
     if language:data["language"]=language
+    if pending_field is not None:data["pending_field"]=pending_field
+    if pending_question is not None:data["pending_question"]=pending_question
+    if pending_options is not None:data["pending_options"]=pending_options
+    if pending_field is not None or pending_question is not None or pending_options is not None:
+        data["pending_set_at"]=_now() if pending_question else None
+    if pending_expires_at is not None:data["pending_expires_at"]=pending_expires_at
     return update_conversation(conversation_id,data)
 
 def obtener_o_crear_conversacion(customer_id,channel="website"):return get_or_create_conversation(customer_id,channel)
