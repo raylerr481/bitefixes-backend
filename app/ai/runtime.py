@@ -3,14 +3,10 @@ from __future__ import annotations
 import os
 from typing import Any
 import httpx
-from .cloudflare_provider import CloudflareAIProvider
 from .groq_provider import GroqProvider
-from .openrouter_provider import OpenRouterProvider, DEEPSEEK_FREE_MODEL
-from .openai_compatible_provider import OpenAICompatibleProvider
+from .openrouter_provider import OpenRouterProvider, OPENROUTER_FREE_MODEL
 from .orchestrator import AIOrchestrator
 from .registry import AIProviderRegistry, ProviderSpec
-
-DEFAULT_HF_MODEL = "openai/gpt-oss-20b:fastest"
 
 
 def _register_database_models(registry: AIProviderRegistry, company_id: int | None) -> None:
@@ -23,60 +19,44 @@ def _register_database_models(registry: AIProviderRegistry, company_id: int | No
             if row.get("transport") != "openai_compatible" or not row.get("endpoint_url"): continue
             name = f"{row.get('provider', 'open')}-{row.get('model_name')}"
             model = str(row.get("model_name"))
-            if "qwen" in model.lower():
-                print(f"[AI PROVIDER] database_model=blocked_qwen model={model}")
+            if "qwen" in model.lower() or "gemini" in model.lower() or "deepseek" in model.lower():
+                print(f"[AI PROVIDER] database_model=blocked model={model}")
                 continue
-            provider = OpenAICompatibleProvider(name=name, model=model, endpoint=str(row.get("endpoint_url")), credential_env=str(row.get("credential_env") or ""), enabled=bool(row.get("enabled", True)))
-            registry.register(ProviderSpec(name=name, enabled=provider.enabled, priority=int(row.get("priority", 100)), cost_class=str(row.get("cost_class") or "free"), capabilities=tuple(row.get("capabilities") or ("general_reasoning",)), provider=provider))
+            provider = OpenRouterProvider(model=model) if str(row.get("provider", "")).lower() == "openrouter" else None
+            if provider is None:
+                continue
+            registry.register(ProviderSpec(name=name, enabled=provider.enabled, priority=int(row.get("priority", 100)), cost_class="free", capabilities=tuple(row.get("capabilities") or ("general_reasoning",)), provider=provider))
     except Exception as exc:
         print("[AI MODEL REGISTRY WARNING]", type(exc).__name__)
 
 
-def _discover_huggingface_model(token: str, endpoint: str) -> str | None:
-    try:
-        with httpx.Client(timeout=10) as client:
-            response = client.get(f"{endpoint.rstrip('/')}/models", headers={"Authorization": f"Bearer {token}"})
-            response.raise_for_status()
-            data = response.json().get("data") or []
-        live = [item.get("id") for item in data if item.get("id") and any(str(p.get("status", "")).lower() == "live" for p in (item.get("providers") or []))]
-        for model in live:
-            if "qwen" not in str(model).lower():
-                return f"{model}:fastest"
-        return None
-    except Exception as exc:
-        print("[AI PROVIDER] huggingface=discovery_failed", type(exc).__name__)
-        return None
-
-
-def _register_huggingface(registry: AIProviderRegistry) -> None:
-    token = os.getenv("HF_TOKEN", "").strip()
-    if not token:
-        print("[AI PROVIDER] huggingface=not_configured"); return
-    endpoint = os.getenv("HF_ENDPOINT", "https://router.huggingface.co/v1").strip()
-    model = os.getenv("HF_MODEL", "").strip()
-    if "qwen" in model.lower():
-        print(f"[AI PROVIDER] huggingface=blocked_qwen model={model}"); return
-    if model.endswith(":groq") and os.getenv("HF_ALLOW_FIXED_PROVIDER", "false").lower() != "true":
-        model = model.rsplit(":", 1)[0]
-    # Auto-discovery is opt-in so a newly available Qwen endpoint cannot silently
-    # become Bitey's provider. A fixed non-Qwen model may still be configured.
-    if not model and os.getenv("HF_AUTO_DISCOVERY", "false").lower() == "true": model = _discover_huggingface_model(token, endpoint)
-    model = model or DEFAULT_HF_MODEL
-    if "qwen" in model.lower():
-        print(f"[AI PROVIDER] huggingface=blocked_qwen model={model}"); return
-    provider = OpenAICompatibleProvider(name="huggingface", model=model, endpoint=endpoint, credential_env="HF_TOKEN", enabled=os.getenv("HF_ENABLED", "true").lower() != "false")
-    registry.register(ProviderSpec(name="huggingface", enabled=provider.enabled, priority=int(os.getenv("HF_PRIORITY", "30")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=provider))
-    print(f"[AI PROVIDER] huggingface=registered model={model}")
-
-
 def build_ai_orchestrator(company_id: int | None = None) -> AIOrchestrator:
     registry = AIProviderRegistry()
-    groq = GroqProvider(); registry.register(ProviderSpec(name="groq", enabled=groq.enabled and os.getenv("GROQ_ENABLED", "true").lower() != "false", priority=int(os.getenv("GROQ_PRIORITY", "5")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=groq))
-    # DeepSeek/OpenRouter remains available only when explicitly enabled. The
-    # previous free endpoint returned HTTP 404 in production, so it must not be
-    # allowed to participate in normal Telegram requests until explicitly fixed.
-    if os.getenv("DEEPSEEK_ENABLED", "false").lower() == "true":
-        deepseek = OpenRouterProvider(model=os.getenv("OPENROUTER_DEEPSEEK_MODEL", DEEPSEEK_FREE_MODEL)); registry.register(ProviderSpec(name="deepseek-free", enabled=deepseek.enabled, priority=int(os.getenv("DEEPSEEK_PRIORITY", "15")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=deepseek))
-    cloudflare = CloudflareAIProvider(); registry.register(ProviderSpec(name="cloudflare-free", enabled=cloudflare.enabled, priority=int(os.getenv("CLOUDFLARE_PRIORITY", "20")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=cloudflare))
-    _register_database_models(registry, company_id); _register_huggingface(registry)
+
+    # Primary: keep Groq as requested.
+    groq = GroqProvider()
+    registry.register(ProviderSpec(
+        name="groq",
+        enabled=groq.enabled and os.getenv("GROQ_ENABLED", "true").lower() != "false",
+        priority=int(os.getenv("GROQ_PRIORITY", "5")),
+        cost_class="free",
+        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
+        provider=groq,
+    ))
+
+    # Fallback: OpenRouter's dedicated Free Models Router. It can only select
+    # models that are free; paid routing is rejected by OpenRouterProvider.
+    openrouter = OpenRouterProvider(model=os.getenv("OPENROUTER_MODEL", OPENROUTER_FREE_MODEL))
+    registry.register(ProviderSpec(
+        name="openrouter-free",
+        enabled=openrouter.enabled,
+        priority=int(os.getenv("OPENROUTER_PRIORITY", "10")),
+        cost_class="free",
+        capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"),
+        provider=openrouter,
+    ))
+
+    # Only explicitly configured OpenRouter database models may participate,
+    # and paid/Qwen/Gemini/DeepSeek models are blocked.
+    _register_database_models(registry, company_id)
     return AIOrchestrator(registry)
