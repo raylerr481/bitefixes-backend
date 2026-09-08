@@ -14,14 +14,7 @@ def _db_conversation_id(value:Any):
         return None
 
 def get_or_create_conversation(customer_id:int,channel:str="website",conversation_id:Any=None):
-    """Resolve the active conversation for this customer and channel.
-
-    Channel adapters may provide an external conversation identifier (for
-    example a WhatsApp conversation id). The Supabase conversations.id column
-    is a bigint, so non-numeric external identifiers must never be used as the
-    database id filter. In that case the active customer/channel conversation
-    is resolved instead.
-    """
+    """Resolve the active conversation for this customer and channel."""
     try:
         channel=str(channel or "website").strip().lower()
         query=database.table("conversations").select("*").eq("customer_id",customer_id).eq("channel",channel).eq("status","active")
@@ -75,11 +68,21 @@ def update_conversation_context(conversation_id:Any,intent:str=None,response:str
     if service_id is not None:data["last_service"]=service_id
     if confidence is not None:data["last_confidence"]=float(confidence)
     if language:data["language"]=language
-    if pending_field is not None:data["pending_field"]=pending_field
-    if pending_question is not None:data["pending_question"]=pending_question
-    if pending_options is not None:data["pending_options"]=pending_options
-    if pending_field is not None or pending_question is not None or pending_options is not None:
-        data["pending_set_at"]=_now() if pending_question else None
+    if pending_options is not None:
+        data["pending_options"]=pending_options
+        if pending_question:
+            data["pending_question"]=pending_question
+            data["pending_field"]=pending_field or "unspecified"
+            data["pending_set_at"]=_now()
+        else:
+            data["pending_question"]=None
+            data["pending_field"]=None
+            data["pending_set_at"]=None
+            data["pending_expires_at"]=None
+    elif pending_question:
+        data["pending_question"]=pending_question
+        data["pending_field"]=pending_field or "unspecified"
+        data["pending_set_at"]=_now()
     if pending_expires_at is not None:data["pending_expires_at"]=pending_expires_at
     return update_conversation(conversation_id,data)
 
