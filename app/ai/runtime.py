@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from .cloudflare_provider import CloudflareAIProvider
 from .groq_provider import GroqProvider
-from .openrouter_provider import OpenRouterProvider, QWEN_FREE_MODEL, DEEPSEEK_FREE_MODEL
+from .openrouter_provider import OpenRouterProvider, DEEPSEEK_FREE_MODEL
 from .openai_compatible_provider import OpenAICompatibleProvider
 from .orchestrator import AIOrchestrator
 from .registry import AIProviderRegistry, ProviderSpec
@@ -55,7 +55,6 @@ def _register_huggingface(registry: AIProviderRegistry) -> None:
 def build_ai_orchestrator(company_id: int | None = None) -> AIOrchestrator:
     registry = AIProviderRegistry()
     groq = GroqProvider(); registry.register(ProviderSpec(name="groq", enabled=groq.enabled and os.getenv("GROQ_ENABLED", "true").lower() != "false", priority=int(os.getenv("GROQ_PRIORITY", "5")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=groq))
-    qwen = OpenRouterProvider(model=os.getenv("OPENROUTER_QWEN_MODEL", QWEN_FREE_MODEL)); registry.register(ProviderSpec(name="qwen-free", enabled=qwen.enabled, priority=int(os.getenv("QWEN_PRIORITY", "10")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=qwen))
     deepseek = OpenRouterProvider(model=os.getenv("OPENROUTER_DEEPSEEK_MODEL", DEEPSEEK_FREE_MODEL)); registry.register(ProviderSpec(name="deepseek-free", enabled=deepseek.enabled and os.getenv("DEEPSEEK_ENABLED", "true").lower() != "false", priority=int(os.getenv("DEEPSEEK_PRIORITY", "15")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=deepseek))
     cloudflare = CloudflareAIProvider(); registry.register(ProviderSpec(name="cloudflare-free", enabled=cloudflare.enabled, priority=int(os.getenv("CLOUDFLARE_PRIORITY", "20")), cost_class="free", capabilities=("general_reasoning", "semantic_analysis", "language", "extraction"), provider=cloudflare))
     _register_database_models(registry, company_id); _register_huggingface(registry)
