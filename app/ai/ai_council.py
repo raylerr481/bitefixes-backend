@@ -190,13 +190,8 @@ def consult(message: str, *, language: str, context: Dict[str, Any], max_provide
                 print(f"[AI REASONING] provider={spec.name} health=unhealthy category={health.get('category')} http_status={health.get('http_status')}")
                 continue
             healthy.append((spec, health))
-
         if not healthy:
             return []
-
-        # Ask every healthy selected provider independently. Their outputs are
-        # deliberately kept separate so consultation_service can score them
-        # against the same enterprise context and problem state.
         results = await asyncio.gather(
             *(_ask_provider(spec, message, language, context) for spec, _health in healthy),
             return_exceptions=True,
@@ -213,12 +208,22 @@ def consult(message: str, *, language: str, context: Dict[str, Any], max_provide
                 print(f"[AI REASONING] provider={spec.name} status=candidate")
         return accepted
 
+    # This function is synchronous but is also called from FastAPI's running event loop.
+    # Detect the loop before creating run(), then execute the coroutine in a worker thread
+    # when necessary. This prevents RuntimeError + 'coroutine was never awaited'.
     try:
-        return asyncio.run(run())
+        asyncio.get_running_loop()
     except RuntimeError:
+        try:
+            return asyncio.run(run())
+        except Exception as exc:
+            print("[AI REASONING] status=error error=" + type(exc).__name__)
+            return []
+    else:
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(lambda: asyncio.run(run())).result()
-    except Exception as exc:
-        print("[AI REASONING] status=error error=" + type(exc).__name__)
-        return []
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(run())).result()
+        except Exception as exc:
+            print("[AI REASONING] status=error error=" + type(exc).__name__)
+            return []
