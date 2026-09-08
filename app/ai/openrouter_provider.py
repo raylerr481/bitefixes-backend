@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-QWEN_FREE_MODEL = "qwen/qwen3-235b-a22b-instruct-2507:free"
+QWEN_FREE_MODEL = "qwen/qwen3-235b-a22b-2507:free"
 DEEPSEEK_FREE_MODEL = "deepseek/deepseek-v4-flash:free"
 
 
