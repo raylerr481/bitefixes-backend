@@ -110,7 +110,9 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
     customer = get_or_create_customer(company_id=company_id, phone=identity_phone, email=str(email or "").strip(), name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer", channel=channel, external_id=external_identity)
     customer_id = customer.get("id") if isinstance(customer, dict) else None
     if not customer_id: return {"action":"conversation","create_ticket":False,"response":"No fue posible establecer la identidad de la conversación en este momento."}
-    db_cid = _db_conversation_id(conversation_id)
+    # External channel IDs (especially Telegram chat IDs) are not database conversation IDs.
+    # Only website/app/API callers may intentionally supply a numeric DB conversation id.
+    db_cid = _db_conversation_id(conversation_id) if channel in {"website", "app", "private", "api"} else None
     conversation = get_or_create_conversation(customer_id=customer_id, channel=channel, conversation_id=db_cid)
     cid = conversation.get("id") if isinstance(conversation, dict) else None
     reasoning_message, resolved_pending = _resolve_pending_reply(message, conversation)
