@@ -1,6 +1,7 @@
 """Bitey Cloud Gateway - shared context, memory and response flow for every channel."""
 from __future__ import annotations
 import os
+import re
 from typing import Any
 from app.services.decision_engine_v29 import decision_engine as ai_first_decision
 from app.services.customer_service import get_or_create_customer
@@ -12,6 +13,7 @@ from app.services.contextual_resolution import resolve_context
 
 SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
 _INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
+_OPTION_RE = re.compile(r"^\s*(\d{1,2})\s*[.)\-:]\s*(.+?)\s*$")
 
 def normalize_channel(channel: str | None) -> str:
     value = str(channel or "website").strip().lower()
@@ -56,6 +58,53 @@ def _website_context(history: list[dict[str, Any]], message: str, state: dict[st
         context = fetch_website_context(target); context["diagnostic_requested"] = True; return context
     except Exception as exc: return {"reference_url": target, "diagnostic_requested": True, "fetch_error": type(exc).__name__}
 
+def _extract_pending_turn(response: str) -> dict[str, Any] | None:
+    """Extract the last explicit question and numbered choices from Bitey's reply."""
+    text = str(response or "").strip()
+    if not text: return None
+    options = []
+    for line in text.splitlines():
+        match = _OPTION_RE.match(line)
+        if match:
+            options.append({"number": int(match.group(1)), "text": match.group(2).strip()})
+    question = None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if "?" in line:
+            question = line
+            break
+    if not question and options:
+        question = next((line for line in lines if line.endswith(":") or "indica" in line.lower() or "qué" in line.lower()), None)
+    if not question: return None
+    lower = question.lower()
+    if re.search(r"\b(qué|que)\b.*\b(ocurre|pasa|problema|s[ií]ntoma)\b|\b(describe|describa)\b.*\b(problema|ocurre|pasa)\b", lower): field = "symptom"
+    elif re.search(r"\b(modelo|marca)\b", lower): field = "model"
+    elif re.search(r"\b(windows|android|ios|sistema operativo|versi[oó]n)\b", lower): field = "os_version"
+    elif re.search(r"\b(d[oó]nde|donde|ubicaci[oó]n|ubicacion)\b", lower): field = "location"
+    elif re.search(r"\b(telefono|teléfono|móvil|movil|pc|computadora|impresora|router|c[aá]mara|cctv)\b", lower): field = "device"
+    else: field = "unspecified"
+    return {"field": field, "question": question, "options": options}
+
+def _resolve_pending_reply(message: str, conversation: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
+    """Turn short replies such as '1', '2' or 'opción 2' into contextual answers."""
+    text = str(message or "").strip()
+    if not conversation: return text, None
+    options = conversation.get("pending_options") or []
+    if not isinstance(options, list) or not options: return text, None
+    number = None
+    match = re.fullmatch(r"(?:opci[oó]n\s*)?(\d{1,2})\s*[.)-]?", text, flags=re.I)
+    if match: number = int(match.group(1))
+    else:
+        ordinal = {"primera":1,"primero":1,"segunda":2,"segundo":2,"tercera":3,"tercero":3,"cuarta":4,"cuarto":4}
+        for word, value in ordinal.items():
+            if re.search(rf"\b{word}\b", text, re.I): number = value; break
+    if number is None: return text, None
+    selected = next((item for item in options if int(item.get("number", -1)) == number), None)
+    if not selected: return text, None
+    question = str(conversation.get("pending_question") or "").strip()
+    resolved = f"{text}\n[RESPUESTA CONTEXTUAL: el cliente seleccionó la opción {number}: {selected.get('text','')}. Esta respuesta corresponde a la pregunta pendiente: {question}]"
+    return resolved, {"number": number, "text": selected.get("text", ""), "question": question, "field": conversation.get("pending_field")}
+
 def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str, email: str, customer_name: str, last_name: str, conversation_id: str | None, language: str, preferred_contact_channel: str | None) -> dict[str, Any]:
     identity_phone, external_identity = _channel_identity(channel, phone, conversation_id)
     customer = get_or_create_customer(company_id=company_id, phone=identity_phone, email=str(email or "").strip(), name=" ".join(x for x in (customer_name, last_name) if x).strip() or "Customer", channel=channel, external_id=external_identity)
@@ -64,20 +113,29 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
     db_cid = _db_conversation_id(conversation_id)
     conversation = get_or_create_conversation(customer_id=customer_id, channel=channel, conversation_id=db_cid)
     cid = conversation.get("id") if isinstance(conversation, dict) else None
+    reasoning_message, resolved_pending = _resolve_pending_reply(message, conversation)
     history = get_conversation_history(company_id=company_id, customer_id=customer_id, conversation_id=cid) if cid else []
-    raw_state = build_problem_state(history, message)
-    state = resolve_context(raw_state, message, history)
-    website_context = _website_context(history, message, state)
-    memory = {"conversation_id":cid,"external_conversation_id":conversation_id,"history":history,"recent_turns":state.get("recent_turns",[]),"confirmed_facts":state.get("confirmed_facts",[]),"last_service":next((row.get("service_id") for row in reversed(history[-16:]) if row.get("service_id") is not None),None),"active_topic":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_problem":state.get("active_problem"),"active_goal":state.get("active_goal") or state.get("customer_goal"),"active_action":None,"active_location":state.get("active_location"),"active_url":None,"website_diagnostic_requested":state.get("website_diagnostic_requested",False),"stage":"diagnosis" if state.get("active_problem") else "exploration","is_follow_up":state.get("is_follow_up",False),"problem_state":state,"current_message":message}
-    business_context = {"channel":channel,"active_goal":memory.get("active_goal"),"conversation":{"state":state.get("state"),"active_goal":memory.get("active_goal"),"active_problem":state.get("active_problem"),"active_category":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_location":state.get("active_location"),"symptoms":state.get("symptoms",[]),"hypotheses":state.get("hypotheses",[]),"customer_goal":state.get("customer_goal"),"confidence":state.get("confidence"),"confirmed_facts":state.get("confirmed_facts",[])}}
+    raw_state = build_problem_state(history, reasoning_message)
+    state = resolve_context(raw_state, reasoning_message, history)
+    if resolved_pending:
+        state["pending_answer"] = resolved_pending
+        state["pending_question"] = {"field": resolved_pending.get("field"), "question": resolved_pending.get("question"), "options": conversation.get("pending_options") or []}
+    website_context = _website_context(history, reasoning_message, state)
+    memory = {"conversation_id":cid,"external_conversation_id":conversation_id,"history":history,"recent_turns":state.get("recent_turns",[]),"confirmed_facts":state.get("confirmed_facts",[]),"last_service":next((row.get("service_id") for row in reversed(history[-16:]) if row.get("service_id") is not None),None),"active_topic":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_problem":state.get("active_problem"),"active_goal":state.get("active_goal") or state.get("customer_goal"),"active_action":None,"active_location":state.get("active_location"),"active_url":None,"website_diagnostic_requested":state.get("website_diagnostic_requested",False),"stage":"diagnosis" if state.get("active_problem") else "exploration","is_follow_up":state.get("is_follow_up",False),"problem_state":state,"pending_turn":conversation.get("pending_question") if conversation else None,"current_message":message}
+    if resolved_pending: memory["pending_answer"] = resolved_pending
+    business_context = {"channel":channel,"active_goal":memory.get("active_goal"),"conversation":{"state":state.get("state"),"active_goal":memory.get("active_goal"),"active_problem":state.get("active_problem"),"active_category":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_location":state.get("active_location"),"symptoms":state.get("symptoms",[]),"hypotheses":state.get("hypotheses",[]),"customer_goal":state.get("customer_goal"),"confidence":state.get("confidence"),"confirmed_facts":state.get("confirmed_facts",[]),"pending_turn":memory.get("pending_turn"),"pending_answer":memory.get("pending_answer")}}
     if website_context: business_context["website_context"] = website_context; business_context["website_diagnostic"] = bool(website_context.get("diagnostic_requested"))
-    result = ai_first_decision(company_id=company_id, customer=customer, message=message, intent={}, knowledge=None, memory=memory, language=language, business_context=business_context)
+    result = ai_first_decision(company_id=company_id, customer=customer, message=reasoning_message, intent={}, knowledge=None, memory=memory, language=language, business_context=business_context)
     if not isinstance(result,dict): return {"action":"conversation","create_ticket":False,"response":"No fue posible completar la consulta en este momento."}
     response=str(result.get("response") or "").strip(); result_service_id=result.get("service_id") or memory.get("last_service"); result_intent=result.get("intent")
     if cid:
         save_customer_message(company_id=company_id,customer_id=customer_id,conversation_id=cid,message=message,channel=channel,service_id=result_service_id)
         if response: save_bitey_message(company_id=company_id,customer_id=customer_id,conversation_id=cid,response=response,channel=channel,service_id=result_service_id)
-        update_conversation_context(cid,intent=result_intent,response=response,service_id=result_service_id,language=language)
+        pending = _extract_pending_turn(response)
+        if pending:
+            update_conversation_context(cid,intent=result_intent,response=response,service_id=result_service_id,language=language,pending_field=pending["field"],pending_question=pending["question"],pending_options=pending["options"])
+        else:
+            update_conversation_context(cid,intent=result_intent,response=response,service_id=result_service_id,language=language,pending_field=None,pending_question=None,pending_options=[])
     result["conversation_id"]=cid; result["external_conversation_id"]=conversation_id; result["customer_id"]=customer_id
     if preferred_contact_channel: result["preferred_contact_channel"]=preferred_contact_channel
     return result
