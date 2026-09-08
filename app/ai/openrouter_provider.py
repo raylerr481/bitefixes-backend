@@ -6,7 +6,6 @@ from typing import Any
 
 import httpx
 
-QWEN_FREE_MODEL = "qwen/qwen3-235b-a22b-2507:free"
 DEEPSEEK_FREE_MODEL = "deepseek/deepseek-v4-flash:free"
 
 
@@ -40,15 +39,10 @@ class OpenRouterProvider:
 
     def __init__(self, *, model: str | None = None) -> None:
         self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        self.model = (model or os.getenv("OPENROUTER_MODEL", QWEN_FREE_MODEL)).strip()
+        self.model = (model or os.getenv("OPENROUTER_MODEL", DEEPSEEK_FREE_MODEL)).strip()
         self.timeout = float(os.getenv("AI_TIMEOUT", "20"))
         self.max_output_tokens = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "700"))
         self.free_only = os.getenv("OPENROUTER_FREE_ONLY", "true").lower() != "false"
-
-    @staticmethod
-    def is_free_model(model: str) -> bool:
-        normalized = model.strip().lower()
-        return normalized == "openrouter/free" or normalized.endswith(":free")
 
     @property
     def enabled(self) -> bool:
@@ -56,7 +50,13 @@ class OpenRouterProvider:
             os.getenv("OPENROUTER_ENABLED", "true").lower() != "false"
             and bool(self.api_key)
             and (not self.free_only or self.is_free_model(self.model))
+            and "qwen" not in self.model.lower()
         )
+
+    @staticmethod
+    def is_free_model(model: str) -> bool:
+        normalized = model.strip().lower()
+        return normalized == "openrouter/free" or normalized.endswith(":free")
 
     async def generate(self, prompt: str, *, context: dict[str, Any] | None = None) -> str | None:
         if not self.enabled:
