@@ -7,6 +7,18 @@ def _text(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def _history_text(context: Dict[str, Any]) -> str:
+    history = context.get("history") or []
+    parts = []
+    if isinstance(history, list):
+        for item in history[-12:]:
+            if isinstance(item, dict):
+                parts.append(_text(item.get("content") or item.get("message") or item.get("text")))
+            else:
+                parts.append(_text(item))
+    return " ".join(p for p in parts if p)
+
+
 def _active_problem(context: Dict[str, Any]) -> Dict[str, Any]:
     state = context.get("contextual_state") or {}
     problem = context.get("conversation_problem") or {}
@@ -14,6 +26,11 @@ def _active_problem(context: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in state.items():
         if value not in (None, "", [], {}):
             merged[key] = value
+    # Conversation history is authoritative evidence for continuity when the
+    # structured problem state was not persisted on the current turn.
+    history = _history_text(context)
+    if history:
+        merged["history_text"] = history
     return merged
 
 
@@ -24,7 +41,14 @@ def _business_context_relevant(message: str, context: Dict[str, Any]) -> bool:
 
 
 def _known_no_power(problem: Dict[str, Any], message: str) -> bool:
-    combined = " ".join([_text(message), _text(problem.get("active_problem")), _text(problem.get("category")), _text(problem.get("device")), _text(problem.get("device_kind"))])
+    combined = " ".join([
+        _text(message),
+        _text(problem.get("active_problem")),
+        _text(problem.get("category")),
+        _text(problem.get("device")),
+        _text(problem.get("device_kind")),
+        _text(problem.get("history_text")),
+    ])
     entities = problem.get("entities") if isinstance(problem.get("entities"), dict) else {}
     combined += " " + " ".join(_text(v) for v in entities.values() if isinstance(v, (str, int)))
     no_power = any(x in combined for x in ("no enciende", "no enciende ninguna luz", "ninguna luz", "no hace ningún ruido", "no hace ningun ruido", "no prende"))
@@ -62,7 +86,7 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
         return bounded
     problem = _active_problem(context)
     lang = _text(language) or "es"
-    if problem.get("active_problem") or problem.get("category"):
+    if problem.get("active_problem") or problem.get("category") or problem.get("history_text"):
         if lang.startswith("pt"):
             answer = "Vou manter o problema já identificado e avançar sem reiniciar o diagnóstico. Qual é o sintoma mais importante que ainda não verificamos?"
         elif lang.startswith("en"):
