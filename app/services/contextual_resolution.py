@@ -9,8 +9,8 @@ from typing import Any
 
 _REQUEST_PATTERNS = (
     r"\bquiero\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|poner|implementar|desarrollar)\b",
-    r"\b(?:deseo|necesito|busco|me gustaría|me gustaria)\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|poner|implementar|desarrollar)\b",
-    r"\b(?:quiero|deseo|necesito|busco)\s+(?:una|un|el|la|las|los)\s+.+",
+    r"\b(?:deseo|necesito|busco|quisiera|me gustaría|me gustaria)\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|poner|implementar|desarrollar)\b",
+    r"\b(?:quiero|deseo|necesito|busco|quisiera)\s+(?:una|un|el|la|las|los)\s+.+",
     r"\bcomo\s+(?:puedo|podría|podria)\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer)\b",
 )
 _SYMPTOM_MARKERS = (
@@ -62,8 +62,6 @@ def resolve_context(state: dict[str, Any], current_message: str, history: list[d
         result["confirmed_facts"] = [f for f in result.get("confirmed_facts", []) if f.get("type") != "problem"]
         return result
 
-    # A detail/update after an established request belongs to that request unless
-    # the user explicitly reports a symptom. This is the key continuity invariant.
     if prior_request and not current_symptom:
         result["active_problem"] = None
         result["active_category"] = None
