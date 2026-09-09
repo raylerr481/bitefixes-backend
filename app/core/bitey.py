@@ -1,5 +1,6 @@
 """BiteFixes - Bitey Core V27."""
 from typing import Any, Dict, Optional
+import re
 from app.services.customer_service import get_or_create_customer
 from app.services.conversation_service import get_or_create_conversation, get_conversation
 from app.services.message_service import save_customer_message, save_bitey_message
@@ -23,6 +24,8 @@ try:
     from app.services.memory_service import get_customer_memory
 except ImportError:
     get_customer_memory = None
+
+_CONTEXT_RESET_RE = re.compile(r"^\s*(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos dias|buenos días|buenas tardes|buenas noches|prueba(?: de)? (?:conexi[oó]n|conexi[oó]n multicanal|telegram|whatsapp)|prueba multicanal|nuevo problema|otra consulta|otra pregunta|quiero consultar otra cosa|empecemos de nuevo)\s*[!.?]*\s*$", re.I)
 
 def _safe_dict(value: Any) -> Dict: return value if isinstance(value, dict) else {}
 def _get_customer_id(customer: Any) -> Optional[int]: return customer.get("id") if isinstance(customer, dict) else None
@@ -67,6 +70,7 @@ def process_message(company_id: int, message: str, phone: str, email: str = "", 
         explicit_language = _normalize_language_preference(language_preference)
         if language_preference not in (None, "", "auto") and not explicit_language: raise ValueError("Unsupported language_preference")
         language = explicit_language or detect_language(message) or "es"
+        context_reset = bool(_CONTEXT_RESET_RE.match(message))
         identity_phone = supplied_phone if supplied_phone and supplied_phone.lower() not in {"web", "unknown"} else (f"web:{conversation_id}" if conversation_id else "web")
         customer = _safe_dict(get_or_create_customer(company_id=company_id, phone=identity_phone, email=supplied_email, name=customer_name or "Customer", last_name=last_name, channel=channel, external_id=external_id))
         customer_id = _get_customer_id(customer)
@@ -77,28 +81,29 @@ def process_message(company_id: int, message: str, phone: str, email: str = "", 
         conversation_context = _safe_dict(get_conversation(resolved_conversation_id, customer_id=customer_id))
         memory = _load_memory(customer_id, company_id, str(resolved_conversation_id))
         historical_problems = find_customer_problems(customer_id, company_id=company_id, limit=20)
-        latest_problem = historical_problems[0] if historical_problems else None
+        latest_problem = None if context_reset else (historical_problems[0] if historical_problems else None)
         context = _build_context(conversation_context, memory, latest_problem)
         context.update({"company_id": company_id, "language": language, "customer_id": customer_id})
+        if context_reset:
+            context.update({"last_intent": None, "last_service": None, "last_ticket": None, "last_problem": None, "last_device": None, "last_problem_fingerprint": None, "last_problem_id": None, "history": []})
+            context["new_context_turn"] = True
         save_customer_message(company_id=company_id, customer_id=customer_id, conversation_id=resolved_conversation_id, message=message, channel=channel)
         intent = _safe_dict(detect_intent(message, company_id, context=context))
-        problem = analyze_problem(message=message, current_intent=intent.get("intent"), active_intent=context.get("last_intent"), active_problem=context.get("last_problem"), active_device=context.get("last_device"), context=context)
+        problem = analyze_problem(message=message, current_intent=intent.get("intent"), active_intent=None if context_reset else context.get("last_intent"), active_problem=None if context_reset else context.get("last_problem"), active_device=None if context_reset else context.get("last_device"), context=context)
         context.update({"problem_state": problem["state"], "problem_is_new": problem["is_new"], "problem_category": problem.get("category"), "problem_fingerprint": problem.get("fingerprint"), "last_problem": problem.get("category") or context.get("last_problem")})
         if problem.get("device"): context["last_device"] = problem["device"]
-        # Coherence has priority over a generic classifier result when a turn is
-        # an entity update or answer inside an already active problem.
         if problem.get("intent") and (problem.get("is_continuation") or problem.get("coherence", {}).get("active_problem_preserved")):
             intent = {**intent, "intent": problem["intent"], "confidence": max(float(intent.get("confidence", 0) or 0), float(problem.get("confidence", 0) or 0)), "problem_coherence_override": True}
         elif problem.get("intent") and problem.get("intent") != intent.get("intent"):
             intent = {**intent, "intent": problem["intent"], "confidence": max(float(intent.get("confidence", 0) or 0), float(problem.get("confidence", 0) or 0)), "problem_override": True}
-        if problem["is_new"]:
+        if problem["is_new"] or context_reset:
             context["last_intent"] = None; context["last_service"] = None; context["last_ticket"] = None
         elif not intent.get("intent") and context.get("last_intent") and not _is_greeting(message):
             intent = {"intent": context["last_intent"], "confidence": max(0.70, float(context.get("last_confidence") or 0.0)), "context_inherited": True, "context_source": "problem_history"}
         knowledge = search_knowledge(message=message, company_id=company_id, intent=intent.get("intent"), language=language)
         decision = _safe_dict(ai_first_decision(company_id=company_id, customer=customer, message=message, intent=intent, knowledge=knowledge, memory={**memory, "conversation_id": resolved_conversation_id, "history": context.get("history", []), "problem_state": problem["state"], "problem": problem}, language=language, business_context=context))
         if not decision: decision = {"action":"conversation","create_ticket":False,"requires_quote":False,"ticket_type":None,"service":None,"service_id":None,"response":"Claro. Cuéntame un poco más sobre lo que necesitas.","metadata":{"architecture":"ai_first_v27"}}
-        if problem["is_new"]:
+        if problem["is_new"] or context_reset:
             decision["ticket_id"] = None
             if not intent.get("intent"): decision["create_ticket"] = False
         service_id, service = decision.get("service_id"), decision.get("service")
@@ -128,7 +133,7 @@ def process_message(company_id: int, message: str, phone: str, email: str = "", 
         if ticket:
             notify_event(company_id=company_id,event="ticket_created",ticket_id=ticket_id,customer_id=customer_id,service_id=service_id,intent=intent.get("intent"),message=message,channel=channel,metadata={"language":language,"ticket_type":ticket_type,"requires_quote":requires_quote,"problem_state":problem["state"],"problem_fingerprint":problem["fingerprint"],"guide_mode":guide.get("mode")})
         save_bitey_message(company_id=company_id,customer_id=customer_id,conversation_id=resolved_conversation_id,response=response_text,intent=intent.get("intent"),service_id=service_id,ticket_id=ticket_id,channel=channel)
-        update_conversation_context(resolved_conversation_id,intent=intent.get("intent"),response=response_text,ticket_id=ticket_id,service_id=service_id,confidence=float(intent.get("confidence",0) or 0),language=language,metadata={"problem_id":context.get("last_problem_id"),"problem_state":problem["state"],"guide_mode":guide.get("mode"),"guide_step":guide.get("step",1),"coherence":problem.get("coherence",{})})
+        update_conversation_context(resolved_conversation_id,intent=intent.get("intent"),response=response_text,ticket_id=ticket_id,service_id=service_id,confidence=float(intent.get("confidence",0) or 0),language=language,metadata={"problem_id":context.get("last_problem_id"),"problem_state":problem["state"],"guide_mode":guide.get("mode"),"guide_step":guide.get("step",1),"coherence":problem.get("coherence",{}),"new_context_turn":context_reset})
         return {"success":True,"customer_id":customer_id,"customer_name":customer.get("full_name"),"conversation_id":str(resolved_conversation_id),"channel_conversation_id":conversation_id,"language":language,"problem":problem,"problem_id":context.get("last_problem_id"),"problem_fingerprint":problem.get("fingerprint"),"guide":guide,"intent":intent.get("intent"),"confidence":float(intent.get("confidence",0) or 0),"memory":{"used":bool(context.get("history")),"messages":len(context.get("history") or []),"problems":len(historical_problems),"scope":"customer+conversation"},"decision":decision,"ticket":ticket,"ticket_id":ticket_id,"quote":quote,"response":response_text,"channel":channel}
     except Exception as error:
         import traceback; print("[BITEY CORE ERROR]",error); traceback.print_exc()
