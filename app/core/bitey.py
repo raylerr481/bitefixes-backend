@@ -25,7 +25,9 @@ try:
 except ImportError:
     get_customer_memory = None
 
-_CONTEXT_RESET_RE = re.compile(r"^\s*(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos dias|buenos días|buenas tardes|buenas noches|prueba(?: de)? (?:conexi[oó]n|conexi[oó]n multicanal|telegram|whatsapp)|prueba multicanal|nuevo problema|otra consulta|otra pregunta|quiero consultar otra cosa|empecemos de nuevo)\s*[!.?]*\s*$", re.I)
+_RESET_GREETING = r"(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos dias|buenos días|buenas tardes|buenas noches)"
+_RESET_ACTION = r"(?:prueba(?:\s+de)?\s+(?:conexi[oó]n(?:\s+multicanal)?|telegram|whatsapp)|prueba\s+multicanal|nuevo problema|otra consulta|otra pregunta|quiero consultar otra cosa|empecemos de nuevo)"
+_CONTEXT_RESET_RE = re.compile(rf"^\s*(?:(?:{_RESET_GREETING})\s*(?:bitey)?\s*[,;:\-]?\s*)?(?:{_RESET_ACTION})\s*[!.?]*\s*$|^\s*(?:{_RESET_GREETING})\s*(?:bitey)?\s*[!.?]*\s*$", re.I)
 
 def _safe_dict(value: Any) -> Dict: return value if isinstance(value, dict) else {}
 def _get_customer_id(customer: Any) -> Optional[int]: return customer.get("id") if isinstance(customer, dict) else None
