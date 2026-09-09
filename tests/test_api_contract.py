@@ -17,7 +17,12 @@ def test_root_contract():
 def test_health_contract():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "bitefixes-backend", "gateway": "bitey-cloud"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "bitefixes-backend"
+    assert body["gateway"] == "bitey-cloud"
+    assert body["bitey_trainer"] == "ready"
+    assert body["crm"] == "ready"
 
 
 def test_gateway_contract():
@@ -28,7 +33,9 @@ def test_gateway_contract():
     assert body["brain"] == "bitey-core"
     assert body["single_entrypoint"] == "/chat"
     assert body["webhook_entrypoint"] == "/webhooks/{channel}"
-    assert "website" in body["channels"]
+    assert body["trainer_entrypoint"] == "/bitey-trainer"
+    assert body["crm_entrypoint"] == "/portal/crm"
+    assert "customer_channels" in body
 
 
 def test_chat_route_is_registered():
