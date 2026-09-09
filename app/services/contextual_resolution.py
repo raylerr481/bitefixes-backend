@@ -83,7 +83,7 @@ def resolve_context(state: dict[str, Any], current_message: str, history: list[d
         result["confirmed_facts"] = [f for f in result.get("confirmed_facts", []) if f.get("type") != "problem"]
         return result
 
-    if current_category and prior_category and current_category != prior_category and current_symptom:
+    if current_category and prior_category and current_category != prior_category and (current_symptom or current_category):
         result["is_follow_up"] = False
         return result
 
