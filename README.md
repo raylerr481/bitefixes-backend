@@ -62,6 +62,18 @@ Tenant isolation is mandatory for customers, conversations, memory, knowledge, t
 - Bitey SBT remains isolated.
 - No Gemini API is required.
 
+## Infrastructure and cost policy
+
+This project follows a **free-first, no-surprise-cost architecture**.
+
+- Prefer free services, open-source software, or free tiers with no automatic billing risk.
+- Do not introduce a service that requires a payment card merely to start or that can create unexpected entry/egress, API, traffic, storage, or execution charges.
+- **Railway is explicitly excluded** from BiteFixes/Bitey infrastructure.
+- Cloudflare is permitted when its free usage is sufficient and any later cost occurs only after a clearly defined usage threshold; no paid plan or automatic billing may be enabled without explicit approval.
+- Before adding any provider, verify its pricing, billing behavior, limits, card requirements, and overage behavior.
+- If a service can generate costs without an explicit user decision first, choose a safer alternative.
+- This policy is documentation-only and does not change existing runtime configuration or working integrations.
+
 ## Related repositories
 
 - `bitefixes-web` — public BiteFixes website and Web customer channel.
