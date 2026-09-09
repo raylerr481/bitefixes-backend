@@ -80,7 +80,7 @@ def _extract_pending_turn(response: str) -> dict[str, Any] | None:
     elif re.search(r"\b(modelo|marca)\b", lower): field = "model"
     elif re.search(r"\b(windows|android|ios|sistema operativo|versi[oó]n)\b", lower): field = "os_version"
     elif re.search(r"\b(d[oó]nde|donde|ubicaci[oó]n|ubicacion)\b", lower): field = "location"
-    elif re.search(r"\b(telefono|teléfono|móvil|movil|pc|computadora|impresora|router|c[aá]mara|cctv)\b", lower): field = "device"
+    elif re.search(r"\b(dispositivo|telefono|teléfono|móvil|movil|pc|computadora|impresora|router|c[aá]mara|cctv)\b", lower): field = "device"
     else: field = "unspecified"
     return {"field": field, "question": question, "options": options}
 
