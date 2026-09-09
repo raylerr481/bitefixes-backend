@@ -38,11 +38,6 @@ def test_gateway_contract():
     assert "customer_channels" in body
 
 
-def test_chat_route_is_registered():
-    routes = {getattr(route, "path", None) for route in app.routes}
-    assert "/chat" in routes
-
-
 def test_chat_rejects_missing_message_without_hitting_gateway():
     response = client.post("/chat", json={"company_id": 1, "message": "", "channel": "website"})
     assert response.status_code == 422
