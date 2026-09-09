@@ -15,6 +15,7 @@ def test_authorized_get_executes_against_controlled_fixture(monkeypatch):
 
     class Response:
         status_code = 200
+        headers = {"content-type": "application/json"}
 
         def raise_for_status(self):
             return None
