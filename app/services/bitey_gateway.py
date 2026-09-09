@@ -14,7 +14,9 @@ from app.services.contextual_resolution import resolve_context
 SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
 _INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
 _OPTION_RE = re.compile(r"^\s*(\d{1,2})\s*[.)\-:]\s*(.+?)\s*$")
-_CONTEXT_RESET_RE = re.compile(r"^\s*(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos dias|buenos días|buenas tardes|buenas noches|prueba(?: de)? (?:conexi[oó]n|conexi[oó]n multicanal|telegram|whatsapp)|prueba multicanal|nuevo problema|otra consulta|otra pregunta|quiero consultar otra cosa|empecemos de nuevo)\s*[!.?]*\s*$", re.I)
+_RESET_GREETING = r"(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos dias|buenos días|buenas tardes|buenas noches)"
+_RESET_ACTION = r"(?:prueba(?:\s+de)?\s+(?:conexi[oó]n(?:\s+multicanal)?|telegram|whatsapp)|prueba\s+multicanal|nuevo problema|otra consulta|otra pregunta|quiero consultar otra cosa|empecemos de nuevo)"
+_CONTEXT_RESET_RE = re.compile(rf"^\s*(?:(?:{_RESET_GREETING})\s*(?:bitey)?\s*[,;:\-]?\s*)?(?:{_RESET_ACTION})\s*[!.?]*\s*$|^\s*(?:{_RESET_GREETING})\s*(?:bitey)?\s*[!.?]*\s*$", re.I)
 
 def normalize_channel(channel: str | None) -> str:
     value = str(channel or "website").strip().lower()
