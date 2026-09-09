@@ -14,7 +14,7 @@ def test_core_wins_when_confident():
     assert result["selected_source"] == "core"
 
 
-def test_external_can_win_only_when_core_is_weak_and_materially_lower():
+def test_core_remains_authoritative_when_external_does_not_materially_outrank_it():
     result = compare_answers(
         message="quiero entender por que una red wifi empresarial pierde conexion cada cierto tiempo",
         intent="network_configuration",
@@ -24,5 +24,5 @@ def test_external_can_win_only_when_core_is_weak_and_materially_lower():
             {"source": "external", "answer": "Conviene revisar interferencias, canales, roaming, DHCP y saturacion del punto de acceso.", "intent": "network_configuration", "authority": 0.45, "safety": 0.85, "provider": "free"},
         ],
     )
-    assert result["selected_source"] == "external"
-    assert result["reason"] == "external_advisory_wins_materially"
+    assert result["selected_source"] == "core"
+    assert result["reason"] == "core_authoritative"
