@@ -32,8 +32,8 @@ def test_authorized_get_executes_against_controlled_fixture(monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def get(self, url, headers=None):
-            self.calls.append((url, headers))
+        def get(self, url, params=None, headers=None):
+            self.calls.append((url, params, headers))
             return Response()
 
     monkeypatch.setattr(connector_runtime, "evaluate_permission", lambda **kwargs: Allowed())
