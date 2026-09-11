@@ -19,26 +19,50 @@ def _recipient(channel: str, event: dict[str, Any]) -> str:
 def _url(channel: str) -> str:
     return _env(channel, "OUTBOUND_URL") or os.getenv("BITEY_OUTBOUND_URL", "").strip()
 
+def _safe_recipient(recipient: str) -> str:
+    value = str(recipient or "")
+    if len(value) <= 4:
+        return "***"
+    return f"{value[:2]}***{value[-2:]}"
+
 async def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=float(os.getenv("BITEY_OUTBOUND_TIMEOUT", "12"))) as client:
         response = await client.post(url, json=payload, headers=headers or {})
         if response.status_code >= 400:
             raise OutboundDeliveryError(f"provider_http_{response.status_code}")
         try:
-            return response.json()
+            result = response.json()
+            if isinstance(result, dict):
+                return {**result, "http_status": response.status_code}
+            return {"status": "sent", "http_status": response.status_code}
         except Exception:
             return {"status": "sent", "http_status": response.status_code}
 
 async def send_external_response(*, channel: str, response: str, event: dict[str, Any]) -> dict[str, Any]:
     """Deliver the exact external-AI response; only transport JSON is built."""
     channel = str(channel or "api").strip().lower(); text = str(response or "").strip()
-    if not text: return {"status": "skipped", "reason": "empty_response", "channel": channel}
+    if not text:
+        print(f"[OUTBOUND] channel={channel} status=skipped reason=empty_response")
+        return {"status": "skipped", "reason": "empty_response", "channel": channel}
     recipient = _recipient(channel, event)
 
     if channel == "telegram":
         token = _env(channel, "BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-        if not token or not recipient: return {"status": "not_configured", "channel": channel, "reason": "telegram_bot_token_or_recipient_missing"}
-        result = await _post_json(f"https://api.telegram.org/bot{token}/sendMessage", {"chat_id": recipient, "text": text})
+        if not token or not recipient:
+            print(f"[OUTBOUND] channel=telegram status=not_configured token={'yes' if token else 'no'} recipient={'yes' if recipient else 'no'}")
+            return {"status": "not_configured", "channel": channel, "reason": "telegram_bot_token_or_recipient_missing"}
+        print(f"[OUTBOUND] channel=telegram status=attempt recipient={_safe_recipient(recipient)} response_chars={len(text)}")
+        try:
+            result = await _post_json(f"https://api.telegram.org/bot{token}/sendMessage", {"chat_id": recipient, "text": text})
+        except Exception as exc:
+            print(f"[OUTBOUND] channel=telegram status=error recipient={_safe_recipient(recipient)} error={type(exc).__name__}")
+            raise
+        provider_ok = result.get("ok") if isinstance(result, dict) else None
+        print(f"[OUTBOUND] channel=telegram status=provider_response recipient={_safe_recipient(recipient)} ok={provider_ok} http_status={result.get('http_status') if isinstance(result, dict) else None}")
+        if provider_ok is False:
+            description = str(result.get("description", "provider_rejected"))[:160]
+            print(f"[OUTBOUND] channel=telegram status=rejected reason={description}")
+            raise OutboundDeliveryError("telegram_provider_rejected")
         return {"status": "sent", "channel": channel, "provider": "telegram", "provider_result": result}
 
     if channel == "whatsapp":
