@@ -72,11 +72,27 @@ def _known_no_power(problem: Dict[str, Any], message: str) -> bool:
     return no_power and pc
 
 
-def _user_confirmed_no_light_or_noise(context: Dict[str, Any]) -> tuple[bool, bool]:
+def _user_power_facts(context: Dict[str, Any]) -> tuple[bool, bool, bool, bool]:
+    """Return confirmed light/no-light and noise/no-noise facts from user turns only."""
     user_text = _user_history_text(context)
-    no_light = any(x in user_text for x in ("ninguna luz", "sin ninguna luz", "sin luz", "no hay luz", "no prende ninguna luz", "no enciende ninguna luz"))
-    no_noise = any(x in user_text for x in ("ningún ruido", "ningun ruido", "sin ruido", "no hace ruido", "no hace ningún ruido", "no hace ningun ruido"))
-    return no_light, no_noise
+    light_yes = any(x in user_text for x in (
+        "se enciende una luz", "se enciende la luz", "se prende una luz", "se prende la luz",
+        "hay una luz", "hay luz", "una luz encendida", "luz encendida", "led encendido",
+    ))
+    light_no = any(x in user_text for x in (
+        "ninguna luz", "sin ninguna luz", "sin luz", "no hay luz", "no prende ninguna luz",
+        "no enciende ninguna luz", "no se enciende ninguna luz", "no se prende ninguna luz",
+    ))
+    noise_yes = any(x in user_text for x in (
+        "se escucha un ruido", "escucho un ruido", "hay ruido", "hace ruido", "se escucha ruido",
+        "se oye un ruido", "oigo un ruido", "se escucha un sonido", "hay sonido",
+    ))
+    noise_no = any(x in user_text for x in (
+        "ningún ruido", "ningun ruido", "sin ruido", "no hace ruido", "no hace ningún ruido",
+        "no hace ningun ruido", "no se escucha ningún ruido", "no se escucha ningun ruido",
+        "no escucho ningún ruido", "no escucho ningun ruido", "no se escucha ruido",
+    ))
+    return light_yes, light_no, noise_yes, noise_no
 
 
 def bounded_diagnostic_answer(message: str, *, language: str = "es", context: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
@@ -85,31 +101,46 @@ def bounded_diagnostic_answer(message: str, *, language: str = "es", context: Di
     problem = _active_problem(context)
     if not _known_no_power(problem, message):
         return None
-    no_light, no_noise = _user_confirmed_no_light_or_noise(context)
+    light_yes, light_no, noise_yes, noise_no = _user_power_facts(context)
     lang = _text(language) or "es"
 
     # Never infer facts from Bitey's own previous questions or answers.
     if lang.startswith("pt"):
-        if not no_light:
+        if not (light_yes or light_no):
             answer = "Entendido. Já sabemos que é um computador de mesa e que ele não liga. Não vou assumir se há luzes ou ruídos. Ao pressionar o botão de ligar, alguma luz acende?"
-        elif not no_noise:
-            answer = "Entendido. Já sabemos que é um computador de mesa e que não há luzes indicadoras. Sem assumir outros sintomas: ao pressionar o botão de ligar, você ouve algum ruído, como ventilador ou clique?"
+        elif not (noise_yes or noise_no):
+            light_state = "há uma luz indicadora acesa" if light_yes else "não há luzes indicadoras"
+            answer = f"Entendido. Já confirmamos que {light_state}. Sem assumir outros sintomas: ao pressionar o botão de ligar, você ouve algum ruído, como ventilador ou clique?"
+        elif light_yes and noise_no:
+            answer = "Entendido. Já confirmamos que há uma luz indicadora, mas nenhum ruído e nenhum ventilador gira. O cabo de alimentação está firmemente conectado à PC e à tomada? Se puder, teste outra tomada. Não abra a fonte de alimentação."
+        elif light_no and noise_no:
+            answer = "Entendido. Já confirmamos que não há luzes, não há ruído e nenhum ventilador gira. O cabo de alimentação está firmemente conectado à PC e à tomada? Se puder, teste outra tomada. Não abra a fonte de alimentação."
         else:
-            answer = "Entendido. Já temos confirmados o computador de mesa, a ausência de energia aparente e a ausência de ruído. O cabo de alimentação está firmemente conectado à PC e à tomada? Se puder, teste outra tomada. Não abra a fonte de alimentação."
+            answer = "Entendido. Já temos os sintomas básicos confirmados. O cabo de alimentação está firmemente conectado à PC e à tomada? Se puder, teste outra tomada. Não abra a fonte de alimentação."
     elif lang.startswith("en"):
-        if not no_light:
+        if not (light_yes or light_no):
             answer = "Understood. We know it is a desktop PC and that it does not turn on. I will not assume whether there are lights or sounds. When you press the power button, does any light come on?"
-        elif not no_noise:
-            answer = "Understood. We know it is a desktop PC and there are no indicator lights. Without assuming other symptoms: when you press the power button, do you hear any sound, such as a fan or click?"
+        elif not (noise_yes or noise_no):
+            light_state = "there is an indicator light on" if light_yes else "there are no indicator lights"
+            answer = f"Understood. We have confirmed that {light_state}. Without assuming other symptoms: when you press the power button, do you hear any sound, such as a fan or click?"
+        elif light_yes and noise_no:
+            answer = "Understood. We have confirmed an indicator light, but no sound and no fan movement. Is the power cable firmly connected to the PC and the outlet? If possible, test another outlet. Do not open the power supply."
+        elif light_no and noise_no:
+            answer = "Understood. We have confirmed no lights, no sound and no fan movement. Is the power cable firmly connected to the PC and the outlet? If possible, test another outlet. Do not open the power supply."
         else:
-            answer = "Understood. We have confirmed the desktop PC, no apparent power and no sound. Is the power cable firmly connected to the PC and the outlet? If possible, test another outlet. Do not open the power supply."
+            answer = "Understood. We have confirmed the basic symptoms. Is the power cable firmly connected to the PC and the outlet? If possible, test another outlet. Do not open the power supply."
     else:
-        if not no_light:
+        if not (light_yes or light_no):
             answer = "Entendido. Ya sabemos que es una PC de escritorio y que no enciende. No voy a asumir si hay luces o ruidos. Al presionar el botón de encendido, ¿se enciende alguna luz?"
-        elif not no_noise:
-            answer = "Entendido. Ya sabemos que es una PC de escritorio y que no hay luces indicadoras. Sin asumir otros síntomas: al presionar el botón de encendido, ¿escuchas algún ruido, como un ventilador o un clic?"
+        elif not (noise_yes or noise_no):
+            light_state = "hay una luz indicadora encendida" if light_yes else "no hay luces indicadoras"
+            answer = f"Entendido. Ya confirmamos que {light_state}. Sin asumir otros síntomas: al presionar el botón de encendido, ¿escuchas algún ruido, como un ventilador o un clic?"
+        elif light_yes and noise_no:
+            answer = "Entendido. Ya confirmamos que hay una luz indicadora, pero no hay ruido y ningún ventilador gira. ¿El cable de alimentación está firmemente conectado a la PC y al tomacorriente? Si puedes, prueba otro tomacorriente. No abras todavía la fuente de alimentación."
+        elif light_no and noise_no:
+            answer = "Entendido. Ya confirmamos que no hay luces, no hay ruido y ningún ventilador gira. ¿El cable de alimentación está firmemente conectado a la PC y al tomacorriente? Si puedes, prueba otro tomacorriente. No abras todavía la fuente de alimentación."
         else:
-            answer = "Entendido. Ya tenemos confirmados la PC de escritorio, la ausencia de luces y la ausencia de ruido. ¿El cable de alimentación está firmemente conectado a la PC y al tomacorriente? Si puedes, prueba otro tomacorriente. No abras todavía la fuente de alimentación."
+            answer = "Entendido. Ya tenemos confirmados los síntomas básicos. ¿El cable de alimentación está firmemente conectado a la PC y al tomacorriente? Si puedes, prueba otro tomacorriente. No abras todavía la fuente de alimentación."
     return {"answer": answer, "provider": "bitey-core-diagnostic-guard", "mode": "bounded_diagnostic", "business_context_applied": _business_context_relevant(message, context)}
 
 
