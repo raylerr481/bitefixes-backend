@@ -1,6 +1,34 @@
 # BiteFixes Backend
 
-`bitefixes-backend` is the **enterprise backend owned by BiteFixes**. It is the production foundation for BiteFixes CRM, BiteFixes SaaS, AI-agent implementation/creation and **Bitey IA Empresarial**, the contextual AI implementation used by each business.
+`bitefixes-backend` is the **specialized enterprise AI and business backend owned by BiteFixes**. It is the production foundation for BiteFixes CRM, BiteFixes SaaS, AI-agent implementation/creation and **Bitey IA Empresarial**, the contextual AI implementation used by each business.
+
+## Ecosystem architecture
+
+The Bitey ecosystem has a clear separation of cognitive and enterprise responsibilities:
+
+- **`raylerr481/bitey-web` — Bitey IA Web:** the **central cognitive brain** of Bitey IA. It provides the general/integral intelligence layer and coordinates general reasoning, memory access, planning, tools, models, evaluation, policies and specialized capabilities.
+- **`raylerr481/bitefixes-backend` — Bitey IA Empresarial:** the **specialized BiteFixes enterprise AI/business backend**. It owns the BiteFixes business/API domain, CRM/SaaS integration and contextual enterprise operations.
+- **`bitefixes-backed` — Supabase/Postgres:** the **single shared canonical memory/data persistence instance** for this architecture.
+
+```text
+                    BITEY IA ECOSYSTEM
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+     Bitey IA Web / GitHub          BiteFixes Backend / GitHub
+     CENTRAL COGNITIVE BRAIN        SPECIALIZED ENTERPRISE AI
+              │                             │
+              └──────────────┬──────────────┘
+                             │
+                    shared contracts
+                             │
+                             ▼
+                 Supabase/Postgres
+                   `bitefixes-backed`
+                SINGLE MEMORY/DATA LAYER
+```
+
+The separation is by **software responsibility and API contract**, not by creating duplicate memory databases.
 
 ## Ownership and boundaries
 
@@ -11,32 +39,40 @@
 - Customer channels and business automations.
 - Bitey IA Empresarial implementations.
 
-**Bitey IA Empresarial** is the contextual enterprise implementation of Bitey IA inside BiteFixes. Each business can have its own company context, memory, knowledge, rules, authorized data, tools, channels and assistant identity. It may use authorized CRM capabilities, but it does not own or absorb the CRM.
+**Bitey IA Empresarial** is the contextual enterprise implementation of Bitey IA inside BiteFixes. Each business can have its own company context, memory, knowledge, rules, authorized data, tools, channels and assistant identity. It may use authorized CRM capabilities, but it does not own or absorb the general Bitey IA cognitive layer.
 
-**Bitey IA Web** (`raylerr481/bitey-web`) is the separate **general/integral Bitey IA**: a general-purpose AI architecture, conceptually comparable to a general assistant such as ChatGPT. It can coordinate models, research, tools and specialized modules through explicit contracts. It does not own BiteFixes CRM, BiteFixes SaaS or enterprise agent implementations.
+**Bitey IA Web** (`raylerr481/bitey-web`) is the separate **central/general Bitey IA brain**. It can coordinate models, research, tools and specialized modules through explicit contracts. It does not replace BiteFixes CRM, SaaS or enterprise business ownership.
 
 **Bitey IA WordPress plugin** (`raylerr481/bitey-ai`) is the WordPress integration/channel layer that provides the Web widget/globe. It is not the Bitey IA Web brain.
 
 **Bitey SBT** is a separate trading project and must not be mixed with BiteFixes CRM, SaaS or enterprise customer data.
 
-## Data architecture
+## Shared data and memory architecture
 
-**Supabase/Postgres is the canonical persistence platform for BiteFixes. Neo4j and MongoDB are excluded from the current architecture.**
+**`bitefixes-backed` is the single canonical Supabase/Postgres instance for Bitey IA Web and BiteFixes Backend.**
+
+It is the shared persistence foundation for canonical memory and data. Repositories remain separated at the application and API layers, while tenant/domain isolation is enforced in the data layer.
 
 ```text
-BiteFixes
- ├── CRM / SaaS / enterprise data
- ├── Bitey IA Empresarial
- └── WhatsApp / Telegram / Web globe
-                ↓
-         FastAPI Backend
-                ↓
-         Supabase/Postgres
+Bitey IA Web ───────────────┐
+                            │
+                            ▼
+                  `bitefixes-backed`
+                  Supabase/Postgres
+                            ▲
+                            │
+BiteFixes Backend ──────────┘
 ```
+
+A new Bitey/BiteFixes module must not create a parallel Supabase memory instance merely to duplicate ecosystem state.
+
+Neo4j and MongoDB are excluded from the current architecture.
 
 ## CRM boundary
 
 The CRM is a first-class BiteFixes subsystem. Bitey IA Empresarial can interpret conversations, assist personnel, recommend actions and execute authorized automations, while CRM records and business rules remain governed by this backend.
+
+The central Bitey IA brain may coordinate with BiteFixes Backend through explicit contracts, but general cognitive responsibilities and BiteFixes business responsibilities remain distinct.
 
 ## Multi-tenancy
 
@@ -51,11 +87,13 @@ Tenant isolation is mandatory for customers, conversations, memory, knowledge, t
 
 ## Architecture principles
 
+- `bitey-web` is the central/general Bitey IA cognitive brain.
 - FastAPI is the authoritative BiteFixes business/API layer.
-- Supabase/Postgres is the canonical data, memory and knowledge persistence layer.
+- BiteFixes Backend provides the specialized enterprise AI implementation.
+- **`bitefixes-backed` is the single canonical shared Supabase/Postgres memory/data layer.**
 - BiteFixes owns CRM, SaaS and AI-agent implementation.
 - Bitey IA Empresarial is contextual to each tenant.
-- Bitey IA Web is general/integral and remains a separate product/repository boundary.
+- Bitey IA Web remains a separate general cognitive repository boundary.
 - `bitey-ai` is the WordPress plugin/integration layer.
 - Provider credentials remain server-side.
 - Cross-tenant access is prohibited.
@@ -78,8 +116,8 @@ This project follows a **free-first, no-surprise-cost architecture**.
 
 - `bitefixes-web` — public BiteFixes website and Web customer channel.
 - `bitey-ai` — WordPress plugin for the Bitey Web widget.
-- `bitey-web` — general/integral Bitey IA cognitive architecture.
+- `bitey-web` — central/general Bitey IA cognitive brain.
 - `bitefixes-app` — BiteFixes mobile channel.
 - `bitey-system-bots-trading` — separate trading product.
 
-**Invariant:** BiteFixes owns the enterprise product. Bitey IA Empresarial is its contextual AI implementation. Bitey IA Web remains the general/integral AI. CRM and SaaS never migrate into the general Bitey IA repository.
+**Invariant:** Bitey IA Web is the central cognitive brain. BiteFixes Backend is the specialized enterprise AI/business backend. Both use the single shared Supabase memory/data instance `bitefixes-backed`. BiteFixes CRM and SaaS remain governed by the specialized enterprise backend and are not migrated into the general Bitey IA repository.
