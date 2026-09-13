@@ -1,6 +1,7 @@
 """Unified inbound channel adapters for Bitey, including WhatsApp Cloud API."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -14,6 +15,7 @@ from app.services.bitey_gateway import handle_message, normalize_channel, SUPPOR
 from app.services.outbound_channel_adapter import send_external_response
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
 
 def _token(channel: str) -> str:
@@ -124,6 +126,49 @@ def normalize_event(channel: str, payload: dict[str, Any]) -> dict[str, Any] | N
     return {"message": text, "phone": _text(payload.get("phone") or payload.get("from_phone")), "email": _text(payload.get("email") or payload.get("from_email")), "customer_name": _text(payload.get("name") or payload.get("customer_name")), "last_name": _text(payload.get("last_name") or payload.get("surname")), "conversation_id": _text(payload.get("conversation_id") or payload.get("id")), "channel": channel}
 
 
+def _track_task(task: asyncio.Task[Any]) -> None:
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(_log_task_result)
+
+
+def _log_task_result(task: asyncio.Task[Any]) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        print("[TELEGRAM] background task cancelled")
+    except Exception as exc:
+        print(f"[TELEGRAM] background task failed error={type(exc).__name__}")
+
+
+async def _process_event(channel: str, event: dict[str, Any]) -> None:
+    """Run the potentially slow AI/database work outside the webhook request."""
+    print(f"[WEBHOOK] channel={channel} status=accepted message_id={event.get('external_message_id')} conversation={event.get('conversation_id')}")
+    try:
+        result = await asyncio.to_thread(
+            handle_message,
+            company_id=_company_id(channel), message=event["message"], phone=event["phone"],
+            email=event.get("email", ""), customer_name=event["customer_name"] or "Customer",
+            last_name=event.get("last_name", ""), channel=normalize_channel(channel),
+            conversation_id=event["conversation_id"], language_preference="auto",
+        )
+        response = result.get("response", "") if isinstance(result, dict) else ""
+        print(f"[WEBHOOK] channel={channel} status=generated message_id={event.get('external_message_id')} response_chars={len(str(response or ''))}")
+        delivery = await send_external_response(
+            channel=channel,
+            response=response,
+            event={
+                **event,
+                "external_conversation_id": event["conversation_id"],
+                "conversation_id": result.get("conversation_id") if isinstance(result, dict) else None,
+                "customer_id": result.get("customer_id") if isinstance(result, dict) else None,
+            },
+        )
+        print(f"[WEBHOOK] channel={channel} status=delivered message_id={event.get('external_message_id')} delivery={delivery.get('status') if isinstance(delivery, dict) else 'unknown'}")
+    except Exception as exc:
+        print(f"[WEBHOOK] channel={channel} status=processing_error message_id={event.get('external_message_id')} error={type(exc).__name__}")
+
+
 async def _handle(channel: str, request: Request):
     if channel == "whatsapp":
         body = await request.body()
@@ -142,6 +187,16 @@ async def _handle(channel: str, request: Request):
     event = normalize_event(channel, payload)
     if not event:
         return {"status": "ignored", "channel": channel}
+
+    if channel == "telegram":
+        task = asyncio.create_task(_process_event(channel, event))
+        _track_task(task)
+        return {
+            "status": "accepted",
+            "channel": channel,
+            "external_conversation_id": event["conversation_id"],
+            "external_message_id": event.get("external_message_id"),
+        }
 
     result = handle_message(
         company_id=_company_id(channel), message=event["message"], phone=event["phone"],
