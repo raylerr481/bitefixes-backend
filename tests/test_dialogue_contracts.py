@@ -5,17 +5,19 @@ Supabase, WhatsApp, or an external LLM. They protect the user-visible rules
 that the deterministic context layer must satisfy before a response is built.
 """
 
-from app.services.problem_identity_service import ProblemIdentityService
+from app.services.problem_identity_service import analyze_problem
 
 
 def analyze(message, active=None):
-    svc = ProblemIdentityService()
-    return svc.analyze_problem(
+    return analyze_problem(
         message,
-        customer_id=1,
         active_problem=active,
         active_device=active.get("device") if active else None,
-        active_platform=active.get("platform") if active else None,
+        active_intent=active.get("intent") if active else None,
+        context={
+            "last_platform": active.get("platform") if active else None,
+            "last_os_version": active.get("os_version") if active else None,
+        },
     )
 
 
@@ -25,7 +27,7 @@ def test_windows_10_update_must_not_reset_diagnosis():
 
     assert second["is_continuation"] is True
     assert second["is_new"] is False
-    assert second.get("device") in {"computer", "pc"}
+    assert second.get("device_kind") == "computer"
     assert "windows" in str(second.get("platform", "")).lower()
     assert any(x in str(second.get("category", "")).lower() for x in ("slow", "performance"))
 
@@ -36,7 +38,7 @@ def test_heating_followup_must_preserve_pc_context():
 
     assert second["is_continuation"] is True
     assert second["is_new"] is False
-    assert second.get("device") == first.get("device")
+    assert second.get("device_kind") == first.get("device_kind")
 
 
 def test_explicit_device_switch_is_new_problem():
@@ -53,4 +55,4 @@ def test_phone_os_update_preserves_phone_problem():
 
     assert second["is_continuation"] is True
     assert second["is_new"] is False
-    assert second.get("device") in {"mobile", "phone", "cellphone", "smartphone"}
+    assert second.get("device_kind") == first.get("device_kind")

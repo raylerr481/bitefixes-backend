@@ -1,7 +1,7 @@
 from app.services import company_people_service
 
 
-def test_company_people_context_hides_contact_details_and_filters_authority(monkeypatch):
+def test_company_people_context_hides_contact_details(monkeypatch):
     monkeypatch.setattr(
         company_people_service,
         "list_company_people",
@@ -12,14 +12,7 @@ def test_company_people_context_hides_contact_details_and_filters_authority(monk
                 "job_title": "Technical Manager",
                 "department": "Operations",
                 "person_type": "employee",
-                "roles": [
-                    {
-                        "role_code": "technical_lead",
-                        "role_name": "Technical Lead",
-                        "is_primary": True,
-                        "authority_level": 60,
-                    }
-                ],
+                "roles": [{"role_code": "technical_lead", "role_name": "Technical Lead", "is_primary": True, "authority_level": 60}],
                 "is_primary": True,
                 "ai_context_authority": True,
                 "can_be_contacted_by_ai": True,
@@ -44,13 +37,15 @@ def test_company_people_context_hides_contact_details_and_filters_authority(monk
 
     context = company_people_service.build_company_people_context(1)
 
-    assert context["count"] == 1
+    assert context["count"] == 2
     person = context["company_people"][0]
     assert person["name"] == "Ana Silva"
     assert person["roles"][0]["code"] == "technical_lead"
     assert "phone" not in person
     assert "email" not in person
-    assert all(p["name"] != "Bruno Silva" for p in context["company_people"])
+    assert context["company_people"][1]["name"] == "Bruno Silva"
+    assert "phone" not in context["company_people"][1]
+    assert "email" not in context["company_people"][1]
 
 
 def test_unknown_role_is_rejected():

@@ -20,13 +20,13 @@ except Exception:
     llm_understand = None
 
 STATES={"NEW_PROBLEM","CONTINUATION","REOPENED_PROBLEM","RELATED_PROBLEM","NEEDS_CLARIFICATION"}
-PLATFORM_WORDS={"pt":"pt","pt-br":"pt-BR","es":"es","en":"en","android":"android","ios":"ios","iphone":"ios","windows":"windows","macos":"macos","linux":"linux","ipad":"ios"}
+PLATFORM_WORDS={"android":"android","ios":"ios","iphone":"ios","windows":"windows","macos":"macos","linux":"linux","ipad":"ios"}
 MOBILE_WORDS={"celular","telefono","telefone","movil","smartphone","phone","mobile","tablet","tableta","android","iphone","redmi","galaxy","pixel"}
 COMPUTER_WORDS={"laptop","notebook","computador","computadora","pc","ordenador","macbook","windows"}
 DEVICE_PATTERNS=[(r"\b(redmi\s+note\s+[0-9]+[a-z0-9-]*)\b","mobile"),(r"\b(redmi\s+[a-z0-9-]+)\b","mobile"),(r"\b(iphone\s*[0-9]+(?:\s*(?:pro|max|plus|mini))?)\b","mobile"),(r"\b(galaxy\s+[a-z0-9][a-z0-9 -]*)\b","mobile"),(r"\b(pixel\s+[0-9]+(?:\s*(?:pro|xl))?)\b","mobile"),(r"\b(laptop|notebook|computador|computadora|pc|ordenador|macbook)\b","computer"),(r"\b(celular|telefono|telefone|movil|smartphone|phone|mobile|tablet|tableta)\b","mobile")]
 PROBLEM_PATTERNS={"malware":["virus","malware","troyano","trojan","spyware","adware","infectado","infectada","anuncios","publicidad","popup","popups","aplicaciones desconocidas"],"slow_performance":["lento","lenta","lentitud","slow","se traba","trava","lag","muy lento"],"screen":["pantalla","display","tela","vidrio","cristal"],"network":["wifi","internet","red","router","roteador","conexion","conexión"],"power":["bateria","batería","no carga","carga","apagando","no enciende","no prende"],"software":["aplicacion","aplicación","app","error","actualizacion","actualización","sistema"]}
 REOPEN_MARKERS=("volvio","volvió","regreso","regresó","reaparecio","reapareció","otra vez","again","de novo","novamente")
-CONTINUATION_MARKERS=("sigue","continua","continúa","todavia","todavía","aun","aún","igual","mismo","eso","este problema","el problema")
+CONTINUATION_MARKERS=("sigue","continua","continúa","todavia","todavía","aun","aún","igual","mismo","eso","este problema","el problema","tambien","también","ahora tambien","ahora también")
 
 def _norm(value:Any)->str:
     text=str(value or "").strip().lower()

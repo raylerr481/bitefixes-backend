@@ -1,33 +1,36 @@
-from app.core.bitey import _inherit_active_intent, _is_greeting
-from app.services.decision_engine import _is_contextual_followup, _is_mobile_category, _business_location
+from app.core.bitey import _is_greeting
+from app.services.problem_state_service import build_problem_state
+from app.services.contextual_resolution import resolve_context
 
 
-def test_greeting_does_not_inherit_active_intent():
-    context = {"last_intent": "mobile_repair", "last_confidence": 0.96}
-    result = _inherit_active_intent({"intent": None, "confidence": 0}, context, "hola")
-    assert result.get("intent") is None
+def test_greeting_detection_uses_current_core_contract():
+    assert _is_greeting("hola") is True
     assert _is_greeting("holla") is False
+    assert _is_greeting("Hola Bitey") is False
 
 
-def test_contextual_mobile_followup_inherits_intent():
-    context = {"last_intent": "mobile_repair", "last_confidence": 0.96}
-    result = _inherit_active_intent({"intent": None, "confidence": 0}, context, "dime como puedo repararlo")
-    assert result["intent"] == "mobile_repair"
-    assert result["context_inherited"] is True
-    assert _is_contextual_followup("dime como puedo repararlo", True)
+def test_contextual_followup_preserves_current_problem():
+    history = [
+        {"sender_type": "customer", "message_content": "Mi celular tiene la pantalla rota", "service_id": None},
+    ]
+
+    state = build_problem_state(history, "¿Cuánto cuesta repararlo?")
+    resolved = resolve_context(state, "¿Cuánto cuesta repararlo?", history)
+
+    assert resolved["active_category"] == "display"
+    assert resolved["active_object"] == "phone"
+    assert resolved["active_goal"] in {"SOLVE_PROBLEM", "QUOTE"}
+    assert resolved["is_follow_up"] is True
 
 
-def test_mobile_category_does_not_open_ticket():
-    assert _is_mobile_category("celulares") is True
-    assert _is_mobile_category("celulares rotos") is False
+def test_explicit_new_problem_replaces_previous_context():
+    history = [
+        {"sender_type": "customer", "message_content": "Mi PC está lenta", "service_id": None},
+    ]
 
+    state = build_problem_state(history, "La impresora no imprime")
+    resolved = resolve_context(state, "La impresora no imprime", history)
 
-def test_location_is_read_from_business_profile():
-    context = {"business_profile": {"address": "Rua Central 123"}}
-    assert _business_location(context) == "Rua Central 123"
-
-
-def test_followup_question_is_contextual():
-    assert _is_contextual_followup("cuanto cuesta?", True) is True
-    assert _is_contextual_followup("donde residen ustedes", True) is True
-    assert _is_contextual_followup("quiero instalar camaras", True) is False
+    assert resolved["active_category"] == "printing"
+    assert resolved["active_problem"] == "problema de impresión"
+    assert resolved["is_follow_up"] is False
