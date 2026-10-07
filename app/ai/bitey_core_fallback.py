@@ -154,10 +154,23 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
     lang = _text(language) or "es"
     if problem.get("active_problem") or problem.get("category") or problem.get("history_text"):
         if lang.startswith("pt"):
-            answer = "Vou manter o problema já identificado e avançar sem reiniciar o diagnóstico. Qual é o sintoma mais importante que ainda não verificamos?"
+            answer = "Vou manter o contexto já identificado e continuar sem reiniciar a conversa. Qual é o próximo detalhe ou sintoma que você quer verificar?"
         elif lang.startswith("en"):
-            answer = "I'll keep the problem already identified and continue without restarting the diagnosis. What is the most important symptom we have not checked yet?"
+            answer = "I'll keep the context already established and continue without restarting the conversation. What is the next detail or symptom you want to check?"
         else:
-            answer = "Mantendré el problema ya identificado y continuaré sin reiniciar el diagnóstico. ¿Cuál es el síntoma más importante que todavía no hemos comprobado?"
+            answer = "Mantendré el contexto ya establecido y continuaré sin reiniciar la conversación. ¿Cuál es el próximo detalle o síntoma que quieres comprobar?"
         return {"answer": answer, "provider": "bitey-core-local", "mode": "continuity_fallback", "business_context_applied": _business_context_relevant(message, context)}
+
+    # External channels such as Telegram must never become silent when the
+    # external AI council is temporarily unavailable. Keep the channel alive
+    # through the same customer/conversation memory path.
+    if not problem.get("active_problem"):
+        if lang.startswith("pt"):
+            answer = "Olá! Sou a Bitey, assistente de IA da BiteFixes. Estou aqui. Como posso ajudar?"
+        elif lang.startswith("en"):
+            answer = "Hello! I'm Bitey, the BiteFixes AI assistant. I'm here. How can I help?"
+        else:
+            answer = "¡Hola! Soy Bitey, la asistente de IA de BiteFixes. Estoy aquí. ¿Cómo puedo ayudarte?"
+        return {"answer": answer, "provider": "bitey-core-local", "mode": "general_conversation_fallback", "business_context_applied": _business_context_relevant(message, context)}
+
     return None
