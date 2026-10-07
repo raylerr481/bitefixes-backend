@@ -3,33 +3,33 @@ from datetime import datetime, timezone
 from typing import Any
 from app.database.supabase import database
 
-def _now()->str:return datetime.now(timezone.utc).isoformat()
+def _now()->str: return datetime.now(timezone.utc).isoformat()
 
-def _db_conversation_id(value:Any):
-    """Return a database conversation id only when the supplied value is numeric."""
-    try:
-        text=str(value or "").strip()
-        return int(text) if text.isdigit() else None
-    except (TypeError,ValueError):
+def _db_conversation_id(value: Any):
+    """Preserve UUID conversation ids as well as legacy numeric ids."""
+    text = str(value or "").strip()
+    if not text:
         return None
+    try:
+        return int(text) if text.isdigit() else text
+    except (TypeError, ValueError):
+        return text
 
 def get_or_create_conversation(customer_id:int,channel:str="website",conversation_id:Any=None):
-    """Resolve the active conversation for this customer and channel."""
     try:
         channel=str(channel or "website").strip().lower()
         query=database.table("conversations").select("*").eq("customer_id",customer_id).eq("channel",channel).eq("status","active")
         db_cid=_db_conversation_id(conversation_id)
-        if db_cid is not None:
-            query=query.eq("id",db_cid)
+        if db_cid is not None: query=query.eq("id",db_cid)
         result=query.order("updated_at",desc=True).limit(1).execute()
         if result.data:return result.data[0]
         conversation={"customer_id":customer_id,"channel":channel,"status":"active","agent":"bitey","handled_by_ai":True,"requires_human":False,"created_at":_now(),"updated_at":_now()}
-        result=database.table("conversations").insert(conversation).execute();return result.data[0] if result.data else None
+        result=database.table("conversations").insert(conversation).execute()
+        return result.data[0] if result.data else None
     except Exception as error:
         print("[CREATE CONVERSATION ERROR]",type(error).__name__,error);return None
 
 def get_conversation(conversation_id:Any,customer_id:int|None=None):
-    """Return conversation context enriched with the latest problem for THIS conversation."""
     try:
         query=database.table("conversations").select("*").eq("id",conversation_id)
         if customer_id is not None:query=query.eq("customer_id",customer_id)
@@ -60,7 +60,6 @@ def update_conversation(conversation_id:Any,data:dict):
 def close_conversation(conversation_id:Any):return update_conversation(conversation_id,{"status":"closed","closed_at":_now(),"pending_field":None,"pending_question":None,"pending_options":[]})
 
 def update_conversation_context(conversation_id:Any,intent:str=None,response:str=None,ticket_id:int=None,service_id:int=None,confidence:float=None,language:str=None,metadata:dict=None,pending_field:str=None,pending_question:str=None,pending_options:list|None=None,pending_expires_at:str=None):
-    """Persist conversation context, including the explicit pending conversational turn."""
     data={}
     if intent:data["last_intent"]=intent
     if response:data["last_response"]=response
@@ -71,18 +70,11 @@ def update_conversation_context(conversation_id:Any,intent:str=None,response:str
     if pending_options is not None:
         data["pending_options"]=pending_options
         if pending_question:
-            data["pending_question"]=pending_question
-            data["pending_field"]=pending_field or "unspecified"
-            data["pending_set_at"]=_now()
+            data["pending_question"]=pending_question; data["pending_field"]=pending_field or "unspecified"; data["pending_set_at"]=_now()
         else:
-            data["pending_question"]=None
-            data["pending_field"]=None
-            data["pending_set_at"]=None
-            data["pending_expires_at"]=None
+            data["pending_question"]=None; data["pending_field"]=None; data["pending_set_at"]=None; data["pending_expires_at"]=None
     elif pending_question:
-        data["pending_question"]=pending_question
-        data["pending_field"]=pending_field or "unspecified"
-        data["pending_set_at"]=_now()
+        data["pending_question"]=pending_question; data["pending_field"]=pending_field or "unspecified"; data["pending_set_at"]=_now()
     if pending_expires_at is not None:data["pending_expires_at"]=pending_expires_at
     return update_conversation(conversation_id,data)
 
