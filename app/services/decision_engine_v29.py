@@ -172,6 +172,16 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
 
     profile_valid = _profile_is_valid(context)
     response_deployment = _contextual_response_directive(context, message, apply_business_context=business_relevant)
+    q_policy = context.get("bitey_policy") if isinstance(context.get("bitey_policy"), dict) else {}
+    q_strategy = str(q_policy.get("strategy") or "")
+    q_instructions = {
+        "use_context": "Prioriza el historial conversacional disponible y responde usando hechos ya dichos por el usuario; no reinicies la conversación.",
+        "ask_clarification": "Si la intención o un dato crítico es ambiguo, formula una pregunta breve y orientadora antes de afirmar o ejecutar.",
+        "investigate": "Investiga el contexto conversacional y formula preguntas concretas para cerrar las incertidumbres antes de responder.",
+        "answer_direct": "Responde directamente cuando la intención y los datos disponibles sean suficientes; no preguntes innecesariamente.",
+    }
+    if q_strategy in q_instructions:
+        response_deployment["instruction"] = response_deployment.get("instruction", "") + " " + q_instructions[q_strategy]
     history = memory_dict.get("history", [])
     consultation = {"used": False, "reason": "not_attempted"}
     try:
@@ -192,6 +202,7 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
                 "complexity": 0.4, "novelty": 0.7 if not intent_dict.get("intent") else 0.25,
                 "business_impact": 0.2, "estimated_cost": 0.0,
                 "contextual_opportunities": context.get("contextual_opportunities") or [],
+                "bitey_policy": q_policy,
                 "external_ai_context_guidance": context.get("external_ai_context_guidance") or "",
             },
             conversation_id=memory_dict.get("conversation_id"),
