@@ -209,6 +209,7 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
 
     profile_valid = _profile_is_valid(context)
     response_deployment = _contextual_response_directive(context, message, apply_business_context=business_relevant)
+    interpretation = context.get("interpretation") if isinstance(context.get("interpretation"), dict) else {}
     q_policy = context.get("bitey_policy") if isinstance(context.get("bitey_policy"), dict) else {}
     q_strategy = str(q_policy.get("strategy") or "")
     q_instructions = {
