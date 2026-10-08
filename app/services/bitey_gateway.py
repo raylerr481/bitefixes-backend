@@ -10,6 +10,7 @@ from app.services.message_service import save_customer_message, save_bitey_messa
 from app.services.website_diagnostic_service import extract_urls, fetch_website_context
 from app.services.problem_state_service import build_problem_state
 from app.services.contextual_resolution import resolve_context
+from app.services.q_learning_service import choose_action, learn, reward_for_turn
 
 SUPPORTED_CHANNELS = {"website", "whatsapp", "messenger", "telegram", "email", "sms", "phone", "app", "private", "api"}
 _INTERNAL_KEYS = {"intent", "confidence", "raw_intent_score", "knowledge", "knowledge_found", "memory", "ai_consultation", "comparative_evaluation", "response_source", "decision", "gateway_debug"}
@@ -129,11 +130,35 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
         state["pending_question"] = {"field": resolved_pending.get("field"), "question": resolved_pending.get("question"), "options": conversation.get("pending_options") or []}
     memory = {"conversation_id":cid,"external_conversation_id":conversation_id,"history":reasoning_history,"recent_turns":state.get("recent_turns",[]),"confirmed_facts":state.get("confirmed_facts",[]),"last_service":None if context_reset else next((row.get("service_id") for row in reversed(history[-16:]) if row.get("service_id") is not None),None),"active_topic":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_problem":state.get("active_problem"),"active_goal":state.get("active_goal") or state.get("customer_goal"),"active_action":None,"active_location":state.get("active_location"),"active_url":None,"website_diagnostic_requested":state.get("website_diagnostic_requested",False),"stage":"diagnosis" if state.get("active_problem") else "exploration","is_follow_up":state.get("is_follow_up",False),"problem_state":state,"pending_turn":conversation.get("pending_question") if conversation else None,"current_message":message}
     if resolved_pending: memory["pending_answer"] = resolved_pending
+    message_lower = str(reasoning_message or "").lower()
+    if any(x in message_lower for x in ("qué te dije", "que te dije", "qué dijiste", "que dijiste", "antes")):
+        message_class = "memory_recall"
+    elif "?" in str(reasoning_message or ""):
+        message_class = "question"
+    elif state.get("active_problem"):
+        message_class = "problem_followup"
+    else:
+        message_class = "open"
+    q_context = {
+        "channel": channel,
+        "has_history": bool(reasoning_history),
+        "is_follow_up": bool(state.get("is_follow_up")),
+        "pending_question": conversation.get("pending_question") if conversation else None,
+        "active_problem": state.get("active_problem"),
+        "active_goal": state.get("active_goal") or state.get("customer_goal"),
+        "confidence": state.get("confidence"),
+        "message_class": message_class,
+    }
+    q_policy = choose_action(company_id, q_context)
     business_context = {"channel":channel,"active_goal":memory.get("active_goal"),"conversation":{"state":state.get("state"),"active_goal":memory.get("active_goal"),"active_problem":state.get("active_problem"),"active_category":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_location":state.get("active_location"),"symptoms":state.get("symptoms",[]),"hypotheses":state.get("hypotheses",[]),"customer_goal":state.get("customer_goal"),"confidence":state.get("confidence"),"confirmed_facts":state.get("confirmed_facts",[]),"pending_turn":memory.get("pending_turn"),"pending_answer":memory.get("pending_answer")}}
     if website_context := _website_context(reasoning_history, reasoning_message, state): business_context["website_context"] = website_context; business_context["website_diagnostic"] = bool(website_context.get("diagnostic_requested"))
+    business_context["bitey_policy"] = {"engine": "q_learning", "linked": True, "strategy": q_policy.get("action"), "state_key": q_policy.get("state_key")}
     result = ai_first_decision(company_id=company_id, customer=customer, message=reasoning_message, intent={}, knowledge=None, memory=memory, language=language, business_context=business_context)
     if not isinstance(result,dict): return {"action":"conversation","create_ticket":False,"response":"No fue posible completar la consulta en este momento."}
     response=str(result.get("response") or "").strip(); result_service_id=result.get("service_id") or memory.get("last_service"); result_intent=result.get("intent")
+    q_reward = reward_for_turn(q_policy, response=response, history=reasoning_history, state=state)
+    q_next_context = dict(q_context, has_history=True, pending_question=bool(_extract_pending_turn(response)))
+    q_learning = learn(company_id, q_policy, q_reward, q_next_context)
     if cid:
         save_customer_message(company_id=company_id,customer_id=customer_id,conversation_id=cid,message=message,channel=channel,service_id=result_service_id)
         if response: save_bitey_message(company_id=company_id,customer_id=customer_id,conversation_id=cid,response=response,channel=channel,service_id=result_service_id)
@@ -141,6 +166,7 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
         if pending: update_conversation_context(cid,intent=result_intent,response=response,service_id=result_service_id,language=language,pending_field=pending["field"],pending_question=pending["question"],pending_options=pending["options"])
         else: update_conversation_context(cid,intent=result_intent,response=response,service_id=result_service_id,language=language,pending_field=None,pending_question=None,pending_options=[])
     result["conversation_id"]=cid; result["external_conversation_id"]=conversation_id; result["customer_id"]=customer_id
+    result["learning_status"] = {"engine": "q_learning", "linked": True, "strategy": q_policy.get("action"), "updated": q_learning.get("updated", False)}
     if preferred_contact_channel: result["preferred_contact_channel"]=preferred_contact_channel
     return result
 
