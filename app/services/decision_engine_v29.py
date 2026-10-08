@@ -150,7 +150,22 @@ def _business_context_relevant(message: str, context: Dict[str, Any], intent: Di
 def _deterministic_time_answer(message: str, language: str = "es") -> Optional[str]:
     """Answer unambiguous current-time questions without routing them through generic research."""
     text = str(message or "").strip().lower()
-    time_markers = ("qué hora", "que hora", "hora es", "hora en", "tiempo en", "hora actual", "qué tiempo", "que tiempo")
+    # Distinguish "time" from "weather": "qué tiempo hace" is weather, while
+    # "cuál es el tiempo en España" / "tiempo en España" can be used colloquially for clock time.
+    weather_markers = (
+        "qué tiempo hace", "que tiempo hace", "qué tiempo está haciendo",
+        "que tiempo esta haciendo", "clima", "climático", "climatico",
+        "temperatura", "llueve", "llover", "pronóstico", "pronostico",
+        "weather",
+    )
+    if any(marker in text for marker in weather_markers):
+        return None
+
+    time_markers = (
+        "qué hora", "que hora", "cual es la hora", "cuál es la hora",
+        "hora es", "hora en", "tiempo en", "hora actual",
+        "qué es la hora", "que es la hora",
+    )
     location_markers = ("españa", "espana", "madrid", "barcelona", "valencia", "sevilla", "canarias")
     if not any(marker in text for marker in time_markers) or not any(marker in text for marker in location_markers):
         return None
