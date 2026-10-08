@@ -36,6 +36,66 @@ def _history_has_request(history: list[dict[str, Any]]) -> bool:
             return True
     return False
 
+def interpret_context(state: dict[str, Any], current_message: str, history: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a semantic interpretation from the current turn plus conversation state.
+
+    This layer resolves references such as "allí", "eso", "también", "mañana" and
+    short follow-ups against facts already established in the conversation. It does
+    not guess missing facts; it marks ambiguity when more than one interpretation is
+    plausible.
+    """
+    interpretation = interpret_context(state, current_message, history)\n    text = str(current_message or "").strip()
+    lower = text.lower()
+    result = {
+        "message": text,
+        "is_follow_up": bool(history),
+        "reference_resolution": {},
+        "entities": {},
+        "topic": state.get("active_category") or state.get("active_topic"),
+        "object": state.get("active_object"),
+        "model": state.get("active_model"),
+        "location": state.get("active_location"),
+        "goal": state.get("active_goal") or state.get("customer_goal"),
+        "problem": state.get("active_problem"),
+        "confidence": float(state.get("confidence") or 0.0),
+        "ambiguity": [],
+    }
+
+    # Pronouns/deictic references: resolve only when the antecedent is present.
+    if re.search(r"\b(all[ií]|all[aá]|ah[ií]|eso|esa|ese|esto|esta|este|lo mismo|también|tambien)\b", lower):
+        if state.get("active_location"):
+            result["reference_resolution"]["location"] = state["active_location"]
+        elif re.search(r"\b(all[ií]|all[aá]|ah[ií])\b", lower):
+            result["ambiguity"].append("location_reference")
+        if state.get("active_object"):
+            result["reference_resolution"]["object"] = state["active_object"]
+        if state.get("active_problem"):
+            result["reference_resolution"]["problem"] = state["active_problem"]
+
+    # Temporal references inherit the current topic instead of becoming a new intent.
+    temporal = None
+    if re.search(r"\b(mañana|manana)\b", lower):
+        temporal = "tomorrow"
+    elif re.search(r"\b(hoy|ahora|actualmente)\b", lower):
+        temporal = "current"
+    elif re.search(r"\b(ayer)\b", lower):
+        temporal = "yesterday"
+    if temporal:
+        result["reference_resolution"]["time_reference"] = temporal
+
+    # Short continuation questions are not standalone intents.
+    short_follow_up = len(text.split()) <= 8 and bool(history)
+    if short_follow_up:
+        result["reference_resolution"]["continuation"] = True
+
+    if result["ambiguity"]:
+        result["confidence"] = min(result["confidence"], 0.55)
+    elif result["reference_resolution"]:
+        result["confidence"] = max(result["confidence"], 0.75)
+
+    return result
+
+
 def resolve_context(state: dict[str, Any], current_message: str, history: list[dict[str, Any]]) -> dict[str, Any]:
     """Resolve the current turn against the existing goal before allowing a fault.
 
