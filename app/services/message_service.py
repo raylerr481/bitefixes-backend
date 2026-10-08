@@ -11,10 +11,8 @@ def _confidence_percent(value: Optional[Union[int, float, str]]) -> Optional[int
     if 0.0 <= number <= 1.0: number *= 100.0
     return max(0, min(100, int(round(number))))
 
-def _save(data: dict, role: str):
-    # Canonical schema requires role/content; BiteFixes compatibility fields are retained.
-    data["role"] = role
-    data["content"] = data.get("message_content") or ""
+def _save(data: dict):
+    # Use only columns that exist in BiteFixes' canonical public.messages schema.
     return database.table("messages").insert(data).execute().data
 
 def save_customer_message(company_id: int, customer_id: int, message: str, channel: str = "website",
@@ -26,7 +24,7 @@ def save_customer_message(company_id: int, customer_id: int, message: str, chann
                 "message_content": message, "channel": channel, "message_type": "text", "intent": intent,
                 "service_id": service_id, "confidence": _confidence_percent(confidence), "ticket_id": ticket_id,
                 "conversation_id": conversation_id}
-        return _save(data, "user")
+        return _save(data)
     except Exception as error:
         print("[SAVE CUSTOMER MESSAGE ERROR]", type(error).__name__, error); return None
 
@@ -42,7 +40,7 @@ def save_bitey_message(company_id: int, customer_id: int, response: Optional[str
                 "message_type": "text", "intent": intent, "service_id": service_id,
                 "confidence": _confidence_percent(confidence), "ticket_id": ticket_id,
                 "conversation_id": conversation_id}
-        return _save(data, "assistant")
+        return _save(data)
     except Exception as error:
         print("[SAVE BITEY MESSAGE ERROR]", type(error).__name__, error); return None
 
@@ -50,7 +48,7 @@ def get_conversation_history(*, company_id: int, customer_id: int, conversation_
     """Return recent turns chronologically for reasoning."""
     try:
         rows = (database.table("messages").select(
-            "sender_type,message_content,ai_response,intent,service_id,created_at,role,content"
+            "sender_type,message_content,ai_response,intent,service_id,created_at"
         ).eq("company_id", company_id).eq("customer_id", customer_id)
          .eq("conversation_id", conversation_id).order("created_at", desc=True)
          .limit(max(1, min(limit, 30))).execute().data or [])
