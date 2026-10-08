@@ -6,6 +6,9 @@ context is supplied only for conversations that have that context.
 """
 from __future__ import annotations
 from typing import Any, Dict, Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import re
 from app.services.company_service import get_company_context
 from app.ai.consultation_service import consult_if_valuable
 from app.ai.bitey_core_fallback import fallback_answer
@@ -144,6 +147,25 @@ def _business_context_relevant(message: str, context: Dict[str, Any], intent: Di
     return explicit or any(x in m for x in markers)
 
 
+def _deterministic_time_answer(message: str, language: str = "es") -> Optional[str]:
+    """Answer unambiguous current-time questions without routing them through generic research."""
+    text = str(message or "").strip().lower()
+    time_markers = ("qué hora", "que hora", "hora es", "hora en", "tiempo en", "hora actual", "qué tiempo", "que tiempo")
+    location_markers = ("españa", "espana", "madrid", "barcelona", "valencia", "sevilla", "canarias")
+    if not any(marker in text for marker in time_markers) or not any(marker in text for marker in location_markers):
+        return None
+    is_canary = "canarias" in text
+    tz_name = "Atlantic/Canary" if is_canary else "Europe/Madrid"
+    zone_label = "Canarias" if is_canary else "España peninsular"
+    now = datetime.now(ZoneInfo(tz_name))
+    answer = f"En {zone_label}, ahora son las {now.strftime('%H:%M')} (hora local)."
+    if not is_canary:
+        canary = datetime.now(ZoneInfo("Atlantic/Canary"))
+        if canary.strftime('%H:%M') != now.strftime('%H:%M'):
+            answer += f" En Canarias son las {canary.strftime('%H:%M')}."
+    return answer
+
+
 def decision_engine(company_id: int, customer: Dict[str, Any], message: str, intent: Dict[str, Any], knowledge: Any = None, memory: Any = None, language: Optional[str] = None, business_context: Optional[Dict[str, Any]] = None):
     runtime_context = business_context if isinstance(business_context, dict) else {}
     try:
@@ -182,6 +204,22 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
     }
     if q_strategy in q_instructions:
         response_deployment["instruction"] = response_deployment.get("instruction", "") + " " + q_instructions[q_strategy]
+    deterministic_time_answer = _deterministic_time_answer(message, language or "es")
+    if deterministic_time_answer:
+        return {
+            "action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None,
+            "response": deterministic_time_answer, "workflow": None, "service": None,
+            "service_id": None, "reasoning": {},
+            "metadata": {
+                "architecture": "bitey-unified-general-plus-business-v1",
+                "cognitive_authority": "deterministic_time",
+                "response_authority": "deterministic_time",
+                "business_context_applied": False,
+                "response_mode": response_deployment["mode"],
+                "bitey_policy": q_policy,
+                "deterministic_route": "current_time",
+            },
+        }
     history = memory_dict.get("history", [])
     consultation = {"used": False, "reason": "not_attempted"}
     try:
