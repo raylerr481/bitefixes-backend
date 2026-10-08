@@ -10,6 +10,7 @@ import json
 import math
 import os
 import random
+from datetime import datetime, timezone
 from typing import Any
 from app.database.supabase import database
 
@@ -84,7 +85,7 @@ def _upsert(company_id: int, state_key: str, action: str, q_value: float, reward
             "visits": 1,
             "last_reward": float(reward),
             "last_transition": transition,
-            "updated_at": "now()",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }, on_conflict="company_id,state_key,action_key").execute()
         return True
     except Exception as exc:
