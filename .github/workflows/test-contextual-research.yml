@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - contextual-research-regression
+      - fix/general-answer-quality-gate
   pull_request:
     branches:
       - main
