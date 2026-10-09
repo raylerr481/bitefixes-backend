@@ -41,7 +41,7 @@ def _explicit_place_conflict(answer: str, message: str) -> str | None:
     response = str(answer or "").casefold()
     requested = []
     for canonical, aliases in _PLACE_ALIASES.items():
-        if any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", question) for alias in aliases):
+        if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", question) for alias in aliases):
             if canonical not in requested:
                 requested.append(canonical)
     if not requested:
@@ -53,11 +53,11 @@ def _explicit_place_conflict(answer: str, message: str) -> str | None:
     for canonical, aliases in _PLACE_ALIASES.items():
         if canonical in requested:
             continue
-        mentioned = any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", response) for alias in aliases)
+        mentioned = any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", response) for alias in aliases)
         if mentioned:
             # Only enforce country/city conflict when the requested place is actually absent.
             requested_aliases = _PLACE_ALIASES.get(requested[0], (requested[0],))
-            requested_present = any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", response) for alias in requested_aliases)
+            requested_present = any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", response) for alias in requested_aliases)
             if not requested_present:
                 return f"answer_mentions_unrequested_place:{canonical}"
     return None
