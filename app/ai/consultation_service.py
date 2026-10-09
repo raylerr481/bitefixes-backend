@@ -47,7 +47,7 @@ def _explicit_place_conflict(answer: str, message: str) -> str | None:
     requested_countries = {
         canonical for canonical, aliases in _PLACE_ALIASES.items()
         if canonical in country_keys
-        and any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", question) for alias in aliases)
+        and any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", question) for alias in aliases)
     }
     if not requested_countries:
         return None
@@ -60,7 +60,7 @@ def _explicit_place_conflict(answer: str, message: str) -> str | None:
     for canonical, aliases in _PLACE_ALIASES.items():
         if canonical not in country_keys or canonical in requested_countries:
             continue
-        if any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", response) for alias in aliases):
+        if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", response) for alias in aliases):
             return f"answer_mentions_unrequested_place:{canonical}"
     return None
 
