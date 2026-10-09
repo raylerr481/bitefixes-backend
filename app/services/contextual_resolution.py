@@ -90,7 +90,8 @@ def interpret_context(state: dict[str,Any], current_message: str, history: list[
             if anchors.get("intent"): refs["intent"]=anchors["intent"]
             if anchors.get("location"): refs["location"]=anchors["location"]
             break
-    intent,confidence,candidates=_classify(text,anchors,follow)
+    # A correction is a semantic reset for intent inheritance: never let the old intent win merely because this is a short follow-up.
+    intent,confidence,candidates=_classify(text,anchors,follow and not correction)
     if correction and intent is None:
         if re.search(r"\bhora\b",lower): intent,confidence="time",.84
         elif re.search(r"\b(clima|temperatura|tiempo|llueve)\b",lower): intent,confidence="weather",.84
@@ -101,7 +102,7 @@ def interpret_context(state: dict[str,Any], current_message: str, history: list[
         if not re.search(r"\b(hora|clima|temperatura|llueve|pronóstico|pronostico)\b",lower):
             if anchors.get("intent") in {"weather","time"}: intent,confidence=anchors["intent"],max(confidence,.78)
             else: ambiguity.append("time_or_weather")
-    if len(text.split())<=8 and intent is None and anchors.get("intent"):
+    if len(text.split())<=8 and intent is None and anchors.get("intent") and not correction:
         intent,confidence=anchors["intent"],max(confidence,.78)
     entities={}
     for k in ("location","object","model","goal","problem"):
@@ -117,7 +118,31 @@ def interpret_context(state: dict[str,Any], current_message: str, history: list[
 def resolve_context(state: dict[str,Any], current_message: str, history: list[dict[str,Any]]) -> dict[str,Any]:
     text=str(current_message or "").strip(); result=dict(state)
     result["interpretation"]=interpret_context(result,text,history)
+    interpretation=result.get("interpretation") if isinstance(result.get("interpretation"),dict) else {}
     current_request=_has_request_intent(text); current_symptom=_has_symptom(text); prior_request=_history_has_request(history)
+    # Explicitly corrected intent supersedes stale entities/problems from the previous topic.
+    if interpretation.get("correction") and interpretation.get("intent"):
+        new_intent=str(interpretation["intent"])
+        previous_intent=str((state.get("interpretation") or {}).get("intent") or "")
+        if previous_intent and previous_intent != new_intent:
+            result["previous_intent"] = previous_intent
+        result["active_intent"] = new_intent
+        result["active_category"] = new_intent
+        result["interpretation"]["previous_intent_replaced"] = previous_intent or None
+        if new_intent not in {"support"}:
+            result["active_problem"] = None
+            result["hypotheses"] = []
+            result["confirmed_facts"] = [f for f in result.get("confirmed_facts",[]) if f.get("type") not in {"problem","symptom"}]
+        result["is_follow_up"] = bool(history)
+    elif interpretation.get("correction") and not interpretation.get("intent"):
+        # Do not silently continue the old topic after an ambiguous correction; ask what the user meant.
+        result["active_intent"] = None
+        result["interpretation"]["intent"] = None
+        result["interpretation"]["topic"] = None
+        result["interpretation"]["action"] = "ask_clarification"
+        result["interpretation"]["required_capability"] = "clarification"
+        result["interpretation"]["interpretable"] = False
+        result["interpretation"]["ambiguity"] = sorted(set(result["interpretation"].get("ambiguity",[]) + ["corrected_intent"]))
     if current_request and not current_symptom:
         result.update({"active_problem":None,"active_category":None,"state":"GOAL_REQUEST","is_follow_up":bool(history)})
         result["customer_goal"]=result.get("customer_goal") or "REQUEST_SERVICE"; result["active_goal"]=result.get("active_goal") or result["customer_goal"]; result["hypotheses"]=[]
