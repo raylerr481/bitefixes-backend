@@ -40,3 +40,11 @@ def test_general_answer_gate_does_not_require_keyword_overlap():
     score, reasons = _coherence_score(answer, question, {})
     assert score >= 0.60
     assert reasons == []
+
+
+def test_rejects_foreign_weather_observation_even_if_requested_country_is_named():
+    question = "¿Qué tiempo hace en España?"
+    answer = "En España, Mimaropa, Filipinas, la temperatura es 26.7 °C."
+    score, reasons = _coherence_score(answer, question, {})
+    assert score < 0.60
+    assert any(reason.startswith("answer_mentions_unrequested_place:") for reason in reasons)
