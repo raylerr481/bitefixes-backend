@@ -9,6 +9,74 @@ from app.ai.web_intelligence import needs_web, search_web
 from app.ai.web_learning import record_web_candidate
 
 
+# High-confidence geographic entities used only to detect explicit answer/query conflicts.
+# This is a contradiction guard, not a location resolver or a general knowledge database.
+_PLACE_ALIASES = {
+    "españa": ("españa", "espana", "spain"),
+    "spain": ("españa", "espana", "spain"),
+    "filipinas": ("filipinas", "philippines"),
+    "philippines": ("filipinas", "philippines"),
+    "brasil": ("brasil", "brazil"),
+    "brazil": ("brasil", "brazil"),
+    "portugal": ("portugal",),
+    "cuba": ("cuba",),
+    "méxico": ("méxico", "mexico"),
+    "mexico": ("méxico", "mexico"),
+    "argentina": ("argentina",),
+    "chile": ("chile",),
+    "colombia": ("colombia",),
+    "perú": ("perú", "peru"),
+    "peru": ("perú", "peru"),
+    "estados unidos": ("estados unidos", "united states", "usa", "u.s."),
+    "united states": ("estados unidos", "united states", "usa", "u.s."),
+    "esteio": ("esteio",),
+    "porto alegre": ("porto alegre",),
+    "madrid": ("madrid",),
+    "canarias": ("canarias", "canary islands"),
+}
+
+def _explicit_place_conflict(answer: str, message: str) -> str | None:
+    """Detect a foreign-country claim in an answer to a single-country question."""
+    question = str(message or "").casefold()
+    response = str(answer or "").casefold()
+    country_keys = {
+        "españa", "spain", "filipinas", "philippines", "brasil", "brazil",
+        "portugal", "cuba", "méxico", "mexico", "argentina", "chile",
+        "colombia", "perú", "peru", "estados unidos", "united states",
+    }
+    requested_countries = {
+        canonical for canonical, aliases in _PLACE_ALIASES.items()
+        if canonical in country_keys
+        and any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", question) for alias in aliases)
+    }
+    if not requested_countries:
+        return None
+    # Explicit comparisons legitimately mention more than one country.
+    comparison = any(term in question for term in (
+        "compara", "comparar", "diferencia entre", "versus", " vs ", "compare", "between",
+    ))
+    if comparison:
+        return None
+    for canonical, aliases in _PLACE_ALIASES.items():
+        if canonical not in country_keys or canonical in requested_countries:
+            continue
+        if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", response) for alias in aliases):
+            return f"answer_mentions_unrequested_place:{canonical}"
+    return None
+
+def _general_answer_quality(answer: str, message: str) -> tuple[float, list[str]]:
+    """Apply narrow, high-confidence checks to general questions without token-overlap scoring."""
+    score = 1.0
+    reasons: list[str] = []
+    if not str(answer or "").strip():
+        return 0.0, ["empty_answer"]
+    conflict = _explicit_place_conflict(answer, message)
+    if conflict:
+        score -= 0.85
+        reasons.append(conflict)
+    return max(0.0, min(1.0, score)), reasons
+
+
 def _contextual_inputs(context: Dict[str, Any]) -> tuple[list[dict[str, Any]], str | None, str | None, str | None]:
     memory = context.get("memory") or {}; conversation = context.get("conversation") or {}
     state = context.get("contextual_state") or memory.get("problem_state") or {}; profile = context.get("company_ai_profile") or {}
@@ -60,6 +128,11 @@ def _coherence_score(answer: str, message: str, context: Dict[str, Any]) -> tupl
         if any(term in answer_l for term in ("contacto","número de teléfono","numero de telefono","horario","agendar","agenda", "cita")) and not any(term in answer_l for term in ("diagnóstico","diagnostico","fuente","cable","tomacorriente","enchufe","energía","energia")):
             score-=0.50; reasons.append("answer_requests_service_contact_before_diagnosis")
     if category=="security" and re.search(r"\b(conectividad|wifi|wi-fi|internet|datos móviles)\b",answer_l) and not re.search(r"\b(seguridad|virus|malware|anuncio|aplicación|app)\b",answer_l): score-=0.65; reasons.append("security_problem_reclassified_as_connectivity")
+    # Also validate the actual question, not only the previously active technical issue.
+    # Keep this guard narrow: lexical similarity alone rejects many correct paraphrases.
+    general_score, general_reasons = _general_answer_quality(answer, message)
+    score = min(score, general_score)
+    reasons.extend(general_reasons)
     return max(0.0,min(1.0,score)),reasons
 
 
