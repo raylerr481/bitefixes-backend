@@ -143,12 +143,12 @@ def resolve_context(state: dict[str,Any], current_message: str, history: list[di
         result["interpretation"]["required_capability"] = "clarification"
         result["interpretation"]["interpretable"] = False
         result["interpretation"]["ambiguity"] = sorted(set(result["interpretation"].get("ambiguity",[]) + ["corrected_intent"]))
-    if current_request and not current_symptom:
+    if not interpretation.get("correction") and current_request and not current_symptom:
         result.update({"active_problem":None,"active_category":None,"state":"GOAL_REQUEST","is_follow_up":bool(history)})
         result["customer_goal"]=result.get("customer_goal") or "REQUEST_SERVICE"; result["active_goal"]=result.get("active_goal") or result["customer_goal"]; result["hypotheses"]=[]
         result["confidence"]=max(float(result.get("confidence") or 0),.80)
         result["confirmed_facts"]=[f for f in result.get("confirmed_facts",[]) if f.get("type")!="problem"]
-    elif prior_request and not current_symptom:
+    elif not interpretation.get("correction") and prior_request and not current_symptom:
         result.update({"active_problem":None,"active_category":None,"state":"ENTITY_UPDATE" if result.get("entity_only") else "CONTINUATION","is_follow_up":True})
         result["customer_goal"]=result.get("customer_goal") or "REQUEST_SERVICE"; result["active_goal"]=result.get("active_goal") or result["customer_goal"]; result["hypotheses"]=[]
         result["confidence"]=max(float(result.get("confidence") or 0),.80)
