@@ -36,30 +36,32 @@ _PLACE_ALIASES = {
 }
 
 def _explicit_place_conflict(answer: str, message: str) -> str | None:
-    """Return a contradiction reason when an answer names a different explicit place."""
+    """Detect a foreign-country claim in an answer to a single-country question."""
     question = str(message or "").casefold()
     response = str(answer or "").casefold()
-    requested = []
-    for canonical, aliases in _PLACE_ALIASES.items():
-        if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", question) for alias in aliases):
-            if canonical not in requested:
-                requested.append(canonical)
-    if not requested:
+    country_keys = {
+        "españa", "spain", "filipinas", "philippines", "brasil", "brazil",
+        "portugal", "cuba", "méxico", "mexico", "argentina", "chile",
+        "colombia", "perú", "peru", "estados unidos", "united states",
+    }
+    requested_countries = {
+        canonical for canonical, aliases in _PLACE_ALIASES.items()
+        if canonical in country_keys
+        and any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", question) for alias in aliases)
+    }
+    if not requested_countries:
         return None
-    # A question may explicitly compare multiple places; do not treat those as contradictions.
-    comparison = any(term in question for term in ("compara", "comparar", "diferencia entre", "versus", " vs ", "compare", "between"))
+    # Explicit comparisons legitimately mention more than one country.
+    comparison = any(term in question for term in (
+        "compara", "comparar", "diferencia entre", "versus", " vs ", "compare", "between",
+    ))
     if comparison:
         return None
     for canonical, aliases in _PLACE_ALIASES.items():
-        if canonical in requested:
+        if canonical not in country_keys or canonical in requested_countries:
             continue
-        mentioned = any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", response) for alias in aliases)
-        if mentioned:
-            # Only enforce country/city conflict when the requested place is actually absent.
-            requested_aliases = _PLACE_ALIASES.get(requested[0], (requested[0],))
-            requested_present = any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", response) for alias in requested_aliases)
-            if not requested_present:
-                return f"answer_mentions_unrequested_place:{canonical}"
+        if any(re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", response) for alias in aliases):
+            return f"answer_mentions_unrequested_place:{canonical}"
     return None
 
 def _general_answer_quality(answer: str, message: str) -> tuple[float, list[str]]:
