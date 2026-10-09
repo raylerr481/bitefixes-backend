@@ -31,6 +31,9 @@ def _state_key(context: dict[str, Any]) -> str:
         "goal": bool(context.get("active_goal")),
         "confidence": round(float(context.get("confidence") or 0), 1),
         "message_class": context.get("message_class", "unknown"),
+        # Q-learning is conditioned on the already-interpreted turn, never used to infer intent.
+        "interpreted_intent": context.get("interpreted_intent"),
+        "intent_corrected": bool(context.get("intent_corrected")),
     }
     raw = json.dumps(state, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
