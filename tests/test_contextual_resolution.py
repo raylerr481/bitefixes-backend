@@ -40,3 +40,36 @@ def test_explicit_symptom_does_not_get_suppressed():
     state = resolve_context(raw, "la cámara no muestra imagen", history)
     assert state["active_problem"] == "problema de cámara/vídeo"
     assert state["active_category"] == "camera"
+
+
+
+def test_explicit_correction_replaces_previous_intent_and_problem():
+    history = [
+        {"sender_type": "customer", "message_content": "Mi notebook no enciende"},
+        {"sender_type": "bitey", "message_content": "Vamos a revisar el equipo"},
+    ]
+    raw = {
+        "interpretation": {"intent": "support", "topic": "computer_repair"},
+        "active_problem": "notebook no enciende",
+        "active_category": "computer_repair",
+        "active_object": "notebook",
+        "hypotheses": ["fallo de alimentación"],
+        "confirmed_facts": [{"type": "problem", "value": "notebook no enciende"}],
+    }
+    state = resolve_context(raw, "No, me refiero al clima en Esteio", history)
+    assert state["interpretation"]["correction"] is True
+    assert state["interpretation"]["intent"] == "weather"
+    assert state["active_intent"] == "weather"
+    assert state["active_problem"] is None
+    assert state["hypotheses"] == []
+    assert all(f.get("type") not in {"problem", "symptom"} for f in state["confirmed_facts"])
+
+
+def test_ambiguous_correction_does_not_inherit_old_intent():
+    history = [{"sender_type": "customer", "message_content": "Mi notebook no enciende"}]
+    raw = {"interpretation": {"intent": "support"}, "active_problem": "notebook no enciende"}
+    state = resolve_context(raw, "No era eso, quise decir otra cosa", history)
+    assert state["interpretation"]["correction"] is True
+    assert state["interpretation"]["intent"] is None
+    assert state["interpretation"]["action"] == "ask_clarification"
+    assert "corrected_intent" in state["interpretation"]["ambiguity"]
