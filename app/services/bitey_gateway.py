@@ -149,6 +149,9 @@ def _try_external_ai(*, company_id: int, message: str, channel: str, phone: str,
         "active_goal": state.get("active_goal") or state.get("customer_goal"),
         "confidence": state.get("confidence"),
         "message_class": message_class,
+        # Contextual interpretation is completed above; Q-learning may choose a response strategy only now.
+        "interpreted_intent": interpretation.get("intent"),
+        "intent_corrected": bool(interpretation.get("correction")),
     }
     q_policy = choose_action(company_id, q_context)
     business_context = {"channel":channel,"active_goal":memory.get("active_goal"),"interpretation":interpretation,"conversation":{"state":state.get("state"),"active_goal":memory.get("active_goal"),"active_problem":state.get("active_problem"),"active_category":state.get("active_category"),"active_object":state.get("active_object"),"active_model":state.get("active_model"),"active_location":state.get("active_location"),"symptoms":state.get("symptoms",[]),"hypotheses":state.get("hypotheses",[]),"customer_goal":state.get("customer_goal"),"confidence":state.get("confidence"),"confirmed_facts":state.get("confirmed_facts",[]),"pending_turn":memory.get("pending_turn"),"pending_answer":memory.get("pending_answer")}}
