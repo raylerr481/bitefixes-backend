@@ -5,7 +5,7 @@ from typing import Any
 
 _REQUEST_PATTERNS = (
     r"\bquiero\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|poner|implementar|desarrollar)\b",
-    r"\b(?:deseo|necesito|busco|me gustaría|me gustaria)\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|poner|implementar|desarrollar)\b",
+    r"\b(?:quisiera|quisiese|deseo|necesito|busco|me gustaría|me gustaria)\s+(?:instalar|crear|configurar|comprar|contratar|montar|hacer|adquirir|poner|implementar|desarrollar)\b",
     r"\b(?:quiero|deseo|necesito|busco)\s+(?:una|un|el|la|las|los)\s+.+",
 )
 _SYMPTOM_MARKERS = ("no funciona","no enciende","no inicia","no arranca","está lento","esta lento","se congela","se bloquea","no muestra","no conecta","se desconecta","no carga","no graba","roto","rota","dañado","danado","error","problema","falla","falló","fallo")
