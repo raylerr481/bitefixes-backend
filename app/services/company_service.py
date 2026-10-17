@@ -101,7 +101,12 @@ def get_company_domains(company_id: int) -> List[Dict[str, Any]]:
 def get_company_capabilities(company_id: int) -> List[Dict[str, Any]]:
     relations = [r for r in _rows("company_capabilities", company_id=company_id) if r.get("enabled", True)]
     lookup = {r.get("id"): r for r in _rows("capabilities")}
-    return [{"capability": lookup[r["capability_id"]], "source": r.get("source"), "metadata": r.get("metadata") or {}} for r in relations if r.get("capability_id") in lookup]
+    result = []
+    for relation in relations:
+        function = lookup.get(relation.get("capability_id"))
+        if function:
+            result.append({"capability": function, "source": relation.get("source"), "metadata": relation.get("metadata") or {}})
+    return result
 
 
 def get_company_services(company_id: int) -> List[Dict[str, Any]]:
@@ -115,6 +120,65 @@ def get_company_locations(company_id: int) -> List[Dict[str, Any]]:
 
 def get_company_knowledge(company_id: int) -> List[Dict[str, Any]]:
     return _rows("knowledge_base", company_id=company_id, is_active=True)
+
+
+def _is_bitefixes_identity(company: Dict[str, Any], ai_profile: Optional[Dict[str, Any]]) -> bool:
+    """Limit the built-in service addition to the BiteFixes tenant only."""
+    names = [
+        company.get("name", ""),
+        (ai_profile or {}).get("company_name", ""),
+    ]
+    return any("bitefixes" in str(name).casefold() for name in names)
+
+
+def _has_printer_service(services: List[Dict[str, Any]]) -> bool:
+    """Avoid duplicating an existing active printer service."""
+    terms = ("impresora", "printer", "impressora", "printing", "print repair")
+    for service in services:
+        searchable = " ".join(
+            str(service.get(key) or "")
+            for key in ("name", "title", "service_name", "description", "category", "slug")
+        ).casefold()
+        if any(term in searchable for term in terms):
+            return True
+    return False
+
+
+def _include_bitefixes_printer_service(
+    company_id: int,
+    company: Dict[str, Any],
+    ai_profile: Optional[Dict[str, Any]],
+    services: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Ensure the AI context knows printer repair is a BiteFixes service.
+
+    This is an application-level catalog entry: it does not write to Supabase
+    or alter existing tables. A persistent CRM service record can be added
+    separately after confirming the live schema and current catalog.
+    """
+    if not _is_bitefixes_identity(company, ai_profile) or _has_printer_service(services):
+        return services
+
+    return [
+        *services,
+        {
+            "id": None,
+            "company_id": company_id,
+            "name": "Printer repair and maintenance",
+            "service_name": "Printer repair and maintenance",
+            "slug": "printer-repair-maintenance",
+            "category": "hardware_repair",
+            "description": (
+                "Repair and maintenance of inkjet and laser printers; diagnosis of "
+                "paper jams, print-quality issues, ink or toner problems, error messages, "
+                "driver installation, USB and Wi-Fi connectivity, and configuration."
+            ),
+            "is_active": True,
+            "source": "built_in_bitefixes_service_catalog",
+            "languages": ["es", "pt-BR", "en"],
+            "customer_intake": ["brand", "model", "symptoms", "error_message"],
+        },
+    ]
 
 
 def get_company_context(company_id: int) -> Dict[str, Any]:
@@ -141,6 +205,17 @@ def get_company_context(company_id: int) -> Dict[str, Any]:
     business_profile = get_business_profile(company_id)
     ai_profile = get_company_ai_profile(company_id)
     profile_data = (ai_profile or {}).get("profile") or {}
+    services = get_company_services(company_id)
+    services = _include_bitefixes_printer_service(company_id, company, ai_profile, services)
+    directives = {**(profile_data.get("behavior") or {}), **(profile_data.get("governance") or {})}
+    if _is_bitefixes_identity(company, ai_profile):
+        directives["service_catalog_rule"] = (
+            "BiteFixes offers printer repair and maintenance. For questions in Spanish or Portuguese "
+            "about repairing printers (impresoras/impressoras), confirm that the service is offered, "
+            "then ask for the printer brand, model, and symptoms or error message. Do not say printer "
+            "repair is not listed or unavailable. Do not promise a price, turnaround, or repair outcome "
+            "without verification."
+        )
 
     return {
         "company": company,
@@ -155,10 +230,10 @@ def get_company_context(company_id: int) -> Dict[str, Any]:
         "ai_scope": get_ai_scope(company_id),
         "domains": get_company_domains(company_id),
         "capabilities": get_company_capabilities(company_id),
-        "services": get_company_services(company_id),
+        "services": services,
         "locations": get_company_locations(company_id),
         "knowledge": get_company_knowledge(company_id),
         "objectives": profile_data.get("objectives") or (business_profile or {}).get("objective") or [],
-        "directives": {**(profile_data.get("behavior") or {}), **(profile_data.get("governance") or {})},
+        "directives": directives,
         "profile_authoritative": bool(ai_profile and ai_profile.get("authoritative")),
     }
