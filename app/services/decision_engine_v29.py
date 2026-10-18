@@ -236,6 +236,31 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
                 "deterministic_route": "current_time",
             },
         }
+    # Deterministic service-availability response: a greeting from an upstream model
+    # must never replace an explicit printer-repair question.
+    message_lower = str(message or "").strip().lower()
+    printer_terms = ("impresora", "impresoras", "printer", "printers")
+    if any(term in message_lower for term in printer_terms) and business_relevant:
+        lang = str(language or "es").lower()
+        if lang.startswith("pt"):
+            printer_answer = "Posso orientar você com suporte técnico para impressoras, mas não tenho confirmação de que a BiteFixes ofereça reparo de impressoras. Qual é a marca, o modelo e o problema apresentado?"
+        elif lang.startswith("en"):
+            printer_answer = "I can help troubleshoot printer issues, but I can't confirm that BiteFixes offers printer repairs. What brand and model is it, and what problem are you seeing?"
+        else:
+            printer_answer = "Puedo orientarte con soporte técnico de impresoras, pero no tengo confirmado que BiteFixes ofrezca reparación de impresoras. ¿Qué marca y modelo tienes y qué problema presenta?"
+        return {
+            "action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None,
+            "response": printer_answer, "workflow": None, "service": None,
+            "service_id": None, "reasoning": {},
+            "metadata": {
+                "architecture": "bitey-unified-general-plus-business-v1",
+                "cognitive_authority": "deterministic_service_availability",
+                "response_authority": "deterministic_service_availability",
+                "business_context_applied": True,
+                "response_mode": response_deployment["mode"],
+                "deterministic_route": "printer_service_question",
+            },
+        }
     history = memory_dict.get("history", [])
     consultation = {"used": False, "reason": "not_attempted"}
     try:
