@@ -152,15 +152,6 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
         return bounded
     problem = _active_problem(context)
     lang = _text(language) or "es"
-    if problem.get("active_problem") or problem.get("category") or problem.get("history_text"):
-        if lang.startswith("pt"):
-            answer = "Vou manter o contexto já identificado e continuar sem reiniciar a conversa. Qual é o próximo detalhe ou sintoma que você quer verificar?"
-        elif lang.startswith("en"):
-            answer = "I'll keep the context already established and continue without restarting the conversation. What is the next detail or symptom you want to check?"
-        else:
-            answer = "Mantendré el contexto ya establecido y continuaré sin reiniciar la conversación. ¿Cuál es el próximo detalle o síntoma que quieres comprobar?"
-        return {"answer": answer, "provider": "bitey-core-local", "mode": "continuity_fallback", "business_context_applied": _business_context_relevant(message, context)}
-
     # Do not answer a service question with the generic greeting when external AI
     # is unavailable. Be transparent about unconfirmed service availability.
     message_lower = _text(message)
@@ -179,6 +170,16 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
         else:
             answer = "Puedo orientarte con soporte técnico de impresoras, pero no tengo confirmado que BiteFixes ofrezca reparación de impresoras. ¿Qué marca y modelo tienes y qué problema presenta?"
         return {"answer": answer, "provider": "bitey-core-local", "mode": "service_availability_fallback", "business_context_applied": True}
+
+
+    if problem.get("active_problem") or problem.get("category") or problem.get("history_text"):
+        if lang.startswith("pt"):
+            answer = "Vou manter o contexto já identificado e continuar sem reiniciar a conversa. Qual é o próximo detalhe ou sintoma que você quer verificar?"
+        elif lang.startswith("en"):
+            answer = "I'll keep the context already established and continue without restarting the conversation. What is the next detail or symptom you want to check?"
+        else:
+            answer = "Mantendré el contexto ya establecido y continuaré sin reiniciar la conversación. ¿Cuál es el próximo detalle o síntoma que quieres comprobar?"
+        return {"answer": answer, "provider": "bitey-core-local", "mode": "continuity_fallback", "business_context_applied": _business_context_relevant(message, context)}
 
     # External channels such as Telegram must never become silent when the
     # external AI council is temporarily unavailable. Only actual greetings
