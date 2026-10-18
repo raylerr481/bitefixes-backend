@@ -1,6 +1,8 @@
 """Deterministic Bitey Core fallback and bounded diagnostic guard."""
 from __future__ import annotations
 from typing import Any, Dict
+import unicodedata
+import re
 
 
 def _text(value: Any) -> str:
@@ -152,6 +154,28 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
         return bounded
     problem = _active_problem(context)
     lang = _text(language) or "es"
+    # Basic, low-risk general-knowledge questions must remain answerable even
+    # when every external model is unavailable. Keep this allow-listed and
+    # deterministic instead of turning a known fact into a confidence error.
+    # Normalize accents and punctuation so natural Spanish questions such as
+    # "¿Qué es una computadora?" hit the local knowledge path reliably.
+    normalized_question = unicodedata.normalize("NFKD", _text(message))
+    normalized_question = "".join(ch for ch in normalized_question if not unicodedata.combining(ch))
+    normalized_question = re.sub(r"[^a-z0-9\s]", " ", normalized_question)
+    normalized_question = " ".join(normalized_question.split())
+    computer_question = bool(re.match(
+        r"^(?:(?:y )?para que sirve|que es|que significa|define|explica|what is|define|o que e|para que serve)\s+(?:(?:una?|el|la)\s+)?(?:computadora|computador|ordenador|pc|computer)(?:\b|$)",
+        normalized_question,
+    ))
+    if computer_question:
+        if lang.startswith("pt"):
+            answer = "Um computador é um dispositivo eletrônico que recebe dados, processa informações seguindo instruções de programas, armazena dados e apresenta resultados. Ele pode ser usado para estudar, trabalhar, navegar na internet, criar documentos e executar aplicativos."
+        elif lang.startswith("en"):
+            answer = "A computer is an electronic device that receives data, processes it according to program instructions, stores information, and produces results. It can be used for studying, working, browsing the internet, creating documents, and running applications."
+        else:
+            answer = "Una computadora es un dispositivo electrónico que recibe datos, los procesa siguiendo instrucciones de programas, almacena información y presenta resultados. Sirve, por ejemplo, para estudiar, trabajar, navegar por internet, crear documentos y ejecutar aplicaciones."
+        return {"answer": answer, "provider": "bitey-core-local", "mode": "basic_knowledge_fallback", "business_context_applied": False}
+
     # Do not answer a service question with the generic greeting when external AI
     # is unavailable. Be transparent about unconfirmed service availability.
     message_lower = _text(message)
