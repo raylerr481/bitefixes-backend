@@ -161,10 +161,10 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
     # "¿Qué es una computadora?" hit the local knowledge path reliably.
     normalized_question = unicodedata.normalize("NFKD", _text(message))
     normalized_question = "".join(ch for ch in normalized_question if not unicodedata.combining(ch))
-    normalized_question = re.sub(r"[^a-z0-9\\s]", " ", normalized_question)
+    normalized_question = re.sub(r"[^a-z0-9\s]", " ", normalized_question)
     normalized_question = " ".join(normalized_question.split())
     computer_question = bool(re.match(
-        r"^(?:(?:y )?para que sirve|que es|que significa|define|explica|what is|define|o que e|para que serve)\\s+(?:(?:una?|el|la)\\s+)?(?:computadora|computador|ordenador|pc|computer)(?:\\b|$)",
+        r"^(?:(?:y )?para que sirve|que es|que significa|define|explica|what is|define|o que e|para que serve)\s+(?:(?:una?|el|la)\s+)?(?:computadora|computador|ordenador|pc|computer)(?:\b|$)",
         normalized_question,
     ))
     if computer_question:
