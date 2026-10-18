@@ -161,16 +161,51 @@ def fallback_answer(message: str, *, language: str = "es", context: Dict[str, An
             answer = "Mantendré el contexto ya establecido y continuaré sin reiniciar la conversación. ¿Cuál es el próximo detalle o síntoma que quieres comprobar?"
         return {"answer": answer, "provider": "bitey-core-local", "mode": "continuity_fallback", "business_context_applied": _business_context_relevant(message, context)}
 
-    # External channels such as Telegram must never become silent when the
-    # external AI council is temporarily unavailable. Keep the channel alive
-    # through the same customer/conversation memory path.
-    if not problem.get("active_problem"):
+    # Do not answer a service question with the generic greeting when external AI
+    # is unavailable. Be transparent about unconfirmed service availability.
+    message_lower = _text(message)
+    printer_question = (
+        any(term in message_lower for term in ("impresora", "impresoras", "printer", "printers"))
+        and any(term in message_lower for term in (
+            "arregl", "arrgl", "repar", "servicio", "hacen", "tienen", "ofrecen",
+            "pueden", "atienden", "trabajan", "disponible", "cuesta", "precio", "?"
+        ))
+    )
+    if printer_question:
         if lang.startswith("pt"):
-            answer = "Olá! Sou a Bitey, assistente de IA da BiteFixes. Estou aqui. Como posso ajudar?"
+            answer = "Posso orientar você com suporte técnico para impressoras, mas não tenho confirmação de que a BiteFixes ofereça reparo de impressoras. Qual é a marca e o modelo, e qual problema ela apresenta?"
         elif lang.startswith("en"):
-            answer = "Hello! I'm Bitey, the BiteFixes AI assistant. I'm here. How can I help?"
+            answer = "I can help troubleshoot printer issues, but I can't confirm that BiteFixes currently offers printer repairs. What are the brand and model, and what problem are you experiencing?"
         else:
-            answer = "¡Hola! Soy Bitey, la asistente de IA de BiteFixes. Estoy aquí. ¿Cómo puedo ayudarte?"
-        return {"answer": answer, "provider": "bitey-core-local", "mode": "general_conversation_fallback", "business_context_applied": _business_context_relevant(message, context)}
+            answer = "Puedo orientarte con soporte técnico de impresoras, pero no tengo confirmado que BiteFixes ofrezca reparación de impresoras. ¿Qué marca y modelo tienes y qué problema presenta?"
+        return {"answer": answer, "provider": "bitey-core-local", "mode": "service_availability_fallback", "business_context_applied": True}
+
+    # External channels such as Telegram must never become silent when the
+    # external AI council is temporarily unavailable. Only actual greetings
+    # should receive a greeting; other messages must not be reset to hello.
+    if not problem.get("active_problem"):
+        is_greeting = bool(__import__("re").fullmatch(
+            r"\s*(?:(?:hola|hello|hi|hey|oi|olá|ola|buenas(?:\s+(?:tardes|noches|días|dias))?|buenos\s+(?:días|dias|días|dias)|bom dia|boa tarde|boa noite)(?:\s+bitey)?[!.?\s]*)",
+            message_lower,
+            flags=__import__("re").I,
+        ))
+        if is_greeting:
+            if lang.startswith("pt"):
+                answer = "Olá! Sou a Bitey, assistente de IA da BiteFixes. Estou aqui. Como posso ajudar?"
+            elif lang.startswith("en"):
+                answer = "Hello! I'm Bitey, the BiteFixes AI assistant. I'm here. How can I help?"
+            else:
+                answer = "¡Hola! Soy Bitey, la asistente de IA de BiteFixes. Estoy aquí. ¿Cómo puedo ayudarte?"
+            mode = "general_conversation_fallback"
+        elif lang.startswith("pt"):
+            answer = "Não consegui responder com segurança à sua consulta agora. Pode reformular a pergunta ou dizer qual serviço ou problema precisa resolver?"
+            mode = "non_greeting_fallback"
+        elif lang.startswith("en"):
+            answer = "I couldn't answer your question reliably right now. Could you rephrase it or tell me which service or problem you need help with?"
+            mode = "non_greeting_fallback"
+        else:
+            answer = "No pude responder con suficiente certeza a tu consulta en este momento. ¿Puedes reformularla o decirme qué servicio o problema necesitas resolver?"
+            mode = "non_greeting_fallback"
+        return {"answer": answer, "provider": "bitey-core-local", "mode": mode, "business_context_applied": _business_context_relevant(message, context)}
 
     return None
