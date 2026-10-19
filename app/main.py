@@ -28,7 +28,7 @@ async def _register_telegram_webhook() -> None:
         return
     webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "https://bitefixes-backend.onrender.com/webhooks/telegram").strip()
     api_url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
-    data = urlencode({"url": webhook_url, "secret_token": secret, "drop_pending_updates": "true"}).encode("utf-8")
+    data = urlencode({"url": webhook_url, "secret_token": secret, "drop_pending_updates": "false"}).encode("utf-8")
 
     def _request() -> tuple[bool, str]:
         try:
