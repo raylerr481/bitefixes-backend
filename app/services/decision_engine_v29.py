@@ -239,6 +239,32 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
     # Deterministic service-availability response: a greeting from an upstream model
     # must never replace an explicit printer-repair question.
     message_lower = str(message or "").strip().lower()
+    # A plain greeting is a new conversational opening, not a continuation of
+    # the previous technical issue. Answer deterministically before consulting
+    # an external model so stale device context cannot leak into the reply.
+    greeting_re = r"^(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos días|buenos dias|buenas tardes|buenas noches)(?:\\s+bitey)?[!?,.;:\\s]*$"
+    if re.fullmatch(greeting_re, message_lower, flags=re.IGNORECASE):
+        lang = str(language or "es").lower()
+        if lang.startswith("pt"):
+            greeting_answer = "Olá! Sou a Bitey, assistente da BiteFixes. Como posso ajudar?"
+        elif lang.startswith("en"):
+            greeting_answer = "Hi! I'm Bitey, the BiteFixes assistant. How can I help?"
+        else:
+            greeting_answer = "¡Hola! Soy Bitey, la asistente de BiteFixes. ¿En qué puedo ayudarte?"
+        return {
+            "action": "conversation", "create_ticket": False, "requires_quote": False, "ticket_type": None,
+            "response": greeting_answer, "workflow": None, "service": None,
+            "service_id": None, "reasoning": {},
+            "metadata": {
+                "architecture": "bitey-unified-general-plus-business-v1",
+                "cognitive_authority": "deterministic_greeting",
+                "response_authority": "deterministic_greeting",
+                "business_context_applied": False,
+                "response_mode": response_deployment["mode"],
+                "bitey_policy": q_policy,
+                "deterministic_route": "plain_greeting",
+            },
+        }
     printer_terms = ("impresora", "impresoras", "printer", "printers")
     if any(term in message_lower for term in printer_terms) and business_relevant:
         lang = str(language or "es").lower()
