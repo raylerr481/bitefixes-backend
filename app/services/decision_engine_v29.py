@@ -242,7 +242,7 @@ def decision_engine(company_id: int, customer: Dict[str, Any], message: str, int
     # A plain greeting is a new conversational opening, not a continuation of
     # the previous technical issue. Answer deterministically before consulting
     # an external model so stale device context cannot leak into the reply.
-    greeting_re = r"^(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos días|buenos dias|buenas tardes|buenas noches)(?:\\s+bitey)?[!?,.;:\\s]*$"
+    greeting_re = r"^(?:hola|hello|hi|hey|oi|ola|olá|buenas|buenos días|buenos dias|buenas tardes|buenas noches)(?:\s+bitey)?[!?,.;:\s]*$"
     if re.fullmatch(greeting_re, message_lower, flags=re.IGNORECASE):
         lang = str(language or "es").lower()
         if lang.startswith("pt"):
